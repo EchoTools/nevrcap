@@ -23,7 +23,7 @@ This package provides optimized processing of game session frames with support f
 ## Installation
 
 ```bash
-go get github.com/thesprockee/nevrcap
+go get github.com/echotools/nevrcap
 ```
 
 ## Usage
@@ -31,7 +31,7 @@ go get github.com/thesprockee/nevrcap
 ### Frame Processing
 
 ```go
-import "github.com/thesprockee/nevrcap"
+import "github.com/echotools/nevrcap"
 
 // Create processor
 processor := nevrcap.NewFrameProcessor()

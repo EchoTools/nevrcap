@@ -6,7 +6,7 @@ import (
 	"io"
 	"time"
 
-	"github.com/thesprockee/nevrcap/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -14,7 +14,7 @@ import (
 // ConvertEchoReplayToNevrcap converts a .echoreplay file to a .nevrcap file
 func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	// Read the .echoreplay file
-	echoReader, err := NewEchoReplayCodecReader(echoReplayPath)
+	echoReader, err := NewEchoReplayFileReader(echoReplayPath)
 	if err != nil {
 		return fmt.Errorf("failed to open echoreplay file: %w", err)
 	}
@@ -65,8 +65,8 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 			}
 
 			var userBonesData []byte
-			if frame.UserBones != nil {
-				userBonesData, err = marshaler.Marshal(frame.UserBones)
+			if frame.GetPlayerBones() != nil {
+				userBonesData, err = marshaler.Marshal(frame.GetPlayerBones())
 				if err != nil {
 					return fmt.Errorf("failed to marshal user bones data for frame %d: %w", i, err)
 				}
@@ -123,7 +123,7 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 
 		// Write in legacy echoreplay format (timestamp + session JSON)
 		if frame.Session != nil {
-			if err := echoWriter.WriteLegacyFrame(frame.Timestamp.AsTime(), frame.Session); err != nil {
+			if err := echoWriter.WriteFrame(frame); err != nil {
 				return fmt.Errorf("failed to write frame to echoreplay: %w", err)
 			}
 		}

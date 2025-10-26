@@ -1,11 +1,11 @@
 package nevrcap
 
 import (
-	"encoding/json"
 	"time"
 
-	"github.com/thesprockee/nevrcap/gen/go/apigame"
-	"github.com/thesprockee/nevrcap/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -15,17 +15,18 @@ type FrameProcessor struct {
 	frameIndex    uint32
 	previousFrame *rtapi.LobbySessionStateFrame
 	eventDetector *EventDetector
-
-	// Pre-allocated structs to avoid memory allocations
-	sessionResponse   apigame.SessionResponse
-	userBonesResponse apigame.UserBonesResponse
+	unmarshaler   *protojson.UnmarshalOptions
 }
 
 // NewFrameProcessor creates a new optimized frame processor
 func NewFrameProcessor() *FrameProcessor {
+
 	return &FrameProcessor{
 		frameIndex:    0,
 		eventDetector: NewEventDetector(),
+		unmarshaler: &protojson.UnmarshalOptions{
+			AllowPartial: true,
+		},
 	}
 }
 
@@ -33,27 +34,28 @@ func NewFrameProcessor() *FrameProcessor {
 // This is optimized for high-frequency invocation (up to 600 Hz)
 func (fp *FrameProcessor) ProcessFrame(sessionResponseData, userBonesData []byte, timestamp time.Time) (*rtapi.LobbySessionStateFrame, error) {
 	// Reset the pre-allocated structs to avoid allocations
-	fp.sessionResponse.Reset()
-	fp.userBonesResponse.Reset()
+	// Pre-allocated structs to avoid memory allocations
+	sessionResponse := &apigame.SessionResponse{}
+	bonesResponse := &apigame.PlayerBonesResponse{}
 
 	// Parse session data
-	if err := json.Unmarshal(sessionResponseData, &fp.sessionResponse); err != nil {
+	if err := fp.unmarshaler.Unmarshal(sessionResponseData, sessionResponse); err != nil {
 		return nil, err
 	}
 
 	// Parse user bones data (if provided)
 	if len(userBonesData) > 0 {
-		if err := json.Unmarshal(userBonesData, &fp.userBonesResponse); err != nil {
+		if err := fp.unmarshaler.Unmarshal(userBonesData, bonesResponse); err != nil {
 			return nil, err
 		}
 	}
 
 	// Create the frame
 	frame := &rtapi.LobbySessionStateFrame{
-		FrameIndex: fp.frameIndex,
-		Timestamp:  timestamppb.New(timestamp),
-		Session:    &fp.sessionResponse,
-		UserBones:  &fp.userBonesResponse,
+		FrameIndex:  fp.frameIndex,
+		Timestamp:   timestamppb.New(timestamp),
+		Session:     sessionResponse,
+		PlayerBones: bonesResponse,
 	}
 
 	// Detect events by comparing with previous frame

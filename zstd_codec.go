@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/thesprockee/nevrcap/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 )

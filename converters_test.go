@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/thesprockee/nevrcap/gen/go/apigame"
-	"github.com/thesprockee/nevrcap/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -135,7 +135,7 @@ func TestEchoReplayCodec(t *testing.T) {
 	}
 
 	// Test reading
-	reader, err := NewEchoReplayCodecReader(tempFile)
+	reader, err := NewEchoReplayFileReader(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to create EchoReplay reader: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestFileConversion(t *testing.T) {
 	}
 
 	// Verify the round-trip conversion
-	reader, err := NewEchoReplayCodecReader(backToEchoFile)
+	reader, err := NewEchoReplayFileReader(backToEchoFile)
 	if err != nil {
 		t.Fatalf("Failed to create reader for converted file: %v", err)
 	}
@@ -213,7 +213,7 @@ func TestFileConversion(t *testing.T) {
 
 func createTestSessionData(t *testing.T) []byte {
 	session := &apigame.SessionResponse{
-		SessionID:        "test-session",
+		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       0,
 		OrangePoints:     0,
@@ -231,7 +231,7 @@ func createTestSessionData(t *testing.T) []byte {
 
 func createModifiedSessionData(t *testing.T) []byte {
 	session := &apigame.SessionResponse{
-		SessionID:        "test-session",
+		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       1, // Changed score
 		OrangePoints:     0,
@@ -248,8 +248,8 @@ func createModifiedSessionData(t *testing.T) []byte {
 }
 
 func createTestUserBonesData(t *testing.T) []byte {
-	userBones := &apigame.UserBonesResponse{
-		UserBones: []*apigame.PlayerBones{},
+	userBones := &apigame.PlayerBonesResponse{
+		UserBones: []*apigame.UserBones{},
 		ErrCode:   0,
 	}
 
@@ -261,8 +261,8 @@ func createTestUserBonesData(t *testing.T) []byte {
 }
 
 func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
-	session := &apigame.SessionResponse{
-		SessionID:        "test-session",
+	sessionResponse := &apigame.SessionResponse{
+		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       0,
 		OrangePoints:     0,
@@ -271,16 +271,16 @@ func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
 		Teams:            []*apigame.Team{},
 	}
 
-	userBones := &apigame.UserBonesResponse{
-		UserBones: []*apigame.PlayerBones{},
+	bonesResponse := &apigame.PlayerBonesResponse{
+		UserBones: []*apigame.UserBones{},
 		ErrCode:   0,
 	}
 
 	return &rtapi.LobbySessionStateFrame{
-		FrameIndex: 0,
-		Timestamp:  timestamppb.Now(),
-		Events:     []*rtapi.LobbySessionEvent{},
-		Session:    session,
-		UserBones:  userBones,
+		FrameIndex:  0,
+		Timestamp:   timestamppb.Now(),
+		Events:      []*rtapi.LobbySessionEvent{},
+		Session:     sessionResponse,
+		PlayerBones: bonesResponse,
 	}
 }

@@ -1,8 +1,8 @@
 package nevrcap
 
 import (
-	"github.com/thesprockee/nevrcap/gen/go/apigame"
-	"github.com/thesprockee/nevrcap/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 )
 
 // EventDetector efficiently detects events between consecutive frames
@@ -140,18 +140,6 @@ func (ed *EventDetector) detectScoreboardEvents(prevSession, currentSession *api
 				},
 			})
 		}
-
-		// Check for goal scored
-		if currentSession.LastScore != nil {
-			// This is a simple heuristic - in practice, you might want more sophisticated detection
-			events = append(events, &rtapi.LobbySessionEvent{
-				Payload: &rtapi.LobbySessionEvent_GoalScored{
-					GoalScored: &rtapi.GoalScored{
-						ScoreDetails: currentSession.LastScore,
-					},
-				},
-			})
-		}
 	}
 
 	return events
@@ -207,6 +195,17 @@ func (ed *EventDetector) detectStatEvents(currentPlayers map[int32]*apigame.Team
 
 	for slot, player := range currentPlayers {
 		if prevPlayer, exists := ed.prevPlayersBySlot[slot]; exists {
+			// Check for goals scored
+			if player.Stats.Goals > prevPlayer.Stats.Goals {
+				events = append(events, &rtapi.LobbySessionEvent{
+					Payload: &rtapi.LobbySessionEvent_GoalScored{
+						GoalScored: &rtapi.GoalScored{
+							ScoreDetails: &apigame.LastScore{},
+						},
+					},
+				})
+			}
+
 			// Check each stat type for increments
 			if player.Stats.Saves > prevPlayer.Stats.Saves {
 				events = append(events, &rtapi.LobbySessionEvent{
