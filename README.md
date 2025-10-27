@@ -6,24 +6,35 @@ High-performance telemetry processing and streaming library for NEVR lobby sessi
 
 This package provides optimized processing of game session frames with support for:
 
-- **High-frequency frame processing** (600+ Hz target, achieves 14,000+ Hz)
+- **High-frequency frame processing**
 - **Event detection** between consecutive frames
 - **Multiple streaming codecs** (.nevrcap, .echoreplay, WebSocket)
 - **File format conversion** utilities
-- **Comprehensive benchmarking**
 
-## Performance
-
-🚀 **Performance Results (23x faster than target):**
-- Frame Processing: **14,294 Hz** (target: 600 Hz)
-- Event Detection: **1,351,617 ops/sec**
-- Memory Efficient: 8.8 KB/op, 166 allocs/op
-- File Compression: **57%** size reduction (.nevrcap vs .echoreplay)
 
 ## Installation
 
 ```bash
 go get github.com/echotools/nevrcap
+```
+
+## Building
+
+Manual build steps:
+
+```bash
+# Download dependencies
+go mod download
+go mod tidy
+
+# Build the library
+make all
+
+# Run tests
+go test -v ./...
+
+# Run benchmarks
+go test -bench=. -benchmem
 ```
 
 ## Usage
@@ -53,37 +64,59 @@ fmt.Printf("Detected %d events in frame %d\n", len(frame.Events), frame.FrameInd
 ```go
 // Writing
 writer, err := nevrcap.NewZstdCodecWriter("capture.nevrcap")
+if err != nil {
+    log.Fatal(err)
+}
 defer writer.Close()
 
-header := &nevrcap.TelemetryHeader{
-    CaptureId: "session-123",
+// Write header
+header := &rtapi.TelemetryHeader{
+    CaptureId: uuid.Must(uuiid.NewV4()),
     CreatedAt: timestamppb.Now(),
 }
-writer.WriteHeader(header)
-writer.WriteFrame(frame)
+err = writer.WriteHeader(header)
+if err != nil {
+    log.Fatal(err)
+}
+
+// Write frames
+err = writer.WriteFrame(frame)
+if err != nil {
+    log.Fatal(err)
+}
 
 // Reading
 reader, err := nevrcap.NewZstdCodecReader("capture.nevrcap")
+if err != nil {
+    log.Fatal(err)
+}
 defer reader.Close()
 
 header, err := reader.ReadHeader()
+if err != nil {
+    log.Fatal(err)
+}
+
 frame, err := reader.ReadFrame()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 #### EchoReplay Codec (.echoreplay files)
 
 ```go
-// Writing
-writer, err := nevrcap.NewEchoReplayCodecWriter("replay.echoreplay")
-defer writer.Close()
-
-writer.WriteFrame(frame)
-
 // Reading
-reader, err := nevrcap.NewEchoReplayCodecReader("replay.echoreplay")
+reader, err := nevrcap.NewEchoReplayFileReader("replay.echoreplay")
+if err != nil {
+    log.Fatal(err)
+}
 defer reader.Close()
 
 frames, err := reader.ReadFrames()
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### File Conversion
@@ -101,21 +134,25 @@ err := nevrcap.ConvertNevrcapToEchoReplay("input.nevrcap", "output.echoreplay")
 The system automatically detects various game events:
 
 ### Game State Events
+
 - Round started/ended
 - Match ended
 - Scoreboard updates
 - Game paused/unpaused
 
 ### Player Events
+
 - Player joined/left
 - Team switches
 - Emote playing
 
 ### Disc Events
+
 - Possession changes
 - Disc thrown/caught
 
 ### Stat Events
+
 - Saves, stuns, passes
 - Catches, steals, blocks
 - Interceptions, assists
@@ -124,6 +161,7 @@ The system automatically detects various game events:
 ## File Formats
 
 ### .nevrcap Format
+
 - **Compression**: Zstd
 - **Serialization**: Protocol Buffers
 - **Structure**: Header + length-delimited frames
@@ -131,6 +169,7 @@ The system automatically detects various game events:
 - **Size**: ~57% of .echoreplay size
 
 ### .echoreplay Format  
+
 - **Compression**: ZIP
 - **Serialization**: JSON
 - **Structure**: ZIP archive with replay.txt
@@ -141,22 +180,15 @@ The system automatically detects various game events:
 
 Run benchmarks:
 ```bash
-go test -bench=. -benchmem ./nevrcap
+go test -bench=. -benchmem
+```
+
+Quick benchmark (just frame processing):
+```bash
+go test -bench=BenchmarkFrameProcessing -benchtime=1s
 ```
 
 See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics.
-
-## Protobuf Generation
-
-To regenerate protobuf files:
-
-```bash
-# Using go generate
-go generate ./...
-
-# Or using buf
-buf generate
-```
 
 ## Optimization Features
 
@@ -166,42 +198,13 @@ buf generate
 4. **High-Performance Compression**: Zstd provides optimal speed/size ratio
 5. **Memory Pooling**: Minimal allocations for high-frequency operations
 
-## Architecture
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ Raw Game Data   │───▶│ Frame Processor  │───▶│ Event Detection │
-│ (JSON bytes)    │    │ (600+ Hz)        │    │ (Δ comparison)  │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│ File Conversion │◀───│ Streaming Codecs │◀───│ LobbySessionFrame│
-│ (.echoreplay ⟷) │    │ (Zstd/WS/Zip)   │    │ (with events)   │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-```
-
-## Thread Safety
-
-- Frame processors are **not** thread-safe (use separate instances per goroutine)
-- Codecs are **not** thread-safe (one writer/reader per file)
-- Event detectors maintain state (use separate instances per stream)
-
-## Known Limitations
-
-- Event detection uses heuristics that may need game-specific tuning
-- Large files should use streaming to avoid memory issues
-- Some edge cases in event detection may need refinement
-
 ## Contributing
 
 When adding new event types:
-1. Update `proto/rtapi/telemetry_v1.proto` with new event message
-2. Regenerate protobuf code: `go generate ./nevrcap`
+
+1. Update protobuf definitions in `nevr-common/proto/rtapi/telemetry_v1.proto`
+2. Regenerate protobuf code: `go generate` or `./scripts/build.sh`
 3. Add detection logic in `events.go`
-4. Add tests in `*_test.go`
+4. Add tests in `*_test.go` files
 5. Update benchmarks if needed
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+6. Run the full test suite: `go test -v ./...`
