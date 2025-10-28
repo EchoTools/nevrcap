@@ -17,10 +17,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+const (
+	EchoReplayTimeFormat = "2006/01/02 15:04:05.000"
+)
+
 var (
 	ErrCodecNotConfiguredForWriting = fmt.Errorf("codec not configured for writing")
-
-	EchoReplayTimeFormat = "2006/01/02 15:04:05.000"
 )
 
 // Use protojson marshaling for compatibility with existing format
@@ -43,6 +45,8 @@ type EchoReplayCodec struct {
 	frameIndex  uint32
 	replayFile  io.ReadCloser
 	unmarshaler *protojson.UnmarshalOptions
+	// Reusable buffer for timestamp parsing to avoid allocations
+	timestampBuf [len(EchoReplayTimeFormat)]byte
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -313,6 +317,31 @@ func (e *EchoReplayCodec) parseFrameLine(line []byte) (*rtapi.LobbySessionStateF
 	return frame, nil
 }
 
+// ReadTo reads frames into the provided slice and returns the number of frames read.
+// This avoids allocations by reusing the caller's slice.
+// Returns the number of frames read and any error encountered.
+// If the slice is filled before EOF, it returns the count with no error.
+func (e *EchoReplayCodec) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error) {
+	if e.scanner == nil {
+		return 0, fmt.Errorf("codec not configured for reading or already closed")
+	}
+
+	count := 0
+	for count < len(frames) {
+		frame, err := e.ReadFrame()
+		if err != nil {
+			if err == io.EOF {
+				return count, io.EOF
+			}
+			return count, err
+		}
+		frames[count] = frame
+		count++
+	}
+
+	return count, nil
+}
+
 // ReadFrames reads all frames from the .echoreplay file
 func (e *EchoReplayCodec) ReadFrames() ([]*rtapi.LobbySessionStateFrame, error) {
 	var frames []*rtapi.LobbySessionStateFrame
@@ -365,4 +394,96 @@ func (e *EchoReplayCodec) Close() error {
 	}
 
 	return err
+}
+
+// ReadFrameTo reads the next frame into the provided frame object to avoid allocations.
+// Returns true if a frame was read, false if EOF or error.
+// The frame parameter must be non-nil.
+func (e *EchoReplayCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+	if e.scanner == nil {
+		return false, fmt.Errorf("codec not configured for reading or already closed")
+	}
+
+	for e.scanner.Scan() {
+		line := e.scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		if err := e.parseFrameLineTo(line, frame); err != nil {
+			continue // Skip invalid lines
+		}
+
+		frame.FrameIndex = e.frameIndex
+		e.frameIndex++
+		return true, nil
+	}
+
+	if err := e.scanner.Err(); err != nil {
+		return false, fmt.Errorf("scanner error: %w", err)
+	}
+
+	return false, io.EOF
+}
+
+// parseFrameLineTo parses a single line into the provided frame object
+func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessionStateFrame) error {
+	// Find tab positions to avoid bytes.Split allocation
+	firstTab := bytes.IndexByte(line, '\t')
+	if firstTab == -1 {
+		return fmt.Errorf("invalid line format")
+	}
+
+	secondTab := bytes.IndexByte(line[firstTab+1:], '\t')
+	if secondTab == -1 {
+		return fmt.Errorf("invalid line format")
+	}
+	secondTab += firstTab + 1
+
+	// Parse timestamp - reuse buffer to avoid allocation
+	if firstTab > len(e.timestampBuf) {
+		return fmt.Errorf("timestamp too long")
+	}
+	copy(e.timestampBuf[:], line[:firstTab])
+	timestamp, err := time.ParseInLocation(EchoReplayTimeFormat, string(e.timestampBuf[:firstTab]), time.Local)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp format")
+	}
+
+	// Parse session data (between first and second tab)
+	sessionBytes := line[firstTab+1 : secondTab]
+	if frame.Session == nil {
+		frame.Session = &apigame.SessionResponse{}
+	}
+	if err := json.Unmarshal(sessionBytes, frame.Session); err != nil {
+		return fmt.Errorf("failed to unmarshal session data: %w", err)
+	}
+
+	// Parse player bones data if present (after second tab)
+	bonesBytes := line[secondTab+1:]
+	// Skip leading space if present
+	if len(bonesBytes) > 0 && bonesBytes[0] == ' ' {
+		bonesBytes = bonesBytes[1:]
+	}
+
+	if len(bonesBytes) > 0 {
+		if frame.PlayerBones == nil {
+			frame.PlayerBones = &apigame.PlayerBonesResponse{}
+		}
+		if err := json.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
+			return fmt.Errorf("failed to unmarshal player bones data: %w", err)
+		}
+	} else {
+		frame.PlayerBones = nil
+	}
+
+	// Set timestamp - reuse existing object to avoid allocation
+	if frame.Timestamp == nil {
+		frame.Timestamp = timestamppb.New(timestamp)
+	} else {
+		frame.Timestamp.Seconds = timestamp.Unix()
+		frame.Timestamp.Nanos = int32(timestamp.Nanosecond())
+	}
+
+	return nil
 }

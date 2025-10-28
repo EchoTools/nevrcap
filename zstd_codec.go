@@ -18,8 +18,8 @@ type ZstdCodec struct {
 	reader  io.Reader
 }
 
-// NewZstdCodecWriter creates a new Zstd codec for writing .nevrcap files
-func NewZstdCodecWriter(filename string) (*ZstdCodec, error) {
+// NewNEVRCapWriter creates a new Zstd codec for writing .nevrcap files
+func NewNEVRCapWriter(filename string) (*ZstdCodec, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -38,8 +38,8 @@ func NewZstdCodecWriter(filename string) (*ZstdCodec, error) {
 	}, nil
 }
 
-// NewZstdCodecReader creates a new Zstd codec for reading .nevrcap files
-func NewZstdCodecReader(filename string) (*ZstdCodec, error) {
+// NewNEVRCapReader creates a new Zstd codec for reading .nevrcap files
+func NewNEVRCapReader(filename string) (*ZstdCodec, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -110,6 +110,24 @@ func (z *ZstdCodec) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 	}
 
 	return frame, nil
+}
+
+// ReadFrameTo reads a frame into the provided frame object
+func (z *ZstdCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+	data, err := z.readDelimitedMessage()
+	if err != nil {
+		if err == io.EOF {
+			return false, err
+		}
+		return false, err
+	}
+
+	err = proto.Unmarshal(data, frame)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 // writeDelimitedMessage writes a length-delimited protobuf message

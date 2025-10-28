@@ -57,7 +57,7 @@ func TestZstdCodec(t *testing.T) {
 	defer os.Remove(tempFile)
 
 	// Test writing
-	writer, err := NewZstdCodecWriter(tempFile)
+	writer, err := NewNEVRCapWriter(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to create Zstd writer: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestZstdCodec(t *testing.T) {
 	}
 
 	// Test reading
-	reader, err := NewZstdCodecReader(tempFile)
+	reader, err := NewNEVRCapReader(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to create Zstd reader: %v", err)
 	}

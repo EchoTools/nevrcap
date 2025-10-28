@@ -13,7 +13,6 @@ import (
 // optimized for up to 600 Hz operation
 type FrameProcessor struct {
 	frameIndex    uint32
-	previousFrame *rtapi.LobbySessionStateFrame
 	eventDetector *EventDetector
 	unmarshaler   *protojson.UnmarshalOptions
 }
@@ -58,14 +57,8 @@ func (fp *FrameProcessor) ProcessFrame(sessionResponseData, userBonesData []byte
 		PlayerBones: bonesResponse,
 	}
 
-	// Detect events by comparing with previous frame
-	if fp.previousFrame != nil {
-		events := fp.eventDetector.DetectEvents(fp.previousFrame, frame)
-		frame.Events = events
-	}
-
-	// Store as previous frame for next comparison
-	fp.previousFrame = frame
+	// Add frame to event detector and get any detected events
+	frame.Events = fp.eventDetector.AddFrame(frame)
 	fp.frameIndex++
 
 	return frame, nil
@@ -74,6 +67,5 @@ func (fp *FrameProcessor) ProcessFrame(sessionResponseData, userBonesData []byte
 // Reset clears the processor state
 func (fp *FrameProcessor) Reset() {
 	fp.frameIndex = 0
-	fp.previousFrame = nil
 	fp.eventDetector.Reset()
 }
