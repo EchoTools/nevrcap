@@ -18,8 +18,8 @@ type ZstdCodec struct {
 	reader  io.Reader
 }
 
-// NewNEVRCapWriter creates a new Zstd codec for writing .nevrcap files
-func NewNEVRCapWriter(filename string) (*ZstdCodec, error) {
+// NewNevrCapWriter creates a new Zstd codec for writing .nevrcap files
+func NewNevrCapWriter(filename string) (*ZstdCodec, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -38,8 +38,8 @@ func NewNEVRCapWriter(filename string) (*ZstdCodec, error) {
 	}, nil
 }
 
-// NewNEVRCapReader creates a new Zstd codec for reading .nevrcap files
-func NewNEVRCapReader(filename string) (*ZstdCodec, error) {
+// NewNevrCapReader creates a new Zstd codec for reading .nevrcap files
+func NewNevrCapReader(filename string) (*ZstdCodec, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err

@@ -26,7 +26,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	}
 
 	// Create the .nevrcap file
-	nevrcapWriter, err := NewNEVRCapWriter(nevrcapPath)
+	nevrcapWriter, err := NewNevrCapWriter(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to create nevrcap file: %w", err)
 	}
@@ -92,7 +92,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 // ConvertNevrcapToEchoReplay converts a .nevrcap file to a .echoreplay file
 func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	// Read the .nevrcap file
-	nevrcapReader, err := NewNEVRCapReader(nevrcapPath)
+	nevrcapReader, err := NewNevrCapReader(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to open nevrcap file: %w", err)
 	}

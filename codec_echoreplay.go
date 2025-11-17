@@ -192,7 +192,7 @@ func (e *EchoReplayCodec) WriteReplayFrame(dst *bytes.Buffer, frame *rtapi.Lobby
 		return 0
 	}
 
-	bonesData, err := json.Marshal(frame.GetPlayerBones())
+	bonesData, err := echoReplayerMarshaler.Marshal(frame.GetPlayerBones())
 	if err != nil {
 		return 0
 	}
