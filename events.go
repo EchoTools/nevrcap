@@ -136,7 +136,7 @@ func (ed *EventDetector) addFrameToBuffer(frame *rtapi.LobbySessionStateFrame) {
 	}
 }
 
-// getFrame returns the frame at the given offset (must be called with lock held or from processLoop)
+// getFrame returns the frame at the given offset (thread-safe)
 func (ed *EventDetector) getFrame(offset int) *rtapi.LobbySessionStateFrame {
 	ed.mu.RLock()
 	defer ed.mu.RUnlock()
