@@ -15,14 +15,38 @@ type Detector interface {
 	Stop()
 }
 
-const MaxFrameBufferCapacity = 10
+const DefaultFrameBufferCapacity = 10
+
+// Option configures the EventDetector
+type Option func(*EventDetector)
+
+// WithInputChannelSize sets the size of the input channel
+func WithInputChannelSize(size int) Option {
+	return func(ed *EventDetector) {
+		ed.inputChan = make(chan *rtapi.LobbySessionStateFrame, size)
+	}
+}
+
+// WithEventsChannelSize sets the size of the events channel
+func WithEventsChannelSize(size int) Option {
+	return func(ed *EventDetector) {
+		ed.eventsChan = make(chan []*rtapi.LobbySessionEvent, size)
+	}
+}
+
+// WithFrameBufferSize sets the size of the frame buffer
+func WithFrameBufferSize(size int) Option {
+	return func(ed *EventDetector) {
+		ed.frameBuffer = make([]*rtapi.LobbySessionStateFrame, size)
+	}
+}
 
 // EventDetector detects post_match events
 type EventDetector struct {
 	previousGameStatusFrame *rtapi.LobbySessionStateFrame
 
 	// Ring buffer for frames
-	frameBuffer [MaxFrameBufferCapacity]*rtapi.LobbySessionStateFrame
+	frameBuffer []*rtapi.LobbySessionStateFrame
 	writeIndex  int // Current write position
 	frameCount  int // Number of frames currently in buffer
 
@@ -31,23 +55,34 @@ type EventDetector struct {
 	// Channel-based processing
 	inputChan  chan *rtapi.LobbySessionStateFrame
 	eventsChan chan []*rtapi.LobbySessionEvent
+	resetChan  chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
-	mu         sync.RWMutex // Protects frame buffer access
+
+	// Reusable buffer for events to reduce allocations
+	eventBuffer []*rtapi.LobbySessionEvent
 }
 
 var _ Detector = (*EventDetector)(nil)
 
 // NewEventDetector creates a new event detector with goroutine-based processing
-func NewEventDetector() *EventDetector {
+func NewEventDetector(opts ...Option) *EventDetector {
 	ctx, cancel := context.WithCancel(context.Background())
 	ed := &EventDetector{
-		inputChan:  make(chan *rtapi.LobbySessionStateFrame, 100),
-		eventsChan: make(chan []*rtapi.LobbySessionEvent, 10),
-		ctx:        ctx,
-		cancel:     cancel,
+		inputChan:   make(chan *rtapi.LobbySessionStateFrame, 100),
+		eventsChan:  make(chan []*rtapi.LobbySessionEvent, 10),
+		resetChan:   make(chan struct{}),
+		ctx:         ctx,
+		cancel:      cancel,
+		frameBuffer: make([]*rtapi.LobbySessionStateFrame, DefaultFrameBufferCapacity),
+		eventBuffer: make([]*rtapi.LobbySessionEvent, 0, 10),
 	}
+
+	for _, opt := range opts {
+		opt(ed)
+	}
+
 	ed.Start()
 	return ed
 }
@@ -67,11 +102,10 @@ func (ed *EventDetector) Stop() {
 
 // Reset clears the event detector state
 func (ed *EventDetector) Reset() {
-	ed.mu.Lock()
-	defer ed.mu.Unlock()
-	ed.writeIndex = 0
-	ed.frameCount = 0
-	ed.previousGameStatusFrame = nil
+	select {
+	case ed.resetChan <- struct{}{}:
+	case <-ed.ctx.Done():
+	}
 }
 
 // ProcessFrame writes a frame to the processing channel (non-blocking)
@@ -97,17 +131,30 @@ func (ed *EventDetector) processLoop() {
 
 	for {
 		select {
+		case <-ed.resetChan:
+			ed.writeIndex = 0
+			ed.frameCount = 0
+			ed.previousGameStatusFrame = nil
+			for i := range ed.frameBuffer {
+				ed.frameBuffer[i] = nil
+			}
+
 		case frame := <-ed.inputChan:
 			// Add frame to buffer
 			ed.addFrameToBuffer(frame)
 
 			// Detect events using the detection algorithm
-			events := ed.detectEvents()
+			ed.eventBuffer = ed.eventBuffer[:0]
+			ed.eventBuffer = ed.detectEvents(ed.eventBuffer)
 
 			// Send events if any were detected
-			if len(events) > 0 {
+			if len(ed.eventBuffer) > 0 {
+				// Copy events to avoid race conditions with the reused buffer
+				eventsToSend := make([]*rtapi.LobbySessionEvent, len(ed.eventBuffer))
+				copy(eventsToSend, ed.eventBuffer)
+
 				select {
-				case ed.eventsChan <- events:
+				case ed.eventsChan <- eventsToSend:
 					// Events sent successfully
 				case <-ed.ctx.Done():
 					return
@@ -120,11 +167,8 @@ func (ed *EventDetector) processLoop() {
 	}
 }
 
-// addFrameToBuffer adds a frame to the buffer (thread-safe)
+// addFrameToBuffer adds a frame to the buffer
 func (ed *EventDetector) addFrameToBuffer(frame *rtapi.LobbySessionStateFrame) {
-	ed.mu.Lock()
-	defer ed.mu.Unlock()
-
 	// Write to current position
 	ed.frameBuffer[ed.writeIndex] = frame
 
@@ -137,12 +181,9 @@ func (ed *EventDetector) addFrameToBuffer(frame *rtapi.LobbySessionStateFrame) {
 	}
 }
 
-// getFrame returns the frame at the given offset (thread-safe)
+// getFrame returns the frame at the given offset
 func (ed *EventDetector) getFrame(offset int) *rtapi.LobbySessionStateFrame {
-	ed.mu.RLock()
-	defer ed.mu.RUnlock()
-
-	if offset > MaxFrameBufferCapacity {
+	if offset >= len(ed.frameBuffer) {
 		return nil
 	}
 	idx := (ed.writeIndex + offset + len(ed.frameBuffer)) % len(ed.frameBuffer)
@@ -151,9 +192,6 @@ func (ed *EventDetector) getFrame(offset int) *rtapi.LobbySessionStateFrame {
 
 // lastFrame returns the most recently added frame
 func (ed *EventDetector) lastFrame() *rtapi.LobbySessionStateFrame {
-	ed.mu.RLock()
-	defer ed.mu.RUnlock()
-
 	if ed.frameCount == 0 {
 		return nil
 	}
@@ -163,32 +201,28 @@ func (ed *EventDetector) lastFrame() *rtapi.LobbySessionStateFrame {
 
 // lastFrameIndex returns the index of the most recently written frame
 func (ed *EventDetector) lastFrameIndex() int {
-	// No lock needed - this is called from methods that already hold the lock
 	return (ed.writeIndex - 1 + len(ed.frameBuffer)) % len(ed.frameBuffer)
 }
 
 // detectEvents analyzes frames in the ring buffer and returns detected events
-func (ed *EventDetector) detectEvents() []*rtapi.LobbySessionEvent {
-	var newEvents []*rtapi.LobbySessionEvent
+func (ed *EventDetector) detectEvents(dst []*rtapi.LobbySessionEvent) []*rtapi.LobbySessionEvent {
 	// Use the newest frame available in the buffer
 	if len(ed.frameBuffer) == 0 {
-		return nil
+		return dst
 	}
 
 	for _, s := range ed.sensors {
 		event := s.AddFrame(ed.getFrame(0))
 		if event != nil {
-			newEvents = append(newEvents, event)
+			dst = append(dst, event)
 		}
 	}
 
 	for _, fn := range [...]detectionFunction{
 		ed.detectPostMatchEvent,
 	} {
-		if events := fn(ed.lastFrameIndex()); events != nil {
-			newEvents = append(newEvents, events...)
-		}
+		dst = fn(ed.lastFrameIndex(), dst)
 	}
 
-	return newEvents
+	return dst
 }

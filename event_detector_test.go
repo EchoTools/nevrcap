@@ -80,7 +80,7 @@ func TestEventDetector_ProcessFrameNilFrame(t *testing.T) {
 	assertNoEvents(t, detector, 50*time.Millisecond)
 }
 
-func TestEventDetector_ResetDoesNotEmitWithoutNewTransition(t *testing.T) {
+func TestEventDetector_ResetClearsState(t *testing.T) {
 	detector := newTestEventDetector(t)
 
 	detector.ProcessFrame(createPostMatchTestFrame(GameStatusRoundOver, 1, 0))
@@ -91,7 +91,9 @@ func TestEventDetector_ResetDoesNotEmitWithoutNewTransition(t *testing.T) {
 	detector.Reset()
 
 	detector.ProcessFrame(createPostMatchTestFrame(GameStatusRoundOver, 2, 2))
-	assertNoEvents(t, detector, 50*time.Millisecond)
+	if events := mustReceiveEvents(t, detector, 100*time.Millisecond); len(events) != 1 {
+		t.Fatalf("expected 1 round over event after reset, got %d", len(events))
+	}
 }
 
 func TestEventDetector_StopClosesEventsChan(t *testing.T) {
@@ -130,9 +132,11 @@ func TestEventDetector_SensorIntegrationReceivesFrames(t *testing.T) {
 }
 
 func TestEventDetector_AddFrameToBufferWraps(t *testing.T) {
-	detector := &EventDetector{}
+	detector := &EventDetector{
+		frameBuffer: make([]*rtapi.LobbySessionStateFrame, DefaultFrameBufferCapacity),
+	}
 
-	totalFrames := MaxFrameBufferCapacity + 3
+	totalFrames := DefaultFrameBufferCapacity + 3
 	frames := make([]*rtapi.LobbySessionStateFrame, totalFrames)
 	for i := 0; i < totalFrames; i++ {
 		frame := &rtapi.LobbySessionStateFrame{FrameIndex: uint32(i)}
@@ -140,8 +144,8 @@ func TestEventDetector_AddFrameToBufferWraps(t *testing.T) {
 		detector.addFrameToBuffer(frame)
 	}
 
-	if detector.frameCount != MaxFrameBufferCapacity {
-		t.Fatalf("frameCount expected %d got %d", MaxFrameBufferCapacity, detector.frameCount)
+	if detector.frameCount != DefaultFrameBufferCapacity {
+		t.Fatalf("frameCount expected %d got %d", DefaultFrameBufferCapacity, detector.frameCount)
 	}
 
 	if got := detector.lastFrame(); got != frames[len(frames)-1] {
@@ -150,37 +154,37 @@ func TestEventDetector_AddFrameToBufferWraps(t *testing.T) {
 }
 
 func TestEventDetector_detectPostMatchEventIgnoresInvalidIndex(t *testing.T) {
-	ed := &EventDetector{}
-	if events := ed.detectPostMatchEvent(-1); events != nil {
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	if events := ed.detectPostMatchEvent(-1, nil); events != nil {
 		t.Fatalf("expected nil events for negative index, got %v", events)
 	}
-	if events := ed.detectPostMatchEvent(len(ed.frameBuffer)); events != nil {
+	if events := ed.detectPostMatchEvent(len(ed.frameBuffer), nil); events != nil {
 		t.Fatalf("expected nil events for out-of-range index, got %v", events)
 	}
 }
 
 func TestEventDetector_detectPostMatchEventSkipsNilFrame(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	ed.frameBuffer[0] = nil
-	if events := ed.detectPostMatchEvent(0); events != nil {
+	if events := ed.detectPostMatchEvent(0, nil); events != nil {
 		t.Fatalf("expected nil events for nil frame, got %v", events)
 	}
 }
 
 func TestEventDetector_detectPostMatchEventSkipsNilSession(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	ed.frameBuffer[0] = &rtapi.LobbySessionStateFrame{}
-	if events := ed.detectPostMatchEvent(0); events != nil {
+	if events := ed.detectPostMatchEvent(0, nil); events != nil {
 		t.Fatalf("expected nil events for nil session, got %v", events)
 	}
 }
 
 func TestEventDetector_detectPostMatchEventSkipsRepeatedStatus(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	prev := newStatusOnlyFrame("playing")
 	ed.previousGameStatusFrame = prev
 	ed.frameBuffer[0] = newStatusOnlyFrame("playing")
-	if events := ed.detectPostMatchEvent(0); events != nil {
+	if events := ed.detectPostMatchEvent(0, nil); events != nil {
 		t.Fatalf("expected nil events for repeated status, got %v", events)
 	}
 	if ed.previousGameStatusFrame != prev {
@@ -189,12 +193,12 @@ func TestEventDetector_detectPostMatchEventSkipsRepeatedStatus(t *testing.T) {
 }
 
 func TestEventDetector_detectPostMatchEventUpdatesPreviousOnTransition(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	prev := newStatusOnlyFrame("playing")
 	current := newStatusOnlyFrame(GameStatusRoundOver)
 	ed.previousGameStatusFrame = prev
 	ed.frameBuffer[0] = current
-	if events := ed.detectPostMatchEvent(0); events == nil {
+	if events := ed.detectPostMatchEvent(0, nil); events == nil {
 		t.Fatalf("expected events for transition")
 	}
 	if ed.previousGameStatusFrame != current {
@@ -203,10 +207,10 @@ func TestEventDetector_detectPostMatchEventUpdatesPreviousOnTransition(t *testin
 }
 
 func TestEventDetector_detectPostMatchEventEmitsRoundEnded(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	ed.previousGameStatusFrame = newStatusOnlyFrame("playing")
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusRoundOver)
-	events := ed.detectPostMatchEvent(0)
+	events := ed.detectPostMatchEvent(0, nil)
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event got %d", len(events))
 	}
@@ -216,10 +220,10 @@ func TestEventDetector_detectPostMatchEventEmitsRoundEnded(t *testing.T) {
 }
 
 func TestEventDetector_detectPostMatchEventEmitsMatchEnded(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	ed.previousGameStatusFrame = newStatusOnlyFrame(GameStatusRoundOver)
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusPostMatch)
-	events := ed.detectPostMatchEvent(0)
+	events := ed.detectPostMatchEvent(0, nil)
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event got %d", len(events))
 	}
@@ -229,9 +233,9 @@ func TestEventDetector_detectPostMatchEventEmitsMatchEnded(t *testing.T) {
 }
 
 func TestEventDetector_detectPostMatchEventInitialMatchEnded(t *testing.T) {
-	ed := &EventDetector{}
+	ed := &EventDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusPostMatch)
-	events := ed.detectPostMatchEvent(0)
+	events := ed.detectPostMatchEvent(0, nil)
 	if len(events) != 1 {
 		t.Fatalf("expected 1 event got %d", len(events))
 	}

@@ -64,7 +64,7 @@ func BenchmarkEventDetector_ProcessFrame_FullBuffer(b *testing.B) {
 	}()
 
 	// Fill the buffer to capacity
-	for i := 0; i < MaxFrameBufferCapacity; i++ {
+	for i := 0; i < DefaultFrameBufferCapacity; i++ {
 		frame := createPostMatchTestFrame("playing", int32(i%3), int32(i%2))
 		detector.ProcessFrame(frame)
 	}
