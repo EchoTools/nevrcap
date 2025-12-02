@@ -158,13 +158,19 @@ func (ed *AsyncDetector) processFrameSync(frame *rtapi.LobbySessionStateFrame) {
 		eventsToSend := make([]*rtapi.LobbySessionEvent, len(ed.eventBuffer))
 		copy(eventsToSend, ed.eventBuffer)
 
-		// In synchronous mode, we block until events are accepted
-		// This ensures the caller can receive them immediately
+		// In synchronous mode, use non-blocking send to avoid blocking ProcessFrame.
+		// This ensures ProcessFrame completes immediately in the caller's goroutine.
+		// Events are dropped if the channel is full, which is acceptable since
+		// synchronous mode prioritizes immediate processing over guaranteed delivery.
 		select {
 		case ed.eventsChan <- eventsToSend:
 			// Events sent successfully
 		case <-ed.ctx.Done():
+			// Detector is stopping
 			return
+		default:
+			// Channel is full, drop events rather than blocking.
+			// This maintains the synchronous processing guarantee.
 		}
 	}
 }
