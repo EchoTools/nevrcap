@@ -71,6 +71,7 @@ func NewEchoReplayWriter(filename string) (*EchoReplay, error) {
 		file:        file,
 		zipWriter:   zipWriter,
 		frameBuffer: &bytes.Buffer{},
+		scratchBuf:  make([]byte, 0, 1024),
 	}, nil
 }
 
