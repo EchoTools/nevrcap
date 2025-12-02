@@ -1,4 +1,4 @@
-package nevrcap
+package codecs
 
 import (
 	"os"
@@ -15,7 +15,7 @@ func BenchmarkOptimizedWriteFrame(b *testing.B) {
 	tempFile := "/tmp/benchmark.echoreplay"
 	defer os.Remove(tempFile)
 
-	codec, err := NewEchoReplayCodecWriter(tempFile)
+	codec, err := NewEchoReplayWriter(tempFile)
 	if err != nil {
 		b.Fatal(err)
 	}

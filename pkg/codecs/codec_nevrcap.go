@@ -1,4 +1,4 @@
-package nevrcap
+package codecs
 
 import (
 	"io"
@@ -9,8 +9,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// ZstdCodec handles streaming to/from Zstd-compressed .nevrcap files
-type ZstdCodec struct {
+// NevrCap handles streaming to/from Zstd-compressed .nevrcap files
+type NevrCap struct {
 	file    *os.File
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
@@ -18,8 +18,8 @@ type ZstdCodec struct {
 	reader  io.Reader
 }
 
-// NewNEVRCapWriter creates a new Zstd codec for writing .nevrcap files
-func NewNEVRCapWriter(filename string) (*ZstdCodec, error) {
+// NewNevrCapWriter creates a new Zstd codec for writing .nevrcap files
+func NewNevrCapWriter(filename string) (*NevrCap, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -31,15 +31,15 @@ func NewNEVRCapWriter(filename string) (*ZstdCodec, error) {
 		return nil, err
 	}
 
-	return &ZstdCodec{
+	return &NevrCap{
 		file:    file,
 		encoder: encoder,
 		writer:  encoder,
 	}, nil
 }
 
-// NewNEVRCapReader creates a new Zstd codec for reading .nevrcap files
-func NewNEVRCapReader(filename string) (*ZstdCodec, error) {
+// NewNevrCapReader creates a new Zstd codec for reading .nevrcap files
+func NewNevrCapReader(filename string) (*NevrCap, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -51,7 +51,7 @@ func NewNEVRCapReader(filename string) (*ZstdCodec, error) {
 		return nil, err
 	}
 
-	return &ZstdCodec{
+	return &NevrCap{
 		file:    file,
 		decoder: decoder,
 		reader:  decoder,
@@ -59,7 +59,7 @@ func NewNEVRCapReader(filename string) (*ZstdCodec, error) {
 }
 
 // WriteHeader writes the nevrcap header to the file
-func (z *ZstdCodec) WriteHeader(header *rtapi.TelemetryHeader) error {
+func (z *NevrCap) WriteHeader(header *rtapi.TelemetryHeader) error {
 	data, err := proto.Marshal(header)
 	if err != nil {
 		return err
@@ -70,7 +70,7 @@ func (z *ZstdCodec) WriteHeader(header *rtapi.TelemetryHeader) error {
 }
 
 // WriteFrame writes a frame to the file
-func (z *ZstdCodec) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
+func (z *NevrCap) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
 	data, err := proto.Marshal(frame)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (z *ZstdCodec) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
 }
 
 // ReadHeader reads the nevrcap header from the file
-func (z *ZstdCodec) ReadHeader() (*rtapi.TelemetryHeader, error) {
+func (z *NevrCap) ReadHeader() (*rtapi.TelemetryHeader, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func (z *ZstdCodec) ReadHeader() (*rtapi.TelemetryHeader, error) {
 }
 
 // ReadFrame reads a frame from the file
-func (z *ZstdCodec) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
+func (z *NevrCap) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (z *ZstdCodec) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 }
 
 // ReadFrameTo reads a frame into the provided frame object
-func (z *ZstdCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+func (z *NevrCap) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		if err == io.EOF {
@@ -131,7 +131,7 @@ func (z *ZstdCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, erro
 }
 
 // writeDelimitedMessage writes a length-delimited protobuf message
-func (z *ZstdCodec) writeDelimitedMessage(data []byte) error {
+func (z *NevrCap) writeDelimitedMessage(data []byte) error {
 	// Buffer for varint encoding (max 10 bytes for uint64)
 	var buf [10]byte
 	length := uint64(len(data))
@@ -155,7 +155,7 @@ func (z *ZstdCodec) writeDelimitedMessage(data []byte) error {
 }
 
 // readDelimitedMessage reads a length-delimited protobuf message
-func (z *ZstdCodec) readDelimitedMessage() ([]byte, error) {
+func (z *NevrCap) readDelimitedMessage() ([]byte, error) {
 	// Read varint length
 	var length uint64
 	var shift uint
@@ -182,7 +182,7 @@ func (z *ZstdCodec) readDelimitedMessage() ([]byte, error) {
 }
 
 // Close closes the codec and underlying file
-func (z *ZstdCodec) Close() error {
+func (z *NevrCap) Close() error {
 	var err error
 
 	if z.encoder != nil {
