@@ -1,28 +1,37 @@
-package nevrcap
+package processing
 
 import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
 	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevrcap/pkg/events"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// FrameProcessor handles high-performance processing of game frames
+// Processor handles high-performance processing of game frames
 // optimized for up to 600 Hz operation
-type FrameProcessor struct {
+type Processor struct {
 	frameIndex    uint32
-	eventDetector *EventDetector
+	eventDetector events.Detector
 	unmarshaler   *protojson.UnmarshalOptions
 }
 
-// NewFrameProcessor creates a new optimized frame processor
-func NewFrameProcessor() *FrameProcessor {
+// New creates a new optimized frame processor
+func New() *Processor {
+	return NewWithDetector(events.New())
+}
 
-	return &FrameProcessor{
+// NewWithDetector allows callers to supply a custom Detector implementation.
+func NewWithDetector(det events.Detector) *Processor {
+	if det == nil {
+		det = events.New()
+	}
+
+	return &Processor{
 		frameIndex:    0,
-		eventDetector: NewEventDetector(),
+		eventDetector: det,
 		unmarshaler: &protojson.UnmarshalOptions{
 			AllowPartial: true,
 		},
@@ -31,7 +40,8 @@ func NewFrameProcessor() *FrameProcessor {
 
 // ProcessFrame takes raw session and user bones data and processes it into a rtapi.LobbySessionStateFrame
 // This is optimized for high-frequency invocation (up to 600 Hz)
-func (fp *FrameProcessor) ProcessFrame(sessionResponseData, userBonesData []byte, timestamp time.Time) (*rtapi.LobbySessionStateFrame, error) {
+// Note: Events are now processed asynchronously and can be received via EventDetector.EventsChan()
+func (fp *Processor) ProcessFrame(sessionResponseData, userBonesData []byte, timestamp time.Time) (*rtapi.LobbySessionStateFrame, error) {
 	// Reset the pre-allocated structs to avoid allocations
 	// Pre-allocated structs to avoid memory allocations
 	sessionResponse := &apigame.SessionResponse{}
@@ -57,15 +67,25 @@ func (fp *FrameProcessor) ProcessFrame(sessionResponseData, userBonesData []byte
 		PlayerBones: bonesResponse,
 	}
 
-	// Add frame to event detector and get any detected events
-	frame.Events = fp.eventDetector.AddFrame(frame)
+	// Send frame to event detector for async processing
+	fp.eventDetector.ProcessFrame(frame)
 	fp.frameIndex++
 
 	return frame, nil
 }
 
+// EventsChan returns the channel for receiving detected events
+func (fp *Processor) EventsChan() <-chan []*rtapi.LobbySessionEvent {
+	return fp.eventDetector.EventsChan()
+}
+
 // Reset clears the processor state
-func (fp *FrameProcessor) Reset() {
+func (fp *Processor) Reset() {
 	fp.frameIndex = 0
 	fp.eventDetector.Reset()
+}
+
+// Stop gracefully shuts down the frame processor
+func (fp *Processor) Stop() {
+	fp.eventDetector.Stop()
 }

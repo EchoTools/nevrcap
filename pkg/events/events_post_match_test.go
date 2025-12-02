@@ -1,4 +1,4 @@
-package nevrcap
+package events
 
 import (
 	"time"

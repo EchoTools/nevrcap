@@ -1,10 +1,9 @@
-package nevrcap
+package codecs
 
 import (
 	"archive/zip"
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -32,8 +31,8 @@ var echoReplayerMarshaler = &protojson.MarshalOptions{
 	EmitUnpopulated: true,
 }
 
-// EchoReplayCodec handles .echoreplay file format (zip format)
-type EchoReplayCodec struct {
+// EchoReplay handles .echoreplay file format (zip format)
+type EchoReplay struct {
 	filename    string
 	zipWriter   *zip.Writer
 	zipReader   *zip.ReadCloser
@@ -47,6 +46,8 @@ type EchoReplayCodec struct {
 	unmarshaler *protojson.UnmarshalOptions
 	// Reusable buffer for timestamp parsing to avoid allocations
 	timestampBuf [len(EchoReplayTimeFormat)]byte
+	// Scratch buffer for marshaling
+	scratchBuf []byte
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -56,8 +57,8 @@ type EchoReplayFrame struct {
 	PlayerBones *apigame.PlayerBonesResponse `json:"user_bones,omitempty"`
 }
 
-// NewEchoReplayCodecWriter creates a new EchoReplay codec for writing
-func NewEchoReplayCodecWriter(filename string) (*EchoReplayCodec, error) {
+// NewEchoReplayWriter creates a new EchoReplay codec for writing
+func NewEchoReplayWriter(filename string) (*EchoReplay, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -65,7 +66,7 @@ func NewEchoReplayCodecWriter(filename string) (*EchoReplayCodec, error) {
 
 	zipWriter := zip.NewWriter(file)
 
-	return &EchoReplayCodec{
+	return &EchoReplay{
 		filename:    filename,
 		file:        file,
 		zipWriter:   zipWriter,
@@ -73,14 +74,14 @@ func NewEchoReplayCodecWriter(filename string) (*EchoReplayCodec, error) {
 	}, nil
 }
 
-// NewEchoReplayFileReader creates a new EchoReplay codec for reading
-func NewEchoReplayFileReader(filename string) (*EchoReplayCodec, error) {
+// NewEchoReplayReader creates a new EchoReplay codec for reading
+func NewEchoReplayReader(filename string) (*EchoReplay, error) {
 	zipReader, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	codec := &EchoReplayCodec{
+	codec := &EchoReplay{
 		filename:  filename,
 		zipReader: zipReader,
 		unmarshaler: &protojson.UnmarshalOptions{
@@ -98,7 +99,7 @@ func NewEchoReplayFileReader(filename string) (*EchoReplayCodec, error) {
 }
 
 // initScanner initializes the scanner for streaming frame reads
-func (e *EchoReplayCodec) initScanner() error {
+func (e *EchoReplay) initScanner() error {
 	var replayFile *zip.File
 
 	// Look for files in order of preference:
@@ -142,7 +143,7 @@ func (e *EchoReplayCodec) initScanner() error {
 }
 
 // WriteFrame writes a frame to the .echoreplay file using optimized buffer operations
-func (e *EchoReplayCodec) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -153,7 +154,7 @@ func (e *EchoReplayCodec) WriteFrame(frame *rtapi.LobbySessionStateFrame) error 
 }
 
 // WriteFrameBatch writes multiple frames efficiently in a single operation
-func (e *EchoReplayCodec) WriteFrameBatch(frames []*rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) WriteFrameBatch(frames []*rtapi.LobbySessionStateFrame) error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -165,7 +166,7 @@ func (e *EchoReplayCodec) WriteFrameBatch(frames []*rtapi.LobbySessionStateFrame
 }
 
 // FlushBuffer forces a flush of the internal buffer (useful for periodic flushing)
-func (e *EchoReplayCodec) FlushBuffer() error {
+func (e *EchoReplay) FlushBuffer() error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -176,7 +177,7 @@ func (e *EchoReplayCodec) FlushBuffer() error {
 }
 
 // GetBufferSize returns the current size of the internal buffer
-func (e *EchoReplayCodec) GetBufferSize() int {
+func (e *EchoReplay) GetBufferSize() int {
 	if e.frameBuffer == nil {
 		return 0
 	}
@@ -184,24 +185,45 @@ func (e *EchoReplayCodec) GetBufferSize() int {
 }
 
 // WriteReplayFrame writes a frame using optimized buffer operations (same approach as writer_replay_file.go)
-func (e *EchoReplayCodec) WriteReplayFrame(dst *bytes.Buffer, frame *rtapi.LobbySessionStateFrame) int {
-	// Get a JSON buffer from the pool
+func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *rtapi.LobbySessionStateFrame) int {
+	startLen := dst.Len()
 
-	sessionData, err := echoReplayerMarshaler.Marshal(frame.GetSession())
+	// 1. Timestamp
+	fastFormatTimestamp(e.timestampBuf[:], frame.Timestamp.AsTime())
+	dst.Write(e.timestampBuf[:23])
+
+	// 2. Separator
+	dst.WriteByte('\t')
+
+	// 3. Session
+	var err error
+	e.scratchBuf = e.scratchBuf[:0]
+	e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetSession())
 	if err != nil {
 		return 0
 	}
+	dst.Write(e.scratchBuf)
 
-	bonesData, err := json.Marshal(frame.GetPlayerBones())
+	// 4. Separator and Space
+	dst.WriteByte('\t')
+	dst.WriteByte(' ')
+
+	// 5. Player Bones
+	e.scratchBuf = e.scratchBuf[:0]
+	e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetPlayerBones())
 	if err != nil {
 		return 0
 	}
+	dst.Write(e.scratchBuf)
 
-	return e.writeReplayLine(dst, frame.Timestamp.AsTime(), sessionData, bonesData)
+	// 6. Newline
+	dst.WriteString("\r\n")
+
+	return dst.Len() - startLen
 }
 
 // Finalize writes the buffered data to the zip file and closes it
-func (e *EchoReplayCodec) Finalize() error {
+func (e *EchoReplay) Finalize() error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -223,7 +245,7 @@ func (e *EchoReplayCodec) Finalize() error {
 }
 
 // ReadFrame reads the next frame from the .echoreplay file
-func (e *EchoReplayCodec) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
+func (e *EchoReplay) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 	if e.scanner == nil {
 		return nil, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -252,40 +274,21 @@ func (e *EchoReplayCodec) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 }
 
 // HasNext checks if there are more frames to read
-func (e *EchoReplayCodec) HasNext() bool {
+func (e *EchoReplay) HasNext() bool {
 	return e.scanner != nil && e.scanner.Err() == nil
 }
 
-func (e *EchoReplayCodec) writeReplayLine(dst *bytes.Buffer, ts time.Time, session, bones []byte) int {
-	// Format is "2006/01/02 15:04:05.000\t<json session data>\t<json bones data>\r\n"
-	timestamp := ts.Format(EchoReplayTimeFormat)
-
-	dataSize := len(timestamp) + 1 + len(session) + 1 + 1 + len(bones) + 2 // timestamp + tab + session + tab + bones + \r\n
-
-	dst.Grow(dataSize)
-	dst.WriteString(timestamp)
-	dst.WriteByte('\t') // Tab separator
-	dst.Write(session)
-	dst.WriteByte('\t') // Tab separator
-	dst.WriteByte(' ')  // space
-	dst.Write(bones)
-	dst.WriteString("\r\n") // Carriage return + newline
-
-	return dataSize
-}
-
 // parseFrameLine parses a single line into a frame
-func (e *EchoReplayCodec) parseFrameLine(line []byte) (*rtapi.LobbySessionStateFrame, error) {
+func (e *EchoReplay) parseFrameLine(line []byte) (*rtapi.LobbySessionStateFrame, error) {
 	parts := bytes.Split(line, []byte("\t"))
 	if len(parts) < 3 {
 		return nil, fmt.Errorf("invalid line format")
 	}
 
 	// Parse timestamp
-	timestampStr := string(parts[0])
-	timestamp, err := time.Parse(EchoReplayTimeFormat, timestampStr)
+	timestamp, err := fastParseTimestamp(parts[0])
 	if err != nil {
-		return nil, fmt.Errorf("invalid timestamp format: %s", timestampStr)
+		return nil, fmt.Errorf("invalid timestamp format: %s", string(parts[0]))
 	}
 
 	// Parse session data
@@ -321,7 +324,7 @@ func (e *EchoReplayCodec) parseFrameLine(line []byte) (*rtapi.LobbySessionStateF
 // This avoids allocations by reusing the caller's slice.
 // Returns the number of frames read and any error encountered.
 // If the slice is filled before EOF, it returns the count with no error.
-func (e *EchoReplayCodec) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error) {
+func (e *EchoReplay) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error) {
 	if e.scanner == nil {
 		return 0, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -343,7 +346,7 @@ func (e *EchoReplayCodec) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, e
 }
 
 // ReadFrames reads all frames from the .echoreplay file
-func (e *EchoReplayCodec) ReadFrames() ([]*rtapi.LobbySessionStateFrame, error) {
+func (e *EchoReplay) ReadFrames() ([]*rtapi.LobbySessionStateFrame, error) {
 	var frames []*rtapi.LobbySessionStateFrame
 
 	for {
@@ -361,7 +364,7 @@ func (e *EchoReplayCodec) ReadFrames() ([]*rtapi.LobbySessionStateFrame, error) 
 }
 
 // Close closes the codec and underlying files
-func (e *EchoReplayCodec) Close() error {
+func (e *EchoReplay) Close() error {
 	var err error
 
 	if e.replayFile != nil {
@@ -399,7 +402,7 @@ func (e *EchoReplayCodec) Close() error {
 // ReadFrameTo reads the next frame into the provided frame object to avoid allocations.
 // Returns true if a frame was read, false if EOF or error.
 // The frame parameter must be non-nil.
-func (e *EchoReplayCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+func (e *EchoReplay) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
 	if e.scanner == nil {
 		return false, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -427,7 +430,7 @@ func (e *EchoReplayCodec) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool
 }
 
 // parseFrameLineTo parses a single line into the provided frame object
-func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) parseFrameLineTo(line []byte, frame *rtapi.LobbySessionStateFrame) error {
 	// Find tab positions to avoid bytes.Split allocation
 	firstTab := bytes.IndexByte(line, '\t')
 	if firstTab == -1 {
@@ -440,12 +443,9 @@ func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessio
 	}
 	secondTab += firstTab + 1
 
-	// Parse timestamp - reuse buffer to avoid allocation
-	if firstTab > len(e.timestampBuf) {
-		return fmt.Errorf("timestamp too long")
-	}
-	copy(e.timestampBuf[:], line[:firstTab])
-	timestamp, err := time.ParseInLocation(EchoReplayTimeFormat, string(e.timestampBuf[:firstTab]), time.Local)
+	// Parse timestamp
+	tsBytes := line[:firstTab]
+	timestamp, err := fastParseTimestamp(tsBytes)
 	if err != nil {
 		return fmt.Errorf("invalid timestamp format")
 	}
@@ -455,7 +455,7 @@ func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessio
 	if frame.Session == nil {
 		frame.Session = &apigame.SessionResponse{}
 	}
-	if err := json.Unmarshal(sessionBytes, frame.Session); err != nil {
+	if err := e.unmarshaler.Unmarshal(sessionBytes, frame.Session); err != nil {
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
@@ -470,7 +470,7 @@ func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessio
 		if frame.PlayerBones == nil {
 			frame.PlayerBones = &apigame.PlayerBonesResponse{}
 		}
-		if err := json.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
+		if err := e.unmarshaler.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
 			return fmt.Errorf("failed to unmarshal player bones data: %w", err)
 		}
 	} else {
@@ -486,4 +486,67 @@ func (e *EchoReplayCodec) parseFrameLineTo(line []byte, frame *rtapi.LobbySessio
 	}
 
 	return nil
+}
+
+func fastParseTimestamp(buf []byte) (time.Time, error) {
+	if len(buf) != 23 {
+		return time.Time{}, &time.ParseError{Layout: EchoReplayTimeFormat, Value: string(buf), Message: "invalid length"}
+	}
+
+	// 2006/01/02 15:04:05.000
+	// 01234567890123456789012
+
+	year := int(buf[0]-'0')*1000 + int(buf[1]-'0')*100 + int(buf[2]-'0')*10 + int(buf[3]-'0')
+	month := time.Month(int(buf[5]-'0')*10 + int(buf[6]-'0'))
+	day := int(buf[8]-'0')*10 + int(buf[9]-'0')
+	hour := int(buf[11]-'0')*10 + int(buf[12]-'0')
+	min := int(buf[14]-'0')*10 + int(buf[15]-'0')
+	sec := int(buf[17]-'0')*10 + int(buf[18]-'0')
+	ms := int(buf[20]-'0')*100 + int(buf[21]-'0')*10 + int(buf[22]-'0')
+
+	return time.Date(year, month, day, hour, min, sec, ms*1000000, time.Local), nil
+}
+
+func fastFormatTimestamp(dst []byte, t time.Time) {
+	// 2006/01/02 15:04:05.000
+	year, month, day := t.Date()
+	hour, min, sec := t.Clock()
+	ms := t.Nanosecond() / 1000000
+
+	// Year
+	dst[0] = byte(year/1000) + '0'
+	dst[1] = byte((year/100)%10) + '0'
+	dst[2] = byte((year/10)%10) + '0'
+	dst[3] = byte(year%10) + '0'
+	dst[4] = '/'
+
+	// Month
+	dst[5] = byte(month/10) + '0'
+	dst[6] = byte(month%10) + '0'
+	dst[7] = '/'
+
+	// Day
+	dst[8] = byte(day/10) + '0'
+	dst[9] = byte(day%10) + '0'
+	dst[10] = ' '
+
+	// Hour
+	dst[11] = byte(hour/10) + '0'
+	dst[12] = byte(hour%10) + '0'
+	dst[13] = ':'
+
+	// Minute
+	dst[14] = byte(min/10) + '0'
+	dst[15] = byte(min%10) + '0'
+	dst[16] = ':'
+
+	// Second
+	dst[17] = byte(sec/10) + '0'
+	dst[18] = byte(sec%10) + '0'
+	dst[19] = '.'
+
+	// Millisecond
+	dst[20] = byte(ms/100) + '0'
+	dst[21] = byte((ms/10)%10) + '0'
+	dst[22] = byte(ms%10) + '0'
 }

@@ -1,4 +1,4 @@
-package nevrcap
+package conversion
 
 import (
 	"errors"
@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevrcap/pkg/codecs"
+	"github.com/echotools/nevrcap/pkg/events"
+	"github.com/echotools/nevrcap/pkg/processing"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -14,7 +17,7 @@ import (
 // ConvertEchoReplayToNevrcap converts a .echoreplay file to a .nevrcap file
 func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	// Read the .echoreplay file
-	echoReader, err := NewEchoReplayFileReader(echoReplayPath)
+	echoReader, err := codecs.NewEchoReplayReader(echoReplayPath)
 	if err != nil {
 		return fmt.Errorf("failed to open echoreplay file: %w", err)
 	}
@@ -26,7 +29,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	}
 
 	// Create the .nevrcap file
-	nevrcapWriter, err := NewNEVRCapWriter(nevrcapPath)
+	nevrcapWriter, err := codecs.NewNevrCapWriter(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to create nevrcap file: %w", err)
 	}
@@ -48,7 +51,8 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	}
 
 	// Process frames with event detection
-	frameProcessor := NewFrameProcessor()
+	// Use synchronous processing to ensure events are captured immediately
+	frameProcessor := processing.NewWithDetector(events.New(events.WithSynchronousProcessing()))
 	for i, frame := range frames {
 		// Re-process the frame to generate events if not already present
 		if len(frame.Events) == 0 && frame.Session != nil {
@@ -77,6 +81,14 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 				return fmt.Errorf("failed to process frame %d: %w", i, err)
 			}
 
+			// Check for events immediately (synchronous processing ensures they are ready)
+			select {
+			case events := <-frameProcessor.EventsChan():
+				processedFrame.Events = append(processedFrame.Events, events...)
+			default:
+				// No events
+			}
+
 			// Use the processed frame with events
 			frame = processedFrame
 		}
@@ -92,7 +104,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 // ConvertNevrcapToEchoReplay converts a .nevrcap file to a .echoreplay file
 func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	// Read the .nevrcap file
-	nevrcapReader, err := NewNEVRCapReader(nevrcapPath)
+	nevrcapReader, err := codecs.NewNevrCapReader(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to open nevrcap file: %w", err)
 	}
@@ -105,7 +117,7 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	}
 
 	// Create the .echoreplay file
-	echoWriter, err := NewEchoReplayCodecWriter(echoReplayPath)
+	echoWriter, err := codecs.NewEchoReplayWriter(echoReplayPath)
 	if err != nil {
 		return fmt.Errorf("failed to create echoreplay file: %w", err)
 	}
