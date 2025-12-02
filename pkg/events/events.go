@@ -73,6 +73,7 @@ type AsyncDetector struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	stopOnce   sync.Once
 
 	// Reusable buffer for events to reduce allocations
 	eventBuffer []*rtapi.LobbySessionEvent
@@ -111,9 +112,11 @@ func (ed *AsyncDetector) Start() {
 
 // Stop gracefully shuts down the event detector
 func (ed *AsyncDetector) Stop() {
-	ed.cancel()
-	ed.wg.Wait()
-	close(ed.eventsChan)
+	ed.stopOnce.Do(func() {
+		ed.cancel()
+		ed.wg.Wait()
+		close(ed.eventsChan)
+	})
 }
 
 // Reset clears the event detector state
@@ -203,11 +206,28 @@ func (ed *AsyncDetector) processLoop() {
 				case ed.eventsChan <- eventsToSend:
 					// Events sent successfully
 				case <-ed.ctx.Done():
+					// Context cancelled, drain inputChan and exit
+					ed.drainInputChan()
 					return
 				}
 			}
 
 		case <-ed.ctx.Done():
+			// Context cancelled, drain inputChan before exiting
+			ed.drainInputChan()
+			return
+		}
+	}
+}
+
+// drainInputChan drains any remaining frames from inputChan to prevent resource leaks
+func (ed *AsyncDetector) drainInputChan() {
+	for {
+		select {
+		case <-ed.inputChan:
+			// Discard frame
+		default:
+			// Channel is empty
 			return
 		}
 	}
