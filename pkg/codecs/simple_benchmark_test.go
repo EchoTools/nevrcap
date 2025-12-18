@@ -37,3 +37,15 @@ func BenchmarkOptimizedWriteFrame(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkFixProtojsonUint64Encoding(b *testing.B) {
+	// Realistic JSON with multiple players having userids
+	input := []byte(`{"sessionid":"ABC-123","rules_changed_at":"1702857600000000000","teams":[{"team":"BLUE","players":[{"name":"Player1","userid":"4355631379520676917","level":50},{"name":"Player2","userid":"1234567890123456789","level":30}]},{"team":"ORANGE","players":[{"name":"Player3","userid":"9876543210987654321","level":45}]}]}`)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		_ = FixProtojsonUint64Encoding(input)
+	}
+}
