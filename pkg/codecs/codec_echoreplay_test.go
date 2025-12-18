@@ -105,3 +105,52 @@ func TestEchoReplayReader_Resilience(t *testing.T) {
 		t.Errorf("Expected second frame session 5, got %s", frames[1].Session.SessionId)
 	}
 }
+
+// TestFixProtojsonUint64Encoding tests the uint64 string-to-number conversion
+func TestFixProtojsonUint64Encoding(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "userid string to number",
+			input:    `{"name":"Test","userid":"4355631379520676917","level":50}`,
+			expected: `{"name":"Test","userid":4355631379520676917,"level":50}`,
+		},
+		{
+			name:     "rules_changed_at string to number",
+			input:    `{"sessionid":"ABC","rules_changed_at":"1234567890123456789"}`,
+			expected: `{"sessionid":"ABC","rules_changed_at":1234567890123456789}`,
+		},
+		{
+			name:     "both fields in same JSON",
+			input:    `{"userid":"123","rules_changed_at":"456","other":"value"}`,
+			expected: `{"userid":123,"rules_changed_at":456,"other":"value"}`,
+		},
+		{
+			name:     "zero values",
+			input:    `{"userid":"0","rules_changed_at":"0"}`,
+			expected: `{"userid":0,"rules_changed_at":0}`,
+		},
+		{
+			name:     "no uint64 fields - unchanged",
+			input:    `{"name":"Test","level":50}`,
+			expected: `{"name":"Test","level":50}`,
+		},
+		{
+			name:     "multiple players with userids",
+			input:    `{"players":[{"userid":"111"},{"userid":"222"}]}`,
+			expected: `{"players":[{"userid":111},{"userid":222}]}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := FixProtojsonUint64Encoding([]byte(tt.input))
+			if string(result) != tt.expected {
+				t.Errorf("FixProtojsonUint64Encoding() = %q, want %q", string(result), tt.expected)
+			}
+		})
+	}
+}

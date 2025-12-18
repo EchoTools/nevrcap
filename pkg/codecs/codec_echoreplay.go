@@ -22,6 +22,12 @@ const (
 
 var (
 	ErrCodecNotConfiguredForWriting = fmt.Errorf("codec not configured for writing")
+
+	// Byte patterns for converting protojson string-encoded uint64 to numbers.
+	// protojson encodes uint64 as JSON strings per proto3 spec, but the original game engine
+	// outputs them as raw numbers. Third-party parsers expect the original format.
+	useridPattern         = []byte(`"userid":"`)
+	rulesChangedAtPattern = []byte(`"rules_changed_at":"`)
 )
 
 // Use protojson marshaling for compatibility with existing format
@@ -196,31 +202,105 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *rtapi.LobbySessi
 	// 2. Separator
 	dst.WriteByte('\t')
 
-	// 3. Session
+	// 3. Session - marshal and fix uint64 string encoding
 	var err error
 	e.scratchBuf = e.scratchBuf[:0]
 	e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetSession())
 	if err != nil {
 		return 0
 	}
+	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
 	dst.Write(e.scratchBuf)
 
 	// 4. Separator and Space
 	dst.WriteByte('\t')
 	dst.WriteByte(' ')
 
-	// 5. Player Bones
+	// 5. Player Bones - marshal and fix uint64 string encoding
 	e.scratchBuf = e.scratchBuf[:0]
 	e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetPlayerBones())
 	if err != nil {
 		return 0
 	}
+	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
 	dst.Write(e.scratchBuf)
 
 	// 6. Newline
 	dst.WriteString("\r\n")
 
 	return dst.Len() - startLen
+}
+
+// FixProtojsonUint64Encoding converts protojson string-encoded uint64 fields back to raw numbers.
+// protojson encodes uint64 as JSON strings per proto3 spec (e.g., "userid":"123"),
+// but the original game engine outputs them as numbers (e.g., "userid":123).
+// This function transforms the JSON to match the original game format for compatibility
+// with third-party echoreplay parsers.
+//
+// This implementation uses direct byte manipulation for performance, avoiding regex overhead.
+func FixProtojsonUint64Encoding(data []byte) []byte {
+	// Process all occurrences of "userid":"<digits>" -> "userid":<digits>
+	data = fixStringEncodedNumber(data, useridPattern)
+	// Process all occurrences of "rules_changed_at":"<digits>" -> "rules_changed_at":<digits>
+	data = fixStringEncodedNumber(data, rulesChangedAtPattern)
+	return data
+}
+
+// fixStringEncodedNumber finds pattern (e.g. `"userid":"`) and removes the quotes around the following number.
+// Transforms: "userid":"123" -> "userid":123
+func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
+	result := data
+	offset := 0
+
+	for {
+		// Find the pattern starting from current offset
+		idx := bytes.Index(result[offset:], pattern)
+		if idx == -1 {
+			break
+		}
+		idx += offset // Adjust to absolute position
+
+		// Position after the pattern (start of the number string)
+		numStart := idx + len(pattern)
+		if numStart >= len(result) {
+			break
+		}
+
+		// Find the closing quote of the number
+		numEnd := numStart
+		for numEnd < len(result) && result[numEnd] >= '0' && result[numEnd] <= '9' {
+			numEnd++
+		}
+
+		// Verify the number ends with a quote
+		if numEnd >= len(result) || result[numEnd] != '"' {
+			offset = numEnd
+			continue
+		}
+
+		// We found: pattern + digits + quote
+		// Remove: the quote before digits (last char of pattern) and the quote after digits
+		// Before: "userid":"123"
+		// After:  "userid":123
+
+		// Create new slice without the two quotes around the number
+		// Pattern ends with `:"` so we keep everything up to the last quote of pattern
+		patternEndQuote := idx + len(pattern) - 1 // Position of quote before number
+		closingQuote := numEnd                    // Position of quote after number
+
+		newLen := len(result) - 2 // Removing 2 quotes
+		newData := make([]byte, newLen)
+
+		// Copy: [0, patternEndQuote) + [numStart, closingQuote) + [closingQuote+1, end)
+		n := copy(newData, result[:patternEndQuote])
+		n += copy(newData[n:], result[numStart:closingQuote])
+		copy(newData[n:], result[closingQuote+1:])
+
+		result = newData
+		offset = patternEndQuote + (numEnd - numStart) // Move past the fixed number
+	}
+
+	return result
 }
 
 // Finalize writes the buffered data to the zip file and closes it
