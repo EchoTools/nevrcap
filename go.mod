@@ -1,4 +1,4 @@
-module github.com/echotools/nevrcap
+module github.com/echotools/nevrcap/v3
 
 go 1.25
 

@@ -19,7 +19,7 @@ func TestFrameProcessor(t *testing.T) {
 	userBonesData := createTestUserBonesData(t)
 
 	// Process first frame
-	frame1, err := processor.ProcessFrame(sessionData, userBonesData, time.Now())
+	frame1, err := processor.ProcessAndDetectEvents(sessionData, userBonesData, time.Now())
 	if err != nil {
 		t.Fatalf("Failed to process first frame: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestFrameProcessor(t *testing.T) {
 	modifiedSessionData := createModifiedSessionData(t)
 
 	// Process second frame
-	frame2, err := processor.ProcessFrame(modifiedSessionData, userBonesData, time.Now().Add(time.Millisecond))
+	frame2, err := processor.ProcessAndDetectEvents(modifiedSessionData, userBonesData, time.Now().Add(time.Millisecond))
 	if err != nil {
 		t.Fatalf("Failed to process second frame: %v", err)
 	}
@@ -130,14 +130,14 @@ func TestFrameProcessor_InvalidJSON(t *testing.T) {
 	processor := New()
 
 	// Invalid session data
-	_, err := processor.ProcessFrame([]byte("{invalid-json"), nil, time.Now())
+	_, err := processor.ProcessAndDetectEvents([]byte("{invalid-json"), nil, time.Now())
 	if err == nil {
 		t.Error("Expected error for invalid session JSON, got nil")
 	}
 
 	// Valid session, invalid bones
 	sessionData := createTestSessionData(t)
-	_, err = processor.ProcessFrame(sessionData, []byte("{invalid-bones"), time.Now())
+	_, err = processor.ProcessAndDetectEvents(sessionData, []byte("{invalid-bones"), time.Now())
 	if err == nil {
 		t.Error("Expected error for invalid bones JSON, got nil")
 	}
@@ -175,7 +175,7 @@ func TestFrameProcessor_Delegation(t *testing.T) {
 	userBonesData := createTestUserBonesData(t)
 
 	// Process a frame
-	_, err := processor.ProcessFrame(sessionData, userBonesData, time.Now())
+	_, err := processor.ProcessAndDetectEvents(sessionData, userBonesData, time.Now())
 	if err != nil {
 		t.Fatalf("ProcessFrame failed: %v", err)
 	}

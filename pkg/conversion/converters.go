@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
-	"github.com/echotools/nevrcap/pkg/codecs"
-	"github.com/echotools/nevrcap/pkg/events"
-	"github.com/echotools/nevrcap/pkg/processing"
+	"github.com/echotools/nevrcap/v3/pkg/codecs"
+	"github.com/echotools/nevrcap/v3/pkg/events"
+	"github.com/echotools/nevrcap/v3/pkg/processing"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -76,7 +76,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 				}
 			}
 
-			processedFrame, err := frameProcessor.ProcessFrame(sessionData, userBonesData, frame.Timestamp.AsTime())
+			processedFrame, err := frameProcessor.ProcessAndDetectEvents(sessionData, userBonesData, frame.Timestamp.AsTime())
 			if err != nil {
 				return fmt.Errorf("failed to process frame %d: %w", i, err)
 			}

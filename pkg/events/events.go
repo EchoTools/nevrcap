@@ -9,9 +9,13 @@ import (
 
 // Detector defines the behavior required to process frames and emit lobby events.
 type Detector interface {
+	// ProcessFrame processes a frame for event detection
 	ProcessFrame(*rtapi.LobbySessionStateFrame)
+	// EventsChan returns a channel to receive detected events
 	EventsChan() <-chan []*rtapi.LobbySessionEvent
+	// Reset clears the detector state
 	Reset()
+	// Stop gracefully shuts down the detector
 	Stop()
 }
 
