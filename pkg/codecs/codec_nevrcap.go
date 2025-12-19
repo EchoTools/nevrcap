@@ -4,7 +4,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 )
@@ -59,7 +59,7 @@ func NewNevrCapReader(filename string) (*NevrCap, error) {
 }
 
 // WriteHeader writes the nevrcap header to the file
-func (z *NevrCap) WriteHeader(header *rtapi.TelemetryHeader) error {
+func (z *NevrCap) WriteHeader(header *telemetry.TelemetryHeader) error {
 	data, err := proto.Marshal(header)
 	if err != nil {
 		return err
@@ -81,13 +81,13 @@ func (z *NevrCap) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 }
 
 // ReadHeader reads the nevrcap header from the file
-func (z *NevrCap) ReadHeader() (*rtapi.TelemetryHeader, error) {
+func (z *NevrCap) ReadHeader() (*telemetry.TelemetryHeader, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
 	}
 
-	header := &rtapi.TelemetryHeader{}
+	header := &telemetry.TelemetryHeader{}
 	err = proto.Unmarshal(data, header)
 	if err != nil {
 		return nil, err

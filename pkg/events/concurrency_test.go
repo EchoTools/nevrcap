@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 )
 
 func TestAsyncDetector_ConcurrentReset(t *testing.T) {
@@ -85,7 +85,7 @@ func (m *mockSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetr
 	// We use RoundEnded as a placeholder since we don't have Custom event type easily accessible
 	return &telemetry.LobbySessionEvent{
 		Event: &telemetry.LobbySessionEvent_RoundEnded{
-			RoundEnded: &rtapi.RoundEnded{},
+			RoundEnded: &telemetry.RoundEnded{},
 		},
 	}
 }

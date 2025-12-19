@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 )
 
 var (
@@ -41,13 +41,13 @@ func (ed *AsyncDetector) detectPostMatchEvent(i int, dst []*telemetry.LobbySessi
 	case GameStatusRoundOver:
 		return append(dst, &telemetry.LobbySessionEvent{
 			Event: &telemetry.LobbySessionEvent_RoundEnded{
-				RoundEnded: &rtapi.RoundEnded{},
+				RoundEnded: &telemetry.RoundEnded{},
 			},
 		})
 	case GameStatusPostMatch:
 		return append(dst, &telemetry.LobbySessionEvent{
 			Event: &telemetry.LobbySessionEvent_MatchEnded{
-				MatchEnded: &rtapi.MatchEnded{},
+				MatchEnded: &telemetry.MatchEnded{},
 			},
 		})
 	}

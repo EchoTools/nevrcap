@@ -2,6 +2,8 @@ package events
 
 import (
 	"testing"
+
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 )
 
 func BenchmarkAsyncDetector_detectPostMatchEventRoundOver(b *testing.B) {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 )
 
 // TestInputChannelDraining validates that inputChan is properly drained when Stop() is called

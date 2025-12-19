@@ -6,7 +6,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -85,7 +85,7 @@ func TestZstdCodec(t *testing.T) {
 	}
 
 	// Write header
-	header := &rtapi.TelemetryHeader{
+	header := &telemetry.TelemetryHeader{
 		CaptureId: "test-capture",
 		CreatedAt: timestamppb.Now(),
 		Metadata: map[string]string{
