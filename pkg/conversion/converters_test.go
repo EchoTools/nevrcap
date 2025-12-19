@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 	"github.com/echotools/nevrcap/v3/pkg/codecs"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

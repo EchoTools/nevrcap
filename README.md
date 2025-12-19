@@ -70,7 +70,7 @@ if err != nil {
 defer writer.Close()
 
 // Write header
-header := &rtapi.TelemetryHeader{
+header := &telemetry.TelemetryHeader{
     CaptureId: uuid.Must(uuiid.NewV4()),
     CreatedAt: timestamppb.Now(),
 }
