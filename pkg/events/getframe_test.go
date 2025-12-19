@@ -2,8 +2,6 @@ package events
 
 import (
 	"testing"
-
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 )
 
 func TestAsyncDetector_getFrame(t *testing.T) {
@@ -151,14 +149,14 @@ func TestAsyncDetector_getFrame(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create detector with specific buffer size
 			ed := &AsyncDetector{
-				frameBuffer: make([]*rtapi.LobbySessionStateFrame, tt.bufferSize),
+				frameBuffer: make([]*telemetry.LobbySessionStateFrame, tt.bufferSize),
 				writeIndex:  0,
 				frameCount:  0,
 			}
 
 			// Add frames with unique IDs (using FrameIndex field as identifier)
 			for i := 0; i < tt.framesToAdd; i++ {
-				frame := &rtapi.LobbySessionStateFrame{
+				frame := &telemetry.LobbySessionStateFrame{
 					FrameIndex: uint32(i), // Use as unique identifier
 				}
 				ed.addFrameToBuffer(frame)
@@ -193,14 +191,14 @@ func TestAsyncDetector_getFrame_SequentialAccess(t *testing.T) {
 	framesToAdd := 7
 
 	ed := &AsyncDetector{
-		frameBuffer: make([]*rtapi.LobbySessionStateFrame, bufferSize),
+		frameBuffer: make([]*telemetry.LobbySessionStateFrame, bufferSize),
 		writeIndex:  0,
 		frameCount:  0,
 	}
 
 	// Add frames
 	for i := 0; i < framesToAdd; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 		}
 		ed.addFrameToBuffer(frame)

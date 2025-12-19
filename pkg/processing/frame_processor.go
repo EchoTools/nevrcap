@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"github.com/echotools/nevrcap/v3/pkg/events"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -41,7 +40,7 @@ func NewWithDetector(det events.Detector) *Processor {
 // ProcessAndDetectEvents takes raw session and user bones data, unmarshals it, and sends it through the event detector
 // This is optimized for high-frequency invocation (up to 600 Hz)
 // Note: Events are now processed asynchronously and can be received via EventDetector.EventsChan()
-func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData []byte, timestamp time.Time) (*rtapi.LobbySessionStateFrame, error) {
+func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData []byte, timestamp time.Time) (*telemetry.LobbySessionStateFrame, error) {
 	// Reset the pre-allocated structs to avoid allocations
 	// Pre-allocated structs to avoid memory allocations
 	sessionResponse := &apigame.SessionResponse{}
@@ -60,7 +59,7 @@ func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData [
 	}
 
 	// Create the frame
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex:  fp.frameIndex,
 		Timestamp:   timestamppb.New(timestamp),
 		Session:     sessionResponse,
@@ -75,12 +74,12 @@ func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData [
 }
 
 // DetectEvents queues a frame for event detection
-func (p *Processor) DetectEvents(f *rtapi.LobbySessionStateFrame) {
+func (p *Processor) DetectEvents(f *telemetry.LobbySessionStateFrame) {
 	p.eventDetector.ProcessFrame(f)
 }
 
 // EventsChan returns the channel for receiving detected events
-func (fp *Processor) EventsChan() <-chan []*rtapi.LobbySessionEvent {
+func (fp *Processor) EventsChan() <-chan []*telemetry.LobbySessionEvent {
 	return fp.eventDetector.EventsChan()
 }
 

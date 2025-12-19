@@ -27,7 +27,7 @@ func TestAsyncDetector_ConcurrentReset(t *testing.T) {
 			case <-done:
 				return
 			default:
-				frame := &rtapi.LobbySessionStateFrame{
+				frame := &telemetry.LobbySessionStateFrame{
 					FrameIndex: uint32(i),
 					Session: &apigame.SessionResponse{
 						GameStatus: "playing",
@@ -77,14 +77,14 @@ type mockSensor struct {
 	id string
 }
 
-func (m *mockSensor) AddFrame(frame *rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent {
+func (m *mockSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
 	if frame == nil {
 		return nil
 	}
 	// Return an event every time
 	// We use RoundEnded as a placeholder since we don't have Custom event type easily accessible
-	return &rtapi.LobbySessionEvent{
-		Event: &rtapi.LobbySessionEvent_RoundEnded{
+	return &telemetry.LobbySessionEvent{
+		Event: &telemetry.LobbySessionEvent_RoundEnded{
 			RoundEnded: &rtapi.RoundEnded{},
 		},
 	}
@@ -99,7 +99,7 @@ func TestAsyncDetector_MultipleSensors(t *testing.T) {
 	defer detector.Stop()
 
 	// Process a frame
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
 		Session: &apigame.SessionResponse{
 			GameStatus: "playing",

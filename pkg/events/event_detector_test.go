@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 )
 
 func TestAsyncDetector_ProcessFrameRoundOverTransition(t *testing.T) {
@@ -69,7 +68,7 @@ func TestAsyncDetector_ProcessFrameNoTransitionNoEvent(t *testing.T) {
 func TestAsyncDetector_ProcessFrameNilSession(t *testing.T) {
 	detector := newTestAsyncDetector(t)
 
-	detector.ProcessFrame(&rtapi.LobbySessionStateFrame{})
+	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{})
 	assertNoEvents(t, detector, 50*time.Millisecond)
 }
 
@@ -133,13 +132,13 @@ func TestAsyncDetector_SensorIntegrationReceivesFrames(t *testing.T) {
 
 func TestAsyncDetector_AddFrameToBufferWraps(t *testing.T) {
 	detector := &AsyncDetector{
-		frameBuffer: make([]*rtapi.LobbySessionStateFrame, DefaultFrameBufferCapacity),
+		frameBuffer: make([]*telemetry.LobbySessionStateFrame, DefaultFrameBufferCapacity),
 	}
 
 	totalFrames := DefaultFrameBufferCapacity + 3
-	frames := make([]*rtapi.LobbySessionStateFrame, totalFrames)
+	frames := make([]*telemetry.LobbySessionStateFrame, totalFrames)
 	for i := 0; i < totalFrames; i++ {
-		frame := &rtapi.LobbySessionStateFrame{FrameIndex: uint32(i)}
+		frame := &telemetry.LobbySessionStateFrame{FrameIndex: uint32(i)}
 		frames[i] = frame
 		detector.addFrameToBuffer(frame)
 	}
@@ -154,7 +153,7 @@ func TestAsyncDetector_AddFrameToBufferWraps(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventIgnoresInvalidIndex(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	if events := ed.detectPostMatchEvent(-1, nil); events != nil {
 		t.Fatalf("expected nil events for negative index, got %v", events)
 	}
@@ -164,7 +163,7 @@ func TestAsyncDetector_detectPostMatchEventIgnoresInvalidIndex(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventSkipsNilFrame(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	ed.frameBuffer[0] = nil
 	if events := ed.detectPostMatchEvent(0, nil); events != nil {
 		t.Fatalf("expected nil events for nil frame, got %v", events)
@@ -172,15 +171,15 @@ func TestAsyncDetector_detectPostMatchEventSkipsNilFrame(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventSkipsNilSession(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
-	ed.frameBuffer[0] = &rtapi.LobbySessionStateFrame{}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
+	ed.frameBuffer[0] = &telemetry.LobbySessionStateFrame{}
 	if events := ed.detectPostMatchEvent(0, nil); events != nil {
 		t.Fatalf("expected nil events for nil session, got %v", events)
 	}
 }
 
 func TestAsyncDetector_detectPostMatchEventSkipsRepeatedStatus(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	prev := newStatusOnlyFrame("playing")
 	ed.previousGameStatusFrame = prev
 	ed.frameBuffer[0] = newStatusOnlyFrame("playing")
@@ -193,7 +192,7 @@ func TestAsyncDetector_detectPostMatchEventSkipsRepeatedStatus(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventUpdatesPreviousOnTransition(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	prev := newStatusOnlyFrame("playing")
 	current := newStatusOnlyFrame(GameStatusRoundOver)
 	ed.previousGameStatusFrame = prev
@@ -207,7 +206,7 @@ func TestAsyncDetector_detectPostMatchEventUpdatesPreviousOnTransition(t *testin
 }
 
 func TestAsyncDetector_detectPostMatchEventEmitsRoundEnded(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	ed.previousGameStatusFrame = newStatusOnlyFrame("playing")
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusRoundOver)
 	events := ed.detectPostMatchEvent(0, nil)
@@ -220,7 +219,7 @@ func TestAsyncDetector_detectPostMatchEventEmitsRoundEnded(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventEmitsMatchEnded(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	ed.previousGameStatusFrame = newStatusOnlyFrame(GameStatusRoundOver)
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusPostMatch)
 	events := ed.detectPostMatchEvent(0, nil)
@@ -233,7 +232,7 @@ func TestAsyncDetector_detectPostMatchEventEmitsMatchEnded(t *testing.T) {
 }
 
 func TestAsyncDetector_detectPostMatchEventInitialMatchEnded(t *testing.T) {
-	ed := &AsyncDetector{frameBuffer: make([]*rtapi.LobbySessionStateFrame, 1)}
+	ed := &AsyncDetector{frameBuffer: make([]*telemetry.LobbySessionStateFrame, 1)}
 	ed.frameBuffer[0] = newStatusOnlyFrame(GameStatusPostMatch)
 	events := ed.detectPostMatchEvent(0, nil)
 	if len(events) != 1 {
@@ -254,7 +253,7 @@ func newTestAsyncDetector(tb testing.TB) *AsyncDetector {
 	return detector
 }
 
-func mustReceiveEvents(tb testing.TB, detector *AsyncDetector, timeout time.Duration) []*rtapi.LobbySessionEvent {
+func mustReceiveEvents(tb testing.TB, detector *AsyncDetector, timeout time.Duration) []*telemetry.LobbySessionEvent {
 	tb.Helper()
 	select {
 	case events, ok := <-detector.EventsChan():
@@ -283,16 +282,16 @@ func assertNoEvents(tb testing.TB, detector *AsyncDetector, timeout time.Duratio
 }
 
 type recordingSensor struct {
-	frames []*rtapi.LobbySessionStateFrame
+	frames []*telemetry.LobbySessionStateFrame
 }
 
-func (r *recordingSensor) AddFrame(frame *rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent {
+func (r *recordingSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
 	r.frames = append(r.frames, frame)
 	return nil
 }
 
-func newStatusOnlyFrame(status string) *rtapi.LobbySessionStateFrame {
-	return &rtapi.LobbySessionStateFrame{
+func newStatusOnlyFrame(status string) *telemetry.LobbySessionStateFrame {
+	return &telemetry.LobbySessionStateFrame{
 		Session: &apigame.SessionResponse{GameStatus: status},
 	}
 }

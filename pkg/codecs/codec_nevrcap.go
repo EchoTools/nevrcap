@@ -70,7 +70,7 @@ func (z *NevrCap) WriteHeader(header *rtapi.TelemetryHeader) error {
 }
 
 // WriteFrame writes a frame to the file
-func (z *NevrCap) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
+func (z *NevrCap) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 	data, err := proto.Marshal(frame)
 	if err != nil {
 		return err
@@ -97,13 +97,13 @@ func (z *NevrCap) ReadHeader() (*rtapi.TelemetryHeader, error) {
 }
 
 // ReadFrame reads a frame from the file
-func (z *NevrCap) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
+func (z *NevrCap) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
 	}
 
-	frame := &rtapi.LobbySessionStateFrame{}
+	frame := &telemetry.LobbySessionStateFrame{}
 	err = proto.Unmarshal(data, frame)
 	if err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func (z *NevrCap) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
 }
 
 // ReadFrameTo reads a frame into the provided frame object
-func (z *NevrCap) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+func (z *NevrCap) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		if err == io.EOF {

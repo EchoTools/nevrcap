@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 )
 
 // TestInputChannelDraining validates that inputChan is properly drained when Stop() is called
@@ -17,7 +16,7 @@ func TestInputChannelDraining(t *testing.T) {
 
 	// Fill the input channel with frames
 	for i := 0; i < 5; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &apigame.SessionResponse{
 				GameStatus: "playing",
@@ -31,7 +30,7 @@ func TestInputChannelDraining(t *testing.T) {
 
 	// Add more frames that might still be in the channel
 	for i := 5; i < 10; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &apigame.SessionResponse{
 				GameStatus: "playing",
@@ -67,7 +66,7 @@ func TestEventsChanRaceCondition(t *testing.T) {
 			case <-stopChan:
 				return
 			default:
-				frame := &rtapi.LobbySessionStateFrame{
+				frame := &telemetry.LobbySessionStateFrame{
 					FrameIndex: uint32(i),
 					Session: &apigame.SessionResponse{
 						GameStatus: "playing",
@@ -117,7 +116,7 @@ func TestStopWhileProcessingFrames(t *testing.T) {
 				case <-stopProducer:
 					return
 				default:
-					frame := &rtapi.LobbySessionStateFrame{
+					frame := &telemetry.LobbySessionStateFrame{
 						FrameIndex: uint32(i*1000 + producerID),
 						Session: &apigame.SessionResponse{
 							GameStatus: "playing",
@@ -167,7 +166,7 @@ func TestMultipleStopCalls(t *testing.T) {
 
 	// Process some frames
 	for i := 0; i < 5; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &apigame.SessionResponse{
 				GameStatus: "playing",

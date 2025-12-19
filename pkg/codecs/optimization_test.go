@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -20,7 +19,7 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	// Write a few frames
 	frameCount := 5
 	for i := 0; i < frameCount; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
 			Session: &apigame.SessionResponse{
@@ -42,7 +41,7 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	defer reader.Close()
 
 	// Pre-allocate frame
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		Session:     &apigame.SessionResponse{},
 		PlayerBones: &apigame.PlayerBonesResponse{},
 		Timestamp:   &timestamppb.Timestamp{},
@@ -91,7 +90,7 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 
 	totalFrames := 10
 	for i := 0; i < totalFrames; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			Timestamp: timestamppb.New(time.Now()),
 			Session:   &apigame.SessionResponse{SessionId: "test"},
 		}
@@ -107,10 +106,10 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 
 	// Create a buffer of frames
 	bufferSize := 3
-	buffer := make([]*rtapi.LobbySessionStateFrame, bufferSize)
+	buffer := make([]*telemetry.LobbySessionStateFrame, bufferSize)
 	// We need to initialize them if ReadTo expects to reuse them?
 	// Looking at codec_echoreplay.go:
-	// func (e *EchoReplay) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error) {
+	// func (e *EchoReplay) ReadTo(frames []*telemetry.LobbySessionStateFrame) (int, error) {
 	//    ...
 	//    frame, err := e.ReadFrame()
 	//    frames[count] = frame
@@ -147,7 +146,7 @@ func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
 
 	frameCount := 5
 	for i := 0; i < frameCount; i++ {
-		frame := &rtapi.LobbySessionStateFrame{
+		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
 			Session:    &apigame.SessionResponse{SessionId: "test"},
@@ -162,7 +161,7 @@ func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	}
 	defer reader.Close()
 
-	frame := &rtapi.LobbySessionStateFrame{}
+	frame := &telemetry.LobbySessionStateFrame{}
 
 	for i := 0; i < frameCount; i++ {
 		ok, err := reader.ReadFrameTo(frame)

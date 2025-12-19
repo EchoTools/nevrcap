@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -101,7 +100,7 @@ func createTestUserBonesData(t *testing.T) []byte {
 	return data
 }
 
-func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
+func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
 	sessionResponse := &apigame.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
@@ -117,10 +116,10 @@ func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
 		ErrCode:   0,
 	}
 
-	return &rtapi.LobbySessionStateFrame{
+	return &telemetry.LobbySessionStateFrame{
 		FrameIndex:  0,
 		Timestamp:   timestamppb.Now(),
-		Events:      []*rtapi.LobbySessionEvent{},
+		Events:      []*telemetry.LobbySessionEvent{},
 		Session:     sessionResponse,
 		PlayerBones: bonesResponse,
 	}
@@ -144,15 +143,15 @@ func TestFrameProcessor_InvalidJSON(t *testing.T) {
 }
 
 type mockDetector struct {
-	processedFrames []*rtapi.LobbySessionStateFrame
-	eventsChan      chan []*rtapi.LobbySessionEvent
+	processedFrames []*telemetry.LobbySessionStateFrame
+	eventsChan      chan []*telemetry.LobbySessionEvent
 }
 
-func (m *mockDetector) ProcessFrame(frame *rtapi.LobbySessionStateFrame) {
+func (m *mockDetector) ProcessFrame(frame *telemetry.LobbySessionStateFrame) {
 	m.processedFrames = append(m.processedFrames, frame)
 }
 
-func (m *mockDetector) EventsChan() <-chan []*rtapi.LobbySessionEvent {
+func (m *mockDetector) EventsChan() <-chan []*telemetry.LobbySessionEvent {
 	return m.eventsChan
 }
 
@@ -166,7 +165,7 @@ func (m *mockDetector) Stop() {
 
 func TestFrameProcessor_Delegation(t *testing.T) {
 	mock := &mockDetector{
-		eventsChan: make(chan []*rtapi.LobbySessionEvent),
+		eventsChan: make(chan []*telemetry.LobbySessionEvent),
 	}
 
 	processor := NewWithDetector(mock)

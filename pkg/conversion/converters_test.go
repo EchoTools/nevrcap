@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
+	"github.com/echotools/nevr-common/v4/gen/go/telemetry"
 	"github.com/echotools/nevrcap/v3/pkg/codecs"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -67,7 +67,7 @@ func TestFileConversion(t *testing.T) {
 
 // Helper functions for creating test data
 
-func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
+func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
 	sessionResponse := &apigame.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
@@ -83,10 +83,10 @@ func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
 		ErrCode:   0,
 	}
 
-	return &rtapi.LobbySessionStateFrame{
+	return &telemetry.LobbySessionStateFrame{
 		FrameIndex:  0,
 		Timestamp:   timestamppb.Now(),
-		Events:      []*rtapi.LobbySessionEvent{},
+		Events:      []*telemetry.LobbySessionEvent{},
 		Session:     sessionResponse,
 		PlayerBones: bonesResponse,
 	}

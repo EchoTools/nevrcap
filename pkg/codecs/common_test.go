@@ -4,11 +4,10 @@ import (
 	"testing"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
+func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
 	sessionResponse := &apigame.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
@@ -24,10 +23,10 @@ func createTestFrame(t *testing.T) *rtapi.LobbySessionStateFrame {
 		ErrCode:   0,
 	}
 
-	return &rtapi.LobbySessionStateFrame{
+	return &telemetry.LobbySessionStateFrame{
 		FrameIndex:  0,
 		Timestamp:   timestamppb.Now(),
-		Events:      []*rtapi.LobbySessionEvent{},
+		Events:      []*telemetry.LobbySessionEvent{},
 		Session:     sessionResponse,
 		PlayerBones: bonesResponse,
 	}

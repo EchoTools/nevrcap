@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 )
 
 // TestSynchronousMode_BlockingBug validates that synchronous mode doesn't block
@@ -28,7 +27,7 @@ func TestSynchronousMode_BlockingBug(t *testing.T) {
 		// Process frames that generate events in synchronous mode
 		// First frame will send to channel, second frame will block waiting for consumer
 		for i := 0; i < 2; i++ {
-			detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
 				Session: &apigame.SessionResponse{
 					GameStatus: GameStatusPostMatch, // Generates match ended event
@@ -60,7 +59,7 @@ func TestSynchronousMode_ImmediateProcessing(t *testing.T) {
 	}()
 
 	// Process a frame that generates an event
-	detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
 		Session: &apigame.SessionResponse{
 			GameStatus: GameStatusPostMatch,
@@ -83,7 +82,7 @@ func TestSynchronousMode_NoBackgroundGoroutine(t *testing.T) {
 	defer detector.Stop()
 
 	// Process a frame
-	detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
 		Session: &apigame.SessionResponse{
 			GameStatus: "playing",
@@ -112,7 +111,7 @@ func TestAsyncMode_UsesBackgroundGoroutine(t *testing.T) {
 	}()
 
 	// Process a frame that generates an event
-	detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
 		Session: &apigame.SessionResponse{
 			GameStatus: GameStatusPostMatch,
@@ -138,7 +137,7 @@ func TestSynchronousMode_MultipleEventsWithConsumer(t *testing.T) {
 	defer detector.Stop()
 
 	// Start consumer before processing frames
-	eventsReceived := make(chan []*rtapi.LobbySessionEvent, 10)
+	eventsReceived := make(chan []*telemetry.LobbySessionEvent, 10)
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
@@ -151,7 +150,7 @@ func TestSynchronousMode_MultipleEventsWithConsumer(t *testing.T) {
 	// Each transition should generate an event
 	statuses := []string{"playing", GameStatusRoundOver, GameStatusPostMatch}
 	for i, status := range statuses {
-		detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+		detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &apigame.SessionResponse{
 				GameStatus: status,
@@ -192,7 +191,7 @@ func TestSynchronousMode_DropsEventsWhenChannelFull(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 5; i++ {
-			detector.ProcessFrame(&rtapi.LobbySessionStateFrame{
+			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
 				Session: &apigame.SessionResponse{
 					GameStatus: GameStatusPostMatch,

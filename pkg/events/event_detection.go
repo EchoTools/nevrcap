@@ -9,11 +9,11 @@ var (
 	GameStatusRoundOver = "round_over"
 )
 
-type detectionFunction func(i int, dst []*rtapi.LobbySessionEvent) []*rtapi.LobbySessionEvent
+type detectionFunction func(i int, dst []*telemetry.LobbySessionEvent) []*telemetry.LobbySessionEvent
 
 // detectPostMatchEvent checks if a post_match event should be triggered
 // Can use the frame ring buffer to analyze previous frames if needed
-func (ed *AsyncDetector) detectPostMatchEvent(i int, dst []*rtapi.LobbySessionEvent) []*rtapi.LobbySessionEvent {
+func (ed *AsyncDetector) detectPostMatchEvent(i int, dst []*telemetry.LobbySessionEvent) []*telemetry.LobbySessionEvent {
 	// Guard against invalid index
 	if i < 0 || i >= len(ed.frameBuffer) {
 		return dst
@@ -39,14 +39,14 @@ func (ed *AsyncDetector) detectPostMatchEvent(i int, dst []*rtapi.LobbySessionEv
 
 	switch curStatus {
 	case GameStatusRoundOver:
-		return append(dst, &rtapi.LobbySessionEvent{
-			Event: &rtapi.LobbySessionEvent_RoundEnded{
+		return append(dst, &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_RoundEnded{
 				RoundEnded: &rtapi.RoundEnded{},
 			},
 		})
 	case GameStatusPostMatch:
-		return append(dst, &rtapi.LobbySessionEvent{
-			Event: &rtapi.LobbySessionEvent_MatchEnded{
+		return append(dst, &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_MatchEnded{
 				MatchEnded: &rtapi.MatchEnded{},
 			},
 		})

@@ -4,16 +4,15 @@ import (
 	"testing"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // testSensor is a test helper that implements the Sensor interface with callback support
 type testSensor struct {
-	onAddFrame func(*rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent
+	onAddFrame func(*telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent
 }
 
-func (m *testSensor) AddFrame(frame *rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent {
+func (m *testSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
 	if m.onAddFrame != nil {
 		return m.onAddFrame(frame)
 	}
@@ -50,7 +49,7 @@ func TestEmptyFrameBufferBug(t *testing.T) {
 	// But lastFrame() correctly checks frameCount and returns nil
 
 	// Call detectEvents directly to test the bug
-	eventBuffer := make([]*rtapi.LobbySessionEvent, 0)
+	eventBuffer := make([]*telemetry.LobbySessionEvent, 0)
 
 	// This should not panic or cause issues
 	// With the bug: it will call sensor.AddFrame(nil) because lastFrame() returns nil
@@ -72,10 +71,10 @@ func TestEmptyFrameBufferBug(t *testing.T) {
 func TestEmptyFrameBufferWithSensor(t *testing.T) {
 	// Create a custom sensor that tracks what frame it receives
 	var frameReceivedByDetector bool
-	var receivedFrame *rtapi.LobbySessionStateFrame
+	var receivedFrame *telemetry.LobbySessionStateFrame
 
 	customSensor := &testSensor{
-		onAddFrame: func(frame *rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent {
+		onAddFrame: func(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
 			frameReceivedByDetector = true
 			receivedFrame = frame
 			return nil
@@ -91,7 +90,7 @@ func TestEmptyFrameBufferWithSensor(t *testing.T) {
 	defer detector.Stop()
 
 	// Call detectEvents on empty buffer
-	eventBuffer := make([]*rtapi.LobbySessionEvent, 0)
+	eventBuffer := make([]*telemetry.LobbySessionEvent, 0)
 	detector.detectEvents(eventBuffer)
 
 	// With the bug: sensor.AddFrame() gets called with nil because len(frameBuffer) != 0
@@ -107,10 +106,10 @@ func TestEmptyFrameBufferWithSensor(t *testing.T) {
 
 // TestFrameBufferAfterAddingFrame verifies normal operation after adding a frame
 func TestFrameBufferAfterAddingFrame(t *testing.T) {
-	var receivedFrame *rtapi.LobbySessionStateFrame
+	var receivedFrame *telemetry.LobbySessionStateFrame
 
 	customSensor := &testSensor{
-		onAddFrame: func(frame *rtapi.LobbySessionStateFrame) *rtapi.LobbySessionEvent {
+		onAddFrame: func(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
 			receivedFrame = frame
 			return nil
 		},
@@ -124,7 +123,7 @@ func TestFrameBufferAfterAddingFrame(t *testing.T) {
 	defer detector.Stop()
 
 	// Add a frame
-	testFrame := &rtapi.LobbySessionStateFrame{
+	testFrame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 42,
 		Timestamp:  timestamppb.Now(),
 		Session: &apigame.SessionResponse{
@@ -148,7 +147,7 @@ func TestFrameBufferAfterAddingFrame(t *testing.T) {
 	}
 
 	// Now detectEvents should work correctly
-	eventBuffer := make([]*rtapi.LobbySessionEvent, 0)
+	eventBuffer := make([]*telemetry.LobbySessionEvent, 0)
 	detector.detectEvents(eventBuffer)
 
 	// Sensor should have received the frame

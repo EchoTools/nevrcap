@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -150,7 +149,7 @@ func (e *EchoReplay) initScanner() error {
 }
 
 // WriteFrame writes a frame to the .echoreplay file using optimized buffer operations
-func (e *EchoReplay) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -161,7 +160,7 @@ func (e *EchoReplay) WriteFrame(frame *rtapi.LobbySessionStateFrame) error {
 }
 
 // WriteFrameBatch writes multiple frames efficiently in a single operation
-func (e *EchoReplay) WriteFrameBatch(frames []*rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) WriteFrameBatch(frames []*telemetry.LobbySessionStateFrame) error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
@@ -192,7 +191,7 @@ func (e *EchoReplay) GetBufferSize() int {
 }
 
 // WriteReplayFrame writes a frame using optimized buffer operations (same approach as writer_replay_file.go)
-func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *rtapi.LobbySessionStateFrame) int {
+func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbySessionStateFrame) int {
 	startLen := dst.Len()
 
 	// 1. Timestamp
@@ -326,7 +325,7 @@ func (e *EchoReplay) Finalize() error {
 }
 
 // ReadFrame reads the next frame from the .echoreplay file
-func (e *EchoReplay) ReadFrame() (*rtapi.LobbySessionStateFrame, error) {
+func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 	if e.scanner == nil {
 		return nil, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -360,7 +359,7 @@ func (e *EchoReplay) HasNext() bool {
 }
 
 // parseFrameLine parses a single line into a frame
-func (e *EchoReplay) parseFrameLine(line []byte) (*rtapi.LobbySessionStateFrame, error) {
+func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFrame, error) {
 	parts := bytes.Split(line, []byte("\t"))
 	if len(parts) < 3 {
 		return nil, fmt.Errorf("invalid line format")
@@ -385,7 +384,7 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*rtapi.LobbySessionStateFrame,
 	}
 
 	// Create frame
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(timestamp),
 		Session:   sessionResponse,
 	}
@@ -405,7 +404,7 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*rtapi.LobbySessionStateFrame,
 // This avoids allocations by reusing the caller's slice.
 // Returns the number of frames read and any error encountered.
 // If the slice is filled before EOF, it returns the count with no error.
-func (e *EchoReplay) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error) {
+func (e *EchoReplay) ReadTo(frames []*telemetry.LobbySessionStateFrame) (int, error) {
 	if e.scanner == nil {
 		return 0, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -427,8 +426,8 @@ func (e *EchoReplay) ReadTo(frames []*rtapi.LobbySessionStateFrame) (int, error)
 }
 
 // ReadFrames reads all frames from the .echoreplay file
-func (e *EchoReplay) ReadFrames() ([]*rtapi.LobbySessionStateFrame, error) {
-	var frames []*rtapi.LobbySessionStateFrame
+func (e *EchoReplay) ReadFrames() ([]*telemetry.LobbySessionStateFrame, error) {
+	var frames []*telemetry.LobbySessionStateFrame
 
 	for {
 		frame, err := e.ReadFrame()
@@ -483,7 +482,7 @@ func (e *EchoReplay) Close() error {
 // ReadFrameTo reads the next frame into the provided frame object to avoid allocations.
 // Returns true if a frame was read, false if EOF or error.
 // The frame parameter must be non-nil.
-func (e *EchoReplay) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, error) {
+func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
 	if e.scanner == nil {
 		return false, fmt.Errorf("codec not configured for reading or already closed")
 	}
@@ -511,7 +510,7 @@ func (e *EchoReplay) ReadFrameTo(frame *rtapi.LobbySessionStateFrame) (bool, err
 }
 
 // parseFrameLineTo parses a single line into the provided frame object
-func (e *EchoReplay) parseFrameLineTo(line []byte, frame *rtapi.LobbySessionStateFrame) error {
+func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySessionStateFrame) error {
 	// Find tab positions to avoid bytes.Split allocation
 	firstTab := bytes.IndexByte(line, '\t')
 	if firstTab == -1 {

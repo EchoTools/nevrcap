@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"github.com/gofrs/uuid/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -21,7 +20,7 @@ func BenchmarkOptimizedWriteFrame(b *testing.B) {
 	}
 	defer codec.Close()
 
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
 		Session: &apigame.SessionResponse{
 			SessionId: uuid.Must(uuid.NewV4()).String(),

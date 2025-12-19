@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -20,7 +19,7 @@ func BenchmarkReadFrameTo(b *testing.B) {
 	}
 
 	// Write 1000 sample frames
-	sampleFrame := &rtapi.LobbySessionStateFrame{
+	sampleFrame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
 		Session: &apigame.SessionResponse{
 			SessionId: "test-session-id",
@@ -46,7 +45,7 @@ func BenchmarkReadFrameTo(b *testing.B) {
 	defer reader.Close()
 
 	// Preallocate frame for reuse
-	frame := &rtapi.LobbySessionStateFrame{
+	frame := &telemetry.LobbySessionStateFrame{
 		Session:     &apigame.SessionResponse{},
 		PlayerBones: &apigame.PlayerBonesResponse{},
 		Timestamp:   &timestamppb.Timestamp{},
@@ -91,7 +90,7 @@ func BenchmarkNewEchoReplayReader(b *testing.B) {
 	}
 
 	// Write 1000 sample frames
-	sampleFrame := &rtapi.LobbySessionStateFrame{
+	sampleFrame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
 		Session: &apigame.SessionResponse{
 			SessionId: "test-session-id",

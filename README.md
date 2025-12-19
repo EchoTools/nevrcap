@@ -42,7 +42,7 @@ go test -bench=. -benchmem
 ### Frame Processing
 
 ```go
-import "github.com/echotools/nevrcap"
+import "github.com/echotools/nevrcap/v3"
 
 // Create processor
 processor := nevrcap.NewFrameProcessor()

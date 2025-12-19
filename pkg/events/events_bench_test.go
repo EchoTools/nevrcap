@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
-	"github.com/echotools/nevr-common/v4/gen/go/rtapi"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -29,7 +28,7 @@ func BenchmarkAsyncDetector_ProcessFrame(b *testing.B) {
 }
 
 func BenchmarkAsyncDetector_ProcessFrame_WithTransition(b *testing.B) {
-	frames := []*rtapi.LobbySessionStateFrame{
+	frames := []*telemetry.LobbySessionStateFrame{
 		createPostMatchTestFrame("playing", 2, 1),
 		createPostMatchTestFrame("post_match", 3, 1),
 	}
@@ -80,7 +79,7 @@ func BenchmarkAsyncDetector_ProcessFrame_FullBuffer(b *testing.B) {
 
 func BenchmarkAsyncDetector_ProcessFrame_Sequence(b *testing.B) {
 	// Pre-create all frames before timing
-	frames := make([]*rtapi.LobbySessionStateFrame, 100)
+	frames := make([]*telemetry.LobbySessionStateFrame, 100)
 	for j := 0; j < 100; j++ {
 		var status string
 		switch {
@@ -96,7 +95,7 @@ func BenchmarkAsyncDetector_ProcessFrame_Sequence(b *testing.B) {
 			status = "post_match"
 		}
 
-		frames[j] = &rtapi.LobbySessionStateFrame{
+		frames[j] = &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(j),
 			Timestamp:  timestamppb.New(time.Now()),
 			Session: &apigame.SessionResponse{
