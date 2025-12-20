@@ -1,4 +1,4 @@
-# nevrcap
+# nevr-capture
 
 High-performance telemetry processing and streaming library for NEVR lobby session data.
 
