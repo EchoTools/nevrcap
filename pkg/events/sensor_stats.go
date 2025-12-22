@@ -44,13 +44,18 @@ type StatEventSensor struct {
 	prevStats map[int32]playerStatSnapshot // keyed by slot number
 	// Queue of pending events (since we can only return one at a time)
 	pendingEvents []*telemetry.LobbySessionEvent
+	// Track previous possessor for steal attribution
+	prevPossessorSlot int32
+	initialized       bool
 }
 
 // NewStatEventSensor creates a new StatEventSensor
 func NewStatEventSensor() *StatEventSensor {
 	return &StatEventSensor{
-		prevStats:     make(map[int32]playerStatSnapshot),
-		pendingEvents: make([]*telemetry.LobbySessionEvent, 0),
+		prevStats:         make(map[int32]playerStatSnapshot),
+		pendingEvents:     make([]*telemetry.LobbySessionEvent, 0),
+		prevPossessorSlot: -1,
+		initialized:       false,
 	}
 }
 
@@ -67,6 +72,9 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 		return nil
 	}
 
+	// Find current possessor before processing stats
+	currentPossessorSlot := findPossessorSlotFromSession(frame.GetSession())
+
 	// Collect all stat changes
 	for _, team := range frame.GetSession().GetTeams() {
 		for _, player := range team.GetPlayers() {
@@ -76,11 +84,19 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 
 			if existed {
 				// Check for stat increases and generate events
-				s.checkStatChanges(slot, prev, current)
+				s.checkStatChanges(slot, prev, current, s.prevPossessorSlot)
 			}
 
 			s.prevStats[slot] = current
 		}
+	}
+
+	// Update previous possessor for next frame
+	if s.initialized {
+		s.prevPossessorSlot = currentPossessorSlot
+	} else {
+		s.prevPossessorSlot = currentPossessorSlot
+		s.initialized = true
 	}
 
 	// Return first pending event if any were generated
@@ -93,8 +109,20 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	return nil
 }
 
+// findPossessorSlotFromSession finds the slot of the player who has possession, returns -1 if none
+func findPossessorSlotFromSession(session *apigame.SessionResponse) int32 {
+	for _, team := range session.GetTeams() {
+		for _, player := range team.GetPlayers() {
+			if player.GetHasPossession() {
+				return player.GetSlotNumber()
+			}
+		}
+	}
+	return -1
+}
+
 // checkStatChanges compares stats and queues events for any increases
-func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatSnapshot) {
+func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatSnapshot, prevPossessorSlot int32) {
 	// Goals
 	if current.goals > prev.goals {
 		pointsScored := current.points - prev.points
@@ -162,8 +190,9 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_PlayerSteal{
 					PlayerSteal: &telemetry.PlayerSteal{
-						PlayerSlot:  slot,
-						TotalSteals: current.steals,
+						PlayerSlot:       slot,
+						TotalSteals:      current.steals,
+						VictimPlayerSlot: prevPossessorSlot,
 					},
 				},
 			})
