@@ -48,3 +48,6 @@ Thumbs.db
 
 # Log files
 *.log
+
+# Local directory (for local-only files)
+_local/
