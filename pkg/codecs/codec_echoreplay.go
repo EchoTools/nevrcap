@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/echotools/nevr-common/v4/gen/go/apigame"
@@ -54,6 +55,8 @@ type EchoReplay struct {
 	timestampBuf [len(EchoReplayTimeFormat)]byte
 	// Scratch buffer for marshaling
 	scratchBuf []byte
+	// Flag to track if Finalize has been called
+	finalized bool
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -92,7 +95,7 @@ func NewEchoReplayReader(filename string) (*EchoReplay, error) {
 		filename:  filename,
 		zipReader: zipReader,
 		unmarshaler: &protojson.UnmarshalOptions{
-			DiscardUnknown: false,
+			DiscardUnknown: true,
 		},
 	}
 
@@ -144,6 +147,10 @@ func (e *EchoReplay) initScanner() error {
 
 	e.replayFile = reader
 	e.scanner = bufio.NewScanner(reader)
+	// Set a larger buffer for long lines (some frames can be very large)
+	// Default is 64KB, increase to 10MB
+	const maxScannerBuffer = 10 * 1024 * 1024
+	e.scanner.Buffer(make([]byte, 64*1024), maxScannerBuffer)
 	e.frameIndex = 0
 
 	return nil
@@ -210,22 +217,27 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbyS
 		return 0
 	}
 	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
+	e.scratchBuf = FixExponentNotation(e.scratchBuf)
 	dst.Write(e.scratchBuf)
 
-	// 4. Separator and Space
-	dst.WriteByte('\t')
-	dst.WriteByte(' ')
+	// 4. Player Bones (optional) - only write if present and non-empty
+	if frame.GetPlayerBones() != nil {
+		// Check if PlayerBones has any actual data
+		e.scratchBuf = e.scratchBuf[:0]
+		e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetPlayerBones())
+		if err == nil && len(e.scratchBuf) > 2 { // More than just "{}"
+			// Separator and Space
+			dst.WriteByte('\t')
+			dst.WriteByte(' ')
 
-	// 5. Player Bones - marshal and fix uint64 string encoding
-	e.scratchBuf = e.scratchBuf[:0]
-	e.scratchBuf, err = echoReplayerMarshaler.MarshalAppend(e.scratchBuf, frame.GetPlayerBones())
-	if err != nil {
-		return 0
+			// Write Player Bones
+			e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
+			e.scratchBuf = FixExponentNotation(e.scratchBuf)
+			dst.Write(e.scratchBuf)
+		}
 	}
-	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
-	dst.Write(e.scratchBuf)
 
-	// 6. Newline
+	// 5. Newline
 	dst.WriteString("\r\n")
 
 	return dst.Len() - startLen
@@ -303,11 +315,105 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 	return result
 }
 
+// FixExponentNotation converts scientific notation floats to decimal notation
+// This ensures JSON output uses decimal format (e.g., 0.000001 instead of 1e-6)
+// while preserving full precision and not converting to strings
+func FixExponentNotation(data []byte) []byte {
+	result := make([]byte, 0, len(data))
+	i := 0
+	inString := false
+
+	for i < len(data) {
+		// Handle string boundaries - don't process content inside JSON strings
+		if data[i] == '"' && (i == 0 || data[i-1] != '\\') {
+			inString = !inString
+			result = append(result, data[i])
+			i++
+			continue
+		}
+
+		// If inside a string, copy as-is
+		if inString {
+			result = append(result, data[i])
+			i++
+			continue
+		}
+
+		// Look for a number in scientific notation
+		// Pattern: optional '-', digit(s), optional '.', digit(s), 'e' or 'E', optional '+/-', digit(s)
+		if i >= len(data) || (data[i] != '-' && (data[i] < '0' || data[i] > '9')) {
+			if i < len(data) {
+				result = append(result, data[i])
+			}
+			i++
+			continue
+		}
+
+		// Found potential number - scan it
+		numStart := i
+
+		// Skip leading minus
+		if data[i] == '-' {
+			i++
+		}
+
+		// Skip integer part
+		hasDigits := false
+		for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+			hasDigits = true
+			i++
+		}
+
+		// Skip decimal point and fraction
+		if i < len(data) && data[i] == '.' {
+			i++
+			for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+				hasDigits = true
+				i++
+			}
+		}
+
+		// Check for exponent
+		if hasDigits && i < len(data) && (data[i] == 'e' || data[i] == 'E') {
+			// This is scientific notation - parse and reformat it
+			// Continue scanning the exponent part
+			i++ // skip 'e'/'E'
+			if i < len(data) && (data[i] == '+' || data[i] == '-') {
+				i++ // skip sign
+			}
+			for i < len(data) && data[i] >= '0' && data[i] <= '9' {
+				i++ // skip exponent digits
+			}
+
+			// Parse the full number including exponent
+			fullNum := data[numStart:i]
+			if f, err := strconv.ParseFloat(string(fullNum), 64); err == nil {
+				// Format without exponent - use 'f' format with enough precision
+				formatted := strconv.FormatFloat(f, 'f', -1, 64)
+				result = append(result, []byte(formatted)...)
+			} else {
+				// If parsing fails, keep original
+				result = append(result, fullNum...)
+			}
+		} else {
+			// Not scientific notation, keep as-is
+			result = append(result, data[numStart:i]...)
+		}
+	}
+
+	return result
+}
+
 // Finalize writes the buffered data to the zip file and closes it
 func (e *EchoReplay) Finalize() error {
 	if e.zipWriter == nil {
 		return ErrCodecNotConfiguredForWriting
 	}
+
+	if e.finalized {
+		return nil
+	}
+	e.finalized = true
 
 	// Create the main replay file in the zip - use the filename
 	baseFilename := filepath.Base(e.filename)
@@ -362,7 +468,7 @@ func (e *EchoReplay) HasNext() bool {
 // parseFrameLine parses a single line into a frame
 func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFrame, error) {
 	parts := bytes.Split(line, []byte("\t"))
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid line format")
 	}
 
@@ -378,23 +484,25 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 		return nil, fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
-	// Parse player bones data
-	bonesResponse := &apigame.PlayerBonesResponse{}
-	if err := e.unmarshaler.Unmarshal(parts[2], bonesResponse); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal player bones data: %w", err)
-	}
-
 	// Create frame
 	frame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(timestamp),
 		Session:   sessionResponse,
 	}
 
-	// Parse user bones if present (parts[2])
+	// Parse player bones if present (parts[2])
 	if len(parts) > 2 && len(parts[2]) > 0 {
-		userBones := &apigame.PlayerBonesResponse{}
-		if err := e.unmarshaler.Unmarshal(parts[2], userBones); err == nil {
-			frame.PlayerBones = userBones
+		// Skip leading space if present
+		bonesData := parts[2]
+		if bonesData[0] == ' ' {
+			bonesData = bonesData[1:]
+		}
+
+		if len(bonesData) > 0 {
+			userBones := &apigame.PlayerBonesResponse{}
+			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err == nil {
+				frame.PlayerBones = userBones
+			}
 		}
 	}
 
@@ -518,12 +626,6 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		return fmt.Errorf("invalid line format")
 	}
 
-	secondTab := bytes.IndexByte(line[firstTab+1:], '\t')
-	if secondTab == -1 {
-		return fmt.Errorf("invalid line format")
-	}
-	secondTab += firstTab + 1
-
 	// Parse timestamp
 	tsBytes := line[:firstTab]
 	timestamp, err := fastParseTimestamp(tsBytes)
@@ -531,8 +633,28 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		return fmt.Errorf("invalid timestamp format")
 	}
 
-	// Parse session data (between first and second tab)
-	sessionBytes := line[firstTab+1 : secondTab]
+	// Find second tab (optional for Spark format compatibility)
+	secondTab := bytes.IndexByte(line[firstTab+1:], '\t')
+
+	var sessionBytes, bonesBytes []byte
+
+	if secondTab == -1 {
+		// Spark format: only timestamp and session (no player bones)
+		sessionBytes = line[firstTab+1:]
+		bonesBytes = nil
+	} else {
+		// Full format: timestamp, session, and player bones
+		secondTab += firstTab + 1
+		sessionBytes = line[firstTab+1 : secondTab]
+		bonesBytes = line[secondTab+1:]
+
+		// Skip leading space if present
+		if len(bonesBytes) > 0 && bonesBytes[0] == ' ' {
+			bonesBytes = bonesBytes[1:]
+		}
+	}
+
+	// Parse session data
 	if frame.Session == nil {
 		frame.Session = &apigame.SessionResponse{}
 	}
@@ -540,13 +662,7 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
-	// Parse player bones data if present (after second tab)
-	bonesBytes := line[secondTab+1:]
-	// Skip leading space if present
-	if len(bonesBytes) > 0 && bonesBytes[0] == ' ' {
-		bonesBytes = bonesBytes[1:]
-	}
-
+	// Parse player bones data if present
 	if len(bonesBytes) > 0 {
 		if frame.PlayerBones == nil {
 			frame.PlayerBones = &apigame.PlayerBonesResponse{}
@@ -585,7 +701,7 @@ func fastParseTimestamp(buf []byte) (time.Time, error) {
 	sec := int(buf[17]-'0')*10 + int(buf[18]-'0')
 	ms := int(buf[20]-'0')*100 + int(buf[21]-'0')*10 + int(buf[22]-'0')
 
-	return time.Date(year, month, day, hour, min, sec, ms*1000000, time.Local), nil
+	return time.Date(year, month, day, hour, min, sec, ms*1000000, time.UTC), nil
 }
 
 func fastFormatTimestamp(dst []byte, t time.Time) {
