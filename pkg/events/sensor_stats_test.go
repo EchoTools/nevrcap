@@ -22,6 +22,22 @@ func createFrameWithPlayerStats(slot int32, stats *apigame.PlayerStats) *telemet
 	}
 }
 
+// Helper to create a frame with two players (for steal victim tracking)
+func createFrameWithTwoPlayers(slot1 int32, stats1 *apigame.PlayerStats, hasPossession1 bool, slot2 int32, stats2 *apigame.PlayerStats, hasPossession2 bool) *telemetry.LobbySessionStateFrame {
+	return &telemetry.LobbySessionStateFrame{
+		Session: &apigame.SessionResponse{
+			Teams: []*apigame.Team{
+				{
+					Players: []*apigame.TeamMember{
+						{SlotNumber: slot1, Stats: stats1, HasPossession: hasPossession1},
+						{SlotNumber: slot2, Stats: stats2, HasPossession: hasPossession2},
+					},
+				},
+			},
+		},
+	}
+}
+
 // StatEventSensor Tests
 
 func TestStatEventSensor_DetectsGoal(t *testing.T) {
@@ -153,6 +169,45 @@ func TestStatEventSensor_DetectsSteal(t *testing.T) {
 
 	if steal.TotalSteals != 1 {
 		t.Errorf("expected TotalSteals=1, got %d", steal.TotalSteals)
+	}
+
+	// VictimPlayerSlot should be -1 since no possession was tracked
+	if steal.VictimPlayerSlot != -1 {
+		t.Errorf("expected VictimPlayerSlot=-1 (no possession tracked), got %d", steal.VictimPlayerSlot)
+	}
+}
+
+func TestStatEventSensor_DetectsStealWithVictim(t *testing.T) {
+	sensor := NewStatEventSensor()
+
+	// Frame 1: Player 2 (slot 2) has possession, player 1 (slot 1) has 0 steals
+	frame1 := createFrameWithTwoPlayers(1, &apigame.PlayerStats{Steals: 0}, false, 2, &apigame.PlayerStats{Steals: 0}, true)
+	sensor.AddFrame(frame1)
+
+	// Frame 2: Player 1 now has possession (stole it), steals stat incremented
+	frame2 := createFrameWithTwoPlayers(1, &apigame.PlayerStats{Steals: 1}, true, 2, &apigame.PlayerStats{Steals: 0}, false)
+	event := sensor.AddFrame(frame2)
+
+	if event == nil {
+		t.Fatal("expected PlayerSteal event")
+	}
+
+	steal := event.GetPlayerSteal()
+	if steal == nil {
+		t.Fatalf("expected PlayerSteal, got %T", event.Event)
+	}
+
+	if steal.PlayerSlot != 1 {
+		t.Errorf("expected PlayerSlot=1, got %d", steal.PlayerSlot)
+	}
+
+	if steal.TotalSteals != 1 {
+		t.Errorf("expected TotalSteals=1, got %d", steal.TotalSteals)
+	}
+
+	// VictimPlayerSlot should be 2 since player 2 had possession before the steal
+	if steal.VictimPlayerSlot != 2 {
+		t.Errorf("expected VictimPlayerSlot=2, got %d", steal.VictimPlayerSlot)
 	}
 }
 
