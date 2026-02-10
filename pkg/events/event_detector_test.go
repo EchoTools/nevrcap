@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
 )
 
 func TestAsyncDetector_ProcessFrameRoundOverTransition(t *testing.T) {
