@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echotools/nevr-common/v4/gen/go/apigame"
+	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
 	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 	"github.com/gofrs/uuid/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
