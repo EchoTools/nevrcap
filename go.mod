@@ -9,7 +9,7 @@ require (
 )
 
 require (
-	github.com/echotools/nevr-common/v4 v4.2.0
+	github.com/echotools/nevr-common/v4 v4.4.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.3 // indirect
 	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
