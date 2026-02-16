@@ -1,0 +1,106 @@
+goos: linux
+goarch: amd64
+pkg: github.com/echotools/nevr-capture/v3/pkg/codecs
+cpu: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+BenchmarkReadFrameTo-4                     	   92679	     12952 ns/op	    1368 B/op	      68 allocs/op
+BenchmarkReadFrameTo-4                     	   93153	     13135 ns/op	    1368 B/op	      68 allocs/op
+BenchmarkReadFrameTo-4                     	   88399	     13155 ns/op	    1368 B/op	      68 allocs/op
+BenchmarkReadFrameTo-4                     	   91945	     12962 ns/op	    1368 B/op	      68 allocs/op
+BenchmarkReadFrameTo-4                     	   92086	     12948 ns/op	    1368 B/op	      68 allocs/op
+BenchmarkNewEchoReplayReader-4             	   59974	     18836 ns/op	   72970 B/op	      27 allocs/op
+BenchmarkNewEchoReplayReader-4             	   67477	     17734 ns/op	   72939 B/op	      27 allocs/op
+BenchmarkNewEchoReplayReader-4             	   67098	     17956 ns/op	   73003 B/op	      27 allocs/op
+BenchmarkNewEchoReplayReader-4             	   67568	     17748 ns/op	   72868 B/op	      27 allocs/op
+BenchmarkNewEchoReplayReader-4             	   67332	     17974 ns/op	   73012 B/op	      27 allocs/op
+BenchmarkTimeParse-4                       	 8204481	       145.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeParse-4                       	 8239845	       146.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeParse-4                       	 8235696	       145.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeParse-4                       	 8238943	       145.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeParse-4                       	 8255130	       145.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-4              	73157758	        16.40 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-4              	72676376	        16.44 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-4              	73049754	        16.42 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-4              	72900019	        16.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-4              	72826316	        16.42 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeFormat-4                      	 7172881	       166.9 ns/op	      24 B/op	       1 allocs/op
+BenchmarkTimeFormat-4                      	 7203704	       166.0 ns/op	      24 B/op	       1 allocs/op
+BenchmarkTimeFormat-4                      	 7136137	       166.3 ns/op	      24 B/op	       1 allocs/op
+BenchmarkTimeFormat-4                      	 7216778	       166.8 ns/op	      24 B/op	       1 allocs/op
+BenchmarkTimeFormat-4                      	 7125512	       167.6 ns/op	      24 B/op	       1 allocs/op
+BenchmarkFastFormatTimestamp-4             	38472975	        31.24 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastFormatTimestamp-4             	38446508	        31.26 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastFormatTimestamp-4             	38069652	        31.18 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastFormatTimestamp-4             	38429476	        31.23 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastFormatTimestamp-4             	38140022	        31.20 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNevrCap_writeDelimitedMessage-4   	30628302	        38.11 ns/op	      16 B/op	       1 allocs/op
+BenchmarkNevrCap_writeDelimitedMessage-4   	31409938	        37.77 ns/op	      16 B/op	       1 allocs/op
+BenchmarkNevrCap_writeDelimitedMessage-4   	30645669	        37.74 ns/op	      16 B/op	       1 allocs/op
+BenchmarkNevrCap_writeDelimitedMessage-4   	30966242	        37.89 ns/op	      16 B/op	       1 allocs/op
+BenchmarkNevrCap_writeDelimitedMessage-4   	30763008	        38.22 ns/op	      16 B/op	       1 allocs/op
+BenchmarkOptimizedWriteFrame-4             	   85699	     13512 ns/op	    4720 B/op	      14 allocs/op
+BenchmarkOptimizedWriteFrame-4             	   87243	     13941 ns/op	    6230 B/op	      14 allocs/op
+BenchmarkOptimizedWriteFrame-4             	   86234	     13492 ns/op	    4710 B/op	      14 allocs/op
+BenchmarkOptimizedWriteFrame-4             	   86636	     14098 ns/op	    6252 B/op	      14 allocs/op
+BenchmarkOptimizedWriteFrame-4             	   86961	     13976 ns/op	    6240 B/op	      14 allocs/op
+BenchmarkFixProtojsonUint64Encoding-4      	 1229400	       979.6 ns/op	    1280 B/op	       4 allocs/op
+BenchmarkFixProtojsonUint64Encoding-4      	 1230858	       978.9 ns/op	    1280 B/op	       4 allocs/op
+BenchmarkFixProtojsonUint64Encoding-4      	 1228017	       973.2 ns/op	    1280 B/op	       4 allocs/op
+BenchmarkFixProtojsonUint64Encoding-4      	 1233192	       973.5 ns/op	    1280 B/op	       4 allocs/op
+BenchmarkFixProtojsonUint64Encoding-4      	 1230600	       971.3 ns/op	    1280 B/op	       4 allocs/op
+PASS
+ok  	github.com/echotools/nevr-capture/v3/pkg/codecs	61.690s
+PASS
+ok  	github.com/echotools/nevr-capture/v3/pkg/conversion	0.016s
+goos: linux
+goarch: amd64
+pkg: github.com/echotools/nevr-capture/v3/pkg/events
+cpu: Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-4    	12014731	        98.50 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-4    	12220778	        98.21 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-4    	12075116	        98.11 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-4    	12277826	        98.11 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-4    	12199328	        97.77 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-4   	11579512	       109.9 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-4   	11618948	       102.7 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-4   	11752645	       102.6 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-4   	11485328	       102.4 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-4   	11712787	       102.0 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-4                 	185265752	         6.149 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-4                 	184966246	         6.049 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-4                 	201727130	         6.104 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-4                 	197306510	         6.127 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-4                 	188152764	         6.437 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-4          	 4968409	       241.8 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-4          	 4953871	       240.4 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-4          	 4965927	       242.3 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-4          	 4998729	       241.6 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-4          	 4948454	       241.9 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-4         	100000000	        10.73 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-4         	100000000	        10.71 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-4         	100000000	        10.70 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-4         	100000000	        10.68 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-4         	100000000	        10.69 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-4                     	 6506130	       186.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-4                     	 7057982	       172.8 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-4                     	 7179739	       167.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-4                     	 6679743	       179.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-4                     	 7204016	       166.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-4      	  434412	      2675 ns/op	    2096 B/op	      14 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-4      	  464643	      2657 ns/op	    2096 B/op	      14 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-4      	  451526	      2678 ns/op	    2096 B/op	      14 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-4      	  428822	      2660 ns/op	    2096 B/op	      14 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-4      	  461746	      2671 ns/op	    2096 B/op	      14 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-4          	 7290921	       183.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-4          	 6692464	       171.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-4          	 6417061	       181.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-4          	 6589881	       175.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-4          	 5938876	       194.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-4            	   85123	     14193 ns/op	    2065 B/op	      13 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-4            	   84861	     14131 ns/op	    2065 B/op	      13 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-4            	   84948	     14104 ns/op	    2065 B/op	      13 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-4            	   83692	     14297 ns/op	    2065 B/op	      13 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-4            	   84736	     14096 ns/op	    2065 B/op	      13 allocs/op
+PASS
+ok  	github.com/echotools/nevr-capture/v3/pkg/events	63.059s
+PASS
+ok  	github.com/echotools/nevr-capture/v3/pkg/processing	0.006s
