@@ -1,5 +1,3 @@
-github.com/echotools/nevr-common/v4 v4.2.0 h1:7XzQXa6yM2hPQ0gNwxrSP1cpdEUN23p08b4HyZgJd0M=
-github.com/echotools/nevr-common/v4 v4.2.0/go.mod h1:QuUV/AUT/7TklWqY6e+9cL1YzKuR5YyZqD/5R5nFLrM=
 github.com/echotools/nevr-common/v4 v4.4.0 h1:q0+JS1ADta9YUTKlKuipAr5DSnj9O8KgRaZtHfZ4tqE=
 github.com/echotools/nevr-common/v4 v4.4.0/go.mod h1:dwbf20MYt5P+Jd9csPrGvzU1LjNFIkCJefPgPyuxkVg=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
