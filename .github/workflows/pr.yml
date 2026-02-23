@@ -65,14 +65,14 @@ jobs:
 
       - name: Check coverage thresholds
         run: |
-          go test -coverprofile=coverage.out ./...
+          go test -cover ./... | tee coverage-summary.txt
 
           echo "Checking per-package coverage..."
-          go tool cover -func=coverage.out | grep -E "^github.com/echotools/nevr-capture" | while read -r line; do
-            pkg=$(echo "$line" | awk '{print $1}')
-            percent=$(echo "$line" | awk '{print $3}' | tr -d '%')
+          grep -E "^ok\s+github.com/echotools/nevr-capture/v3/pkg/" coverage-summary.txt | while read -r line; do
+            pkg=$(echo "$line" | awk '{print $2}')
+            percent=$(echo "$line" | sed -n 's/.*coverage: \([0-9.]*\)% of statements.*/\1/p')
 
-            if echo "$pkg" | grep -q "conversion"; then
+            if echo "$pkg" | grep -q "/conversion$"; then
               threshold=74.6
             else
               threshold=80.0
