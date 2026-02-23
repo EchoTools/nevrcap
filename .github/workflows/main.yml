@@ -1,0 +1,111 @@
+name: Main Branch CI
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: off
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run full test suite
+        run: go test -v -coverprofile=coverage.out ./...
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          fail_ci_if_error: false
+
+  race:
+    name: Race Detector
+    runs-on: ubuntu-latest
+    env:
+      SKIP_RACE_FLAKY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Run race detector
+        run: go test -race -timeout=5m ./...
+
+  benchmark:
+    name: Benchmark Regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Run benchmarks
+        run: |
+          go test -bench=. -benchmem -count=5 ./... | tee current-bench.txt
+
+      - name: Compare with baseline
+        run: |
+          if [ -f .benchmarks/baseline.txt ]; then
+            echo "Comparing benchmarks..."
+            benchstat .benchmarks/baseline.txt current-bench.txt > comparison.txt || true
+            cat comparison.txt
+
+            if grep -E "\+[0-9]+\.[0-9]+%" comparison.txt; then
+              echo "::warning::Performance regression detected"
+              regression=$(grep -Eo "\+[0-9]+\.[0-9]+%" comparison.txt | head -1 | tr -d '+%')
+              if (( $(echo "$regression > 5.0" | bc -l) )); then
+                echo "::error::Regression exceeds 5% threshold: $regression%"
+                exit 1
+              fi
+            fi
+          else
+            echo "No baseline found, creating initial baseline"
+          fi
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: |
+            current-bench.txt
+            comparison.txt
+
+  vuln:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
