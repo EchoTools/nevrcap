@@ -45,6 +45,7 @@ type EchoReplay struct {
 	zipReader   *zip.ReadCloser
 	file        *os.File
 	frameBuffer *bytes.Buffer
+	progress    io.Writer
 
 	// Streaming state
 	scanner     *bufio.Scanner
@@ -86,6 +87,10 @@ func NewEchoReplayWriter(filename string) (*EchoReplay, error) {
 
 // NewEchoReplayReader creates a new EchoReplay codec for reading
 func NewEchoReplayReader(filename string) (*EchoReplay, error) {
+	return NewEchoReplayReaderWithProgress(filename, nil)
+}
+
+func NewEchoReplayReaderWithProgress(filename string, progress io.Writer) (*EchoReplay, error) {
 	zipReader, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, err
@@ -94,6 +99,7 @@ func NewEchoReplayReader(filename string) (*EchoReplay, error) {
 	codec := &EchoReplay{
 		filename:  filename,
 		zipReader: zipReader,
+		progress:  progress,
 		unmarshaler: &protojson.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
@@ -145,8 +151,13 @@ func (e *EchoReplay) initScanner() error {
 		return err
 	}
 
+	var src io.Reader = reader
+	if e.progress != nil {
+		src = io.TeeReader(reader, e.progress)
+	}
+
 	e.replayFile = reader
-	e.scanner = bufio.NewScanner(reader)
+	e.scanner = bufio.NewScanner(src)
 	// Set a larger buffer for long lines (some frames can be very large)
 	// Default is 64KB, increase to 10MB
 	const maxScannerBuffer = 10 * 1024 * 1024

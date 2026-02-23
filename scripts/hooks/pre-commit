@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -e
+
+echo "Running pre-commit checks..."
+
+# Check 1: Go formatting
+echo "Checking formatting..."
+UNFORMATTED=$(gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+  echo "ERROR: The following files are not formatted:"
+  echo "$UNFORMATTED"
+  echo ""
+  echo "Run: go fmt ./..."
+  exit 1
+fi
+
+# Check 2: golangci-lint with baseline
+echo "Running linter..."
+if ! golangci-lint run --new-from-rev=HEAD~1 ./...; then
+  echo "ERROR: Linting failed. Fix the issues above."
+  exit 1
+fi
+
+# Check 3: go.mod consistency
+echo "Checking go.mod..."
+go mod tidy
+if ! git diff --exit-code go.mod go.sum; then
+  echo "ERROR: go.mod or go.sum is not up to date"
+  echo ""
+  echo "Run: go mod tidy"
+  exit 1
+fi
+
+echo "✓ All pre-commit checks passed"

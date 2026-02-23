@@ -40,12 +40,21 @@ func NewNevrCapWriter(filename string) (*NevrCap, error) {
 
 // NewNevrCapReader creates a new Zstd codec for reading .nevrcap files
 func NewNevrCapReader(filename string) (*NevrCap, error) {
+	return NewNevrCapReaderWithProgress(filename, nil)
+}
+
+func NewNevrCapReaderWithProgress(filename string, progress io.Writer) (*NevrCap, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 
-	decoder, err := zstd.NewReader(file)
+	var src io.Reader = file
+	if progress != nil {
+		src = io.TeeReader(file, progress)
+	}
+
+	decoder, err := zstd.NewReader(src)
 	if err != nil {
 		file.Close()
 		return nil, err
