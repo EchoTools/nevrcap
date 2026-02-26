@@ -51,3 +51,7 @@ Thumbs.db
 
 # Local directory (for local-only files)
 _local/
+
+# Tool session files
+.sisyphus/
+.serena/
