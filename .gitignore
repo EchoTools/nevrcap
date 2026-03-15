@@ -38,6 +38,7 @@ Thumbs.db
 /build/
 
 # Test files
+*.tape
 *.nevrcap
 *.echoreplay
 /benchmark_*

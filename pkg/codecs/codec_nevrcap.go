@@ -3,13 +3,39 @@ package codecs
 import (
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 )
 
-// NevrCap handles streaming to/from Zstd-compressed .nevrcap files
+const (
+	// ExtTape is the default file extension for nevrcap captures.
+	ExtTape = ".tape"
+
+	// ExtNevrcap is the legacy file extension, still accepted as input.
+	ExtNevrcap = ".nevrcap"
+)
+
+// IsValidExtension reports whether ext (including the leading dot) is a
+// recognized nevrcap file extension.
+func IsValidExtension(ext string) bool {
+	return ext == ExtTape || ext == ExtNevrcap
+}
+
+// DefaultOutputFilename returns the given path with its extension replaced
+// by the default output extension (.tape). If the path has no extension,
+// .tape is appended.
+func DefaultOutputFilename(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		return path + ExtTape
+	}
+	return path[:len(path)-len(ext)] + ExtTape
+}
+
+// NevrCap handles streaming to/from Zstd-compressed .tape / .nevrcap files
 type NevrCap struct {
 	file    *os.File
 	encoder *zstd.Encoder
@@ -18,7 +44,7 @@ type NevrCap struct {
 	reader  io.Reader
 }
 
-// NewNevrCapWriter creates a new Zstd codec for writing .nevrcap files
+// NewNevrCapWriter creates a new Zstd codec for writing .tape / .nevrcap files
 func NewNevrCapWriter(filename string) (*NevrCap, error) {
 	file, err := os.Create(filename)
 	if err != nil {
@@ -38,7 +64,7 @@ func NewNevrCapWriter(filename string) (*NevrCap, error) {
 	}, nil
 }
 
-// NewNevrCapReader creates a new Zstd codec for reading .nevrcap files
+// NewNevrCapReader creates a new Zstd codec for reading .tape / .nevrcap files
 func NewNevrCapReader(filename string) (*NevrCap, error) {
 	return NewNevrCapReaderWithProgress(filename, nil)
 }
