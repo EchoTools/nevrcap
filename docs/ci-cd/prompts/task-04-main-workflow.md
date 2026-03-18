@@ -21,7 +21,7 @@ You are implementing Task 4 of the CI/CD setup plan. This workflow runs the full
 
 ### Environment
 - **Go Version**: 1.25 (from go.mod)
-- **GOWORK**: Set to `off` (CRITICAL - go.work references ../nevr-common)
+- **GOWORK**: Set to `off` (CRITICAL - go.work references ../nevr-proto)
 - **Cache**: Enable go modules cache
 
 ### Jobs (4 Total)

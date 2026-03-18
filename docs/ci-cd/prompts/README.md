@@ -150,7 +150,7 @@ Each prompt follows this structure:
 
 ## Critical Constraints (All Tasks)
 
-- **GOWORK=off** must be set in all CI jobs (go.work references ../nevr-common)
+- **GOWORK=off** must be set in all CI jobs (go.work references ../nevr-proto)
 - **Baseline approach**: Ignore 51 pre-existing lint issues with `--new-from-rev`
 - **Race test skip**: Add env-guarded `t.Skip()` to one test (3 lines total)
 - **Coverage thresholds**: 80% default, 74.6% for conversion package

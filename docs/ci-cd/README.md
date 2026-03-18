@@ -28,7 +28,7 @@ A comprehensive CI/CD system with:
 | Decision | Rationale |
 |----------|-----------|
 | **Baseline Approach** | Ship CI immediately with `--new-from-rev` to ignore 51 pre-existing lint issues |
-| **GOWORK=off** | CI doesn't have `../nevr-common` sibling, must disable workspace |
+| **GOWORK=off** | CI doesn't have `../nevr-proto` sibling, must disable workspace |
 | **Text Format Baseline** | Use standard Go benchmark text format for benchstat compatibility (not JSON) |
 | **No Auto-Commit** | Workflows upload benchmarks as artifacts (branch protection blocks auto-commit) |
 | **Race Test Skip** | Add env-guarded skip for known flaky test `TestAsyncDetector_SensorIntegrationReceivesFrames` |
@@ -143,4 +143,4 @@ golangci-lint config verify
 - **Main Repository**: github.com/echotools/nevr-capture
 - **Go Version**: 1.25 (see `go.mod`)
 - **golangci-lint**: v2.8.0
-- **Dependencies**: nevr-common/v4, klauspost/compress, gofrs/uuid
+- **Dependencies**: nevr-proto/v4, klauspost/compress, gofrs/uuid

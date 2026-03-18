@@ -58,11 +58,11 @@ JSON frame data, runs event detection, and produces enriched protobuf frames.
   and `FixExponentNotation` to match the original game engine output exactly.
   Third-party parsers depend on this byte-level compatibility.
 - **No backward-compatibility obligation on protos**: Break anything that is
-  non-idiomatic. Protobuf definitions live in `nevr-common`.
+  non-idiomatic. Protobuf definitions live in `nevr-proto`.
 
 ## Dependencies
 
-- **nevr-common** (`github.com/echotools/nevr-common/v4`) — Protobuf definitions
+- **nevr-proto** (`github.com/echotools/nevr-proto/v4`) — Protobuf definitions
   for telemetry, apigame, and shared types. All `.proto` generated Go code
   lives there.
 - **klauspost/compress** — Zstd compression for the nevrcap format.

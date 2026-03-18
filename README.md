@@ -188,15 +188,15 @@ See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics.
 
 ## Related Repositories
 
-- [nevr-common](https://github.com/echotools/nevr-common) - Protobuf definitions
+- [nevr-proto](https://github.com/echotools/nevr-proto) - Protobuf definitions
 - [nevr-agent](https://github.com/echotools/nevr-agent) - Recording and streaming CLI
 
 ## Contributing
 
 When adding new event types:
 
-1. Update protobuf definitions in `nevr-common/proto/telemetry/`
-2. Regenerate protobuf code in nevr-common
+1. Update protobuf definitions in `nevr-proto/proto/telemetry/`
+2. Regenerate protobuf code in nevr-proto
 3. Add detection logic in `pkg/events/`
 4. Add tests in `*_test.go` files
 5. Update benchmarks if needed

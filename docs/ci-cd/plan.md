@@ -43,14 +43,14 @@ User wants comprehensive CI/CD with comprehensive test coverage and benchmark re
 - Test patterns: table-driven, tb.Helper() utilities, round-trip integration, concurrency, resource leak detection
 - Performance targets: 600+ Hz frame processing, <1ms event detection
 - No existing CI/CD or active git hooks
-- Key dependency: nevr-common/v4 (protobuf definitions)
+- Key dependency: nevr-proto/v4 (protobuf definitions)
 
 ### Metis Review
 **Identified Blockers** (using baseline approach):
 - **51 golangci-lint issues** (44 errcheck, 4 staticcheck, 2 ineffassign, 1 unused) → Use `--new-from-rev` baseline
 - **Race condition** in `TestAsyncDetector_SensorIntegrationReceivesFrames` → Add skip annotation with TODO
 - **pkg/conversion at 74.6% coverage** → Exception for conversion package, 80% for others
-- **go.work references ../nevr-common** → Set `GOWORK=off` in CI environment
+- **go.work references ../nevr-proto** → Set `GOWORK=off` in CI environment
 
 **Guardrails Applied**:
 - Maximum 3 workflow files (no proliferation)

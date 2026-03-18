@@ -49,10 +49,10 @@ Every file you create MUST reference actual files from this repository:
 - **Go Version**: 1.25 (see `go.mod`)
 - **Packages**: 4 (codecs, events, conversion, processing)
 - **Test Files**: 25 test files, 4 benchmark files
-- **Dependencies**: nevr-common/v4, klauspost/compress, gofrs/uuid
+- **Dependencies**: nevr-proto/v4, klauspost/compress, gofrs/uuid
 
 ### Key Constraints
-- **GOWORK=off**: CI must set `GOWORK=off` (go.work references ../nevr-common which won't exist in CI)
+- **GOWORK=off**: CI must set `GOWORK=off` (go.work references ../nevr-proto which won't exist in CI)
 - **Pre-existing Issues**: 51 lint issues, 1 race condition, 1 coverage gap (use baseline approach)
 - **golangci-lint**: v2.8.0 format (not v1)
 - **Benchmark Format**: Standard Go text format (NOT JSON) for benchstat compatibility
@@ -258,7 +258,7 @@ on:
     types: [opened, synchronize, reopened]
 
 env:
-  GOWORK: off  # CI doesn't have ../nevr-common sibling directory
+  GOWORK: off  # CI doesn't have ../nevr-proto sibling directory
 
 jobs:
   lint:

@@ -16,7 +16,7 @@ pkg/
 └── processing/  # Frame processing pipeline
 ```
 
-**Depends on**: `nevr-common` for protobuf types (`telemetry.LobbySessionStateFrame`)
+**Depends on**: `nevr-proto` for protobuf types (`telemetry.LobbySessionStateFrame`)
 
 ## Key Patterns
 
@@ -62,7 +62,7 @@ go test -bench=BenchmarkFrameProcessing ./pkg/processing  # Specific benchmark
 
 ## Adding New Event Types
 
-1. Add event message to `nevr-common/proto/telemetry/v1/telemetry.proto`
-2. Regenerate protos in nevr-common (`buf generate`)
+1. Add event message to `nevr-proto/proto/telemetry/v1/telemetry.proto`
+2. Regenerate protos in nevr-proto (`buf generate`)
 3. Add detection logic in `pkg/events/`
 4. Add tests and update benchmarks

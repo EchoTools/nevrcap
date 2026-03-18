@@ -44,7 +44,7 @@ After adding the skip annotation, create the PR validation workflow.
 
 ### Environment
 - **Go Version**: 1.25 (from go.mod)
-- **GOWORK**: Set to `off` (CRITICAL - go.work references ../nevr-common which won't exist in CI)
+- **GOWORK**: Set to `off` (CRITICAL - go.work references ../nevr-proto which won't exist in CI)
 - **Cache**: Enable go modules cache for faster builds
 
 ### Jobs (5 Total)
