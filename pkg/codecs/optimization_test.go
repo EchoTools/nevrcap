@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -23,10 +23,10 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
-			Session: &apigame.SessionResponse{
+			Session: &enginev1.SessionResponse{
 				SessionId: "test-session",
 			},
-			PlayerBones: &apigame.PlayerBonesResponse{},
+			PlayerBones: &enginev1.PlayerBonesResponse{},
 		}
 		if err := writer.WriteFrame(frame); err != nil {
 			t.Fatalf("Failed to write frame: %v", err)
@@ -43,8 +43,8 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 
 	// Pre-allocate frame
 	frame := &telemetry.LobbySessionStateFrame{
-		Session:     &apigame.SessionResponse{},
-		PlayerBones: &apigame.PlayerBonesResponse{},
+		Session:     &enginev1.SessionResponse{},
+		PlayerBones: &enginev1.PlayerBonesResponse{},
 		Timestamp:   &timestamppb.Timestamp{},
 	}
 
@@ -93,7 +93,7 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 	for i := 0; i < totalFrames; i++ {
 		frame := &telemetry.LobbySessionStateFrame{
 			Timestamp: timestamppb.New(time.Now()),
-			Session:   &apigame.SessionResponse{SessionId: "test"},
+			Session:   &enginev1.SessionResponse{SessionId: "test"},
 		}
 		writer.WriteFrame(frame)
 	}
@@ -138,9 +138,9 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 }
 
 func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
-	// Similar test for NevrCap (Zstd/Protobuf) codec
+	// Similar test for TapeV1 (Zstd/Protobuf) codec
 	tmpFile := t.TempDir() + "/test_zero_alloc.nevrcap"
-	writer, err := NewNevrCapWriter(tmpFile)
+	writer, err := NewTapeV1Writer(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
 	}
@@ -150,13 +150,13 @@ func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
-			Session:    &apigame.SessionResponse{SessionId: "test"},
+			Session:    &enginev1.SessionResponse{SessionId: "test"},
 		}
 		writer.WriteFrame(frame)
 	}
 	writer.Close()
 
-	reader, err := NewNevrCapReader(tmpFile)
+	reader, err := NewTapeV1Reader(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create reader: %v", err)
 	}

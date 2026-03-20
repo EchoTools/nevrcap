@@ -3,9 +3,9 @@ package processing
 import (
 	"time"
 
-	"github.com/echotools/nevr-capture/v3/pkg/events"
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"github.com/echotools/nevr-tape/v1/pkg/events"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -44,8 +44,8 @@ func NewWithDetector(det events.Detector) *Processor {
 func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData []byte, timestamp time.Time) (*telemetry.LobbySessionStateFrame, error) {
 	// Reset the pre-allocated structs to avoid allocations
 	// Pre-allocated structs to avoid memory allocations
-	sessionResponse := &apigame.SessionResponse{}
-	bonesResponse := &apigame.PlayerBonesResponse{}
+	sessionResponse := &enginev1.SessionResponse{}
+	bonesResponse := &enginev1.PlayerBonesResponse{}
 
 	// Parse session data
 	if err := fp.unmarshaler.Unmarshal(sessionResponseData, sessionResponse); err != nil {

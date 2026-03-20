@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -22,10 +22,10 @@ func BenchmarkReadFrameTo(b *testing.B) {
 	// Write 1000 sample frames
 	sampleFrame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			SessionId: "test-session-id",
 		},
-		PlayerBones: &apigame.PlayerBonesResponse{},
+		PlayerBones: &enginev1.PlayerBonesResponse{},
 	}
 
 	for range 1000 {
@@ -47,8 +47,8 @@ func BenchmarkReadFrameTo(b *testing.B) {
 
 	// Preallocate frame for reuse
 	frame := &telemetry.LobbySessionStateFrame{
-		Session:     &apigame.SessionResponse{},
-		PlayerBones: &apigame.PlayerBonesResponse{},
+		Session:     &enginev1.SessionResponse{},
+		PlayerBones: &enginev1.PlayerBonesResponse{},
 		Timestamp:   &timestamppb.Timestamp{},
 	}
 
@@ -93,10 +93,10 @@ func BenchmarkNewEchoReplayReader(b *testing.B) {
 	// Write 1000 sample frames
 	sampleFrame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			SessionId: "test-session-id",
 		},
-		PlayerBones: &apigame.PlayerBonesResponse{},
+		PlayerBones: &enginev1.PlayerBonesResponse{},
 	}
 
 	for i := 0; i < 1000; i++ {

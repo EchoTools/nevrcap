@@ -5,14 +5,13 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestRoundTripPreservesTimestamps verifies that timestamps are preserved exactly
 // during echoreplay -> nevrcap -> echoreplay conversion.
-// BUG: Currently fails due to +6 hour offset being applied during conversion.
 func TestRoundTripPreservesTimestamps(t *testing.T) {
 	// Create a frame with a specific, known timestamp
 	// Use UTC to avoid timezone issues
@@ -21,14 +20,14 @@ func TestRoundTripPreservesTimestamps(t *testing.T) {
 	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 0,
 		Timestamp:  timestamppb.New(originalTime),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			SessionId:    "07450BBB-06BF-4E7E-9C04-EBCD4AF043D4",
 			GameStatus:   "running",
 			BluePoints:   0,
 			OrangePoints: 0,
 		},
-		PlayerBones: &apigame.PlayerBonesResponse{
-			UserBones: []*apigame.UserBones{},
+		PlayerBones: &enginev1.PlayerBonesResponse{
+			UserBones: []*enginev1.UserBones{},
 			ErrCode:   0,
 		},
 	}
@@ -55,7 +54,7 @@ func TestRoundTripPreservesTimestamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create echoreplay reader: %v", err)
 	}
-	writerNevrcap, err := NewNevrCapWriter(tmpNevrcap)
+	writerNevrcap, err := NewTapeV1Writer(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap writer: %v", err)
 	}
@@ -72,7 +71,7 @@ func TestRoundTripPreservesTimestamps(t *testing.T) {
 	writerNevrcap.Close()
 
 	// Step 3: Convert .nevrcap -> .echoreplay
-	readerNevrcap, err := NewNevrCapReader(tmpNevrcap)
+	readerNevrcap, err := NewTapeV1Reader(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap reader: %v", err)
 	}
@@ -133,17 +132,13 @@ func TestRoundTripPreservesTimestamps(t *testing.T) {
 
 // TestRoundTripPreservesSessionID verifies that session IDs are preserved exactly
 // during echoreplay -> nevrcap -> echoreplay conversion.
-// BUG: Currently fails due to session ID being modified from
-//
-//	"07450BBB-06BF-4E7E-9C04-EBCD4AF043D4" to
-//	"07450BBB-06BF-40000000E-9C04-EBCD4AF043D4"
 func TestRoundTripPreservesSessionID(t *testing.T) {
 	originalSessionID := "07450BBB-06BF-4E7E-9C04-EBCD4AF043D4"
 
 	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 0,
 		Timestamp:  timestamppb.Now(),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			SessionId:    originalSessionID,
 			GameStatus:   "running",
 			BluePoints:   0,
@@ -173,7 +168,7 @@ func TestRoundTripPreservesSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create echoreplay reader: %v", err)
 	}
-	writerNevrcap, err := NewNevrCapWriter(tmpNevrcap)
+	writerNevrcap, err := NewTapeV1Writer(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap writer: %v", err)
 	}
@@ -190,7 +185,7 @@ func TestRoundTripPreservesSessionID(t *testing.T) {
 	writerNevrcap.Close()
 
 	// Step 3: Convert .nevrcap -> .echoreplay
-	readerNevrcap, err := NewNevrCapReader(tmpNevrcap)
+	readerNevrcap, err := NewTapeV1Reader(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap reader: %v", err)
 	}
@@ -232,7 +227,6 @@ func TestRoundTripPreservesSessionID(t *testing.T) {
 
 // TestRoundTripPreservesFrameCount verifies that all frames are preserved
 // during echoreplay -> nevrcap -> echoreplay conversion.
-// BUG: Currently fails due to 1 frame being lost (12,817 -> 12,816).
 func TestRoundTripPreservesFrameCount(t *testing.T) {
 	// Create multiple frames with distinct data
 	frameCount := 100
@@ -244,7 +238,7 @@ func TestRoundTripPreservesFrameCount(t *testing.T) {
 		frames[i] = &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(baseTime.Add(time.Duration(i) * time.Second)),
-			Session: &apigame.SessionResponse{
+			Session: &enginev1.SessionResponse{
 				SessionId:    "test-session",
 				GameStatus:   "running",
 				BluePoints:   int32(i),
@@ -277,7 +271,7 @@ func TestRoundTripPreservesFrameCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create echoreplay reader: %v", err)
 	}
-	writerNevrcap, err := NewNevrCapWriter(tmpNevrcap)
+	writerNevrcap, err := NewTapeV1Writer(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap writer: %v", err)
 	}
@@ -301,7 +295,7 @@ func TestRoundTripPreservesFrameCount(t *testing.T) {
 	}
 
 	// Step 3: Convert .nevrcap -> .echoreplay
-	readerNevrcap, err := NewNevrCapReader(tmpNevrcap)
+	readerNevrcap, err := NewTapeV1Reader(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap reader: %v", err)
 	}
@@ -397,7 +391,7 @@ func TestRoundTripWithRealFileData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open original file for conversion: %v", err)
 	}
-	writerNevrcap, err := NewNevrCapWriter(tmpNevrcap)
+	writerNevrcap, err := NewTapeV1Writer(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap writer: %v", err)
 	}
@@ -414,7 +408,7 @@ func TestRoundTripWithRealFileData(t *testing.T) {
 	writerNevrcap.Close()
 
 	// Step 3: Convert back to echoreplay
-	readerNevrcap, err := NewNevrCapReader(tmpNevrcap)
+	readerNevrcap, err := NewTapeV1Reader(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap reader: %v", err)
 	}

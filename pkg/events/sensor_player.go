@@ -1,19 +1,19 @@
 package events
 
 import (
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // PlayerJoinSensor detects when players join the session
 type PlayerJoinSensor struct {
-	previousPlayers map[int32]*apigame.TeamMember // keyed by slot number
+	previousPlayers map[int32]*enginev1.TeamMember // keyed by slot number
 }
 
 // NewPlayerJoinSensor creates a new PlayerJoinSensor
 func NewPlayerJoinSensor() *PlayerJoinSensor {
 	return &PlayerJoinSensor{
-		previousPlayers: make(map[int32]*apigame.TeamMember),
+		previousPlayers: make(map[int32]*enginev1.TeamMember),
 	}
 }
 
@@ -47,13 +47,13 @@ func (s *PlayerJoinSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 // PlayerLeaveSensor detects when players leave the session
 type PlayerLeaveSensor struct {
-	previousPlayers map[int32]*apigame.TeamMember
+	previousPlayers map[int32]*enginev1.TeamMember
 }
 
 // NewPlayerLeaveSensor creates a new PlayerLeaveSensor
 func NewPlayerLeaveSensor() *PlayerLeaveSensor {
 	return &PlayerLeaveSensor{
-		previousPlayers: make(map[int32]*apigame.TeamMember),
+		previousPlayers: make(map[int32]*enginev1.TeamMember),
 	}
 }
 
@@ -87,13 +87,13 @@ func (s *PlayerLeaveSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *t
 
 // PlayerTeamSwitchSensor detects when players switch teams
 type PlayerTeamSwitchSensor struct {
-	previousPlayers map[int32]*apigame.TeamMember
+	previousPlayers map[int32]*enginev1.TeamMember
 }
 
 // NewPlayerTeamSwitchSensor creates a new PlayerTeamSwitchSensor
 func NewPlayerTeamSwitchSensor() *PlayerTeamSwitchSensor {
 	return &PlayerTeamSwitchSensor{
-		previousPlayers: make(map[int32]*apigame.TeamMember),
+		previousPlayers: make(map[int32]*enginev1.TeamMember),
 	}
 }
 
@@ -173,8 +173,8 @@ func (s *EmoteSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 }
 
 // extractPlayersMap extracts all players from a session into a map keyed by slot
-func extractPlayersMap(session *apigame.SessionResponse) map[int32]*apigame.TeamMember {
-	players := make(map[int32]*apigame.TeamMember)
+func extractPlayersMap(session *enginev1.SessionResponse) map[int32]*enginev1.TeamMember {
+	players := make(map[int32]*enginev1.TeamMember)
 	for _, team := range session.GetTeams() {
 		for _, player := range team.GetPlayers() {
 			players[player.GetSlotNumber()] = player
@@ -184,7 +184,7 @@ func extractPlayersMap(session *apigame.SessionResponse) map[int32]*apigame.Team
 }
 
 // determinePlayerRole determines a player's role based on their jersey number and slot
-func determinePlayerRole(player *apigame.TeamMember) telemetry.Role {
+func determinePlayerRole(player *enginev1.TeamMember) telemetry.Role {
 	if player == nil {
 		return telemetry.Role_ROLE_UNSPECIFIED
 	}

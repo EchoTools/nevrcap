@@ -1,8 +1,8 @@
 package events
 
 import (
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // playerStatSnapshot holds the stat values for a player
@@ -20,7 +20,7 @@ type playerStatSnapshot struct {
 	points        int32
 }
 
-func snapshotFromStats(stats *apigame.PlayerStats) playerStatSnapshot {
+func snapshotFromStats(stats *enginev1.PlayerStats) playerStatSnapshot {
 	if stats == nil {
 		return playerStatSnapshot{}
 	}
@@ -110,7 +110,7 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 }
 
 // findPossessorSlotFromSession finds the slot of the player who has possession, returns -1 if none
-func findPossessorSlotFromSession(session *apigame.SessionResponse) int32 {
+func findPossessorSlotFromSession(session *enginev1.SessionResponse) int32 {
 	for _, team := range session.GetTeams() {
 		for _, player := range team.GetPlayers() {
 			if player.GetHasPossession() {

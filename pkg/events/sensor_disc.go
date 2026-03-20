@@ -1,8 +1,8 @@
 package events
 
 import (
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // DiscPossessionSensor detects disc possession changes
@@ -50,7 +50,7 @@ func (s *DiscPossessionSensor) AddFrame(frame *telemetry.LobbySessionStateFrame)
 
 // DiscThrownSensor detects when the disc is thrown using LastThrowInfo
 type DiscThrownSensor struct {
-	prevLastThrow *apigame.LastThrowInfo
+	prevLastThrow *enginev1.LastThrowInfo
 	prevPossessor int32
 }
 
@@ -154,7 +154,7 @@ func (s *DiscCaughtSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 }
 
 // findPossessorSlot finds the slot of the player who has possession, returns -1 if none
-func findPossessorSlot(session *apigame.SessionResponse) int32 {
+func findPossessorSlot(session *enginev1.SessionResponse) int32 {
 	for _, team := range session.GetTeams() {
 		for _, player := range team.GetPlayers() {
 			if player.GetHasPossession() {
@@ -166,7 +166,7 @@ func findPossessorSlot(session *apigame.SessionResponse) int32 {
 }
 
 // lastThrowEqual compares two LastThrowInfo objects for equality
-func lastThrowEqual(a, b *apigame.LastThrowInfo) bool {
+func lastThrowEqual(a, b *enginev1.LastThrowInfo) bool {
 	if a == nil && b == nil {
 		return true
 	}

@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -62,9 +62,9 @@ type EchoReplay struct {
 
 // EchoReplayFrame represents a frame in the .echoreplay format
 type EchoReplayFrame struct {
-	Timestamp   string                       `json:"timestamp"`
-	Session     *apigame.SessionResponse     `json:"session"`
-	PlayerBones *apigame.PlayerBonesResponse `json:"user_bones,omitempty"`
+	Timestamp   string                        `json:"timestamp"`
+	Session     *enginev1.SessionResponse     `json:"session"`
+	PlayerBones *enginev1.PlayerBonesResponse `json:"user_bones,omitempty"`
 }
 
 // NewEchoReplayWriter creates a new EchoReplay codec for writing
@@ -490,7 +490,7 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 	}
 
 	// Parse session data
-	sessionResponse := &apigame.SessionResponse{}
+	sessionResponse := &enginev1.SessionResponse{}
 	if err := e.unmarshaler.Unmarshal(parts[1], sessionResponse); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
@@ -510,7 +510,7 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 		}
 
 		if len(bonesData) > 0 {
-			userBones := &apigame.PlayerBonesResponse{}
+			userBones := &enginev1.PlayerBonesResponse{}
 			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err == nil {
 				frame.PlayerBones = userBones
 			}
@@ -667,7 +667,7 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 
 	// Parse session data
 	if frame.Session == nil {
-		frame.Session = &apigame.SessionResponse{}
+		frame.Session = &enginev1.SessionResponse{}
 	}
 	if err := e.unmarshaler.Unmarshal(sessionBytes, frame.Session); err != nil {
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
@@ -676,7 +676,7 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 	// Parse player bones data if present
 	if len(bonesBytes) > 0 {
 		if frame.PlayerBones == nil {
-			frame.PlayerBones = &apigame.PlayerBonesResponse{}
+			frame.PlayerBones = &enginev1.PlayerBonesResponse{}
 		}
 		if err := e.unmarshaler.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
 			return fmt.Errorf("failed to unmarshal player bones data: %w", err)

@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -53,14 +53,14 @@ func TestFrameProcessor(t *testing.T) {
 // Helper functions
 
 func createTestSessionData(t *testing.T) []byte {
-	session := &apigame.SessionResponse{
+	session := &enginev1.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       0,
 		OrangePoints:     0,
 		BlueRoundScore:   0,
 		OrangeRoundScore: 0,
-		Teams:            []*apigame.Team{},
+		Teams:            []*enginev1.Team{},
 	}
 
 	data, err := json.Marshal(session)
@@ -71,14 +71,14 @@ func createTestSessionData(t *testing.T) []byte {
 }
 
 func createModifiedSessionData(t *testing.T) []byte {
-	session := &apigame.SessionResponse{
+	session := &enginev1.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       1, // Changed score
 		OrangePoints:     0,
 		BlueRoundScore:   1, // Changed score
 		OrangeRoundScore: 0,
-		Teams:            []*apigame.Team{},
+		Teams:            []*enginev1.Team{},
 	}
 
 	data, err := json.Marshal(session)
@@ -89,8 +89,8 @@ func createModifiedSessionData(t *testing.T) []byte {
 }
 
 func createTestUserBonesData(t *testing.T) []byte {
-	userBones := &apigame.PlayerBonesResponse{
-		UserBones: []*apigame.UserBones{},
+	userBones := &enginev1.PlayerBonesResponse{
+		UserBones: []*enginev1.UserBones{},
 		ErrCode:   0,
 	}
 
@@ -102,18 +102,18 @@ func createTestUserBonesData(t *testing.T) []byte {
 }
 
 func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
-	sessionResponse := &apigame.SessionResponse{
+	sessionResponse := &enginev1.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       0,
 		OrangePoints:     0,
 		BlueRoundScore:   0,
 		OrangeRoundScore: 0,
-		Teams:            []*apigame.Team{},
+		Teams:            []*enginev1.Team{},
 	}
 
-	bonesResponse := &apigame.PlayerBonesResponse{
-		UserBones: []*apigame.UserBones{},
+	bonesResponse := &enginev1.PlayerBonesResponse{
+		UserBones: []*enginev1.UserBones{},
 		ErrCode:   0,
 	}
 

@@ -48,7 +48,7 @@ func TestRoundTripPreservesBoneData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open original file for conversion: %v", err)
 	}
-	writerNevrcap, err := NewNevrCapWriter(tmpNevrcap)
+	writerNevrcap, err := NewTapeV1Writer(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap writer: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestRoundTripPreservesBoneData(t *testing.T) {
 	writerNevrcap.Close()
 
 	// Step 3: Convert back to echoreplay
-	readerNevrcap, err := NewNevrCapReader(tmpNevrcap)
+	readerNevrcap, err := NewTapeV1Reader(tmpNevrcap)
 	if err != nil {
 		t.Fatalf("Failed to create nevrcap reader: %v", err)
 	}

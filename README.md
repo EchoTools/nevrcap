@@ -1,27 +1,28 @@
-# nevr-capture
+# nevr-tape
 
-High-performance telemetry processing and streaming library for NEVR lobby session data.
+High-performance telemetry codec library for NEVR session data.
 
 ## Overview
 
 This package provides optimized processing of game session frames with support for:
 
+- **Two tape formats** — v1 (legacy `telemetry.v1`) and v2 (game-agnostic `telemetry.v2` envelope with footer indexes)
 - **High-frequency frame processing** (600+ Hz capable)
 - **Event detection** between consecutive frames
-- **Multiple streaming codecs** (.nevrcap, .echoreplay)
+- **Legacy codec** for `.echoreplay` files
 - **File format conversion** utilities
 
 ## Installation
 
 ```bash
-go get github.com/echotools/nevr-capture/v3
+go get github.com/echotools/nevr-tape/v1
 ```
 
 ## Package Structure
 
 ```
 pkg/
-├── codecs/      # File format readers/writers (.nevrcap, .echoreplay)
+├── codecs/      # File format readers/writers (.tape, .echoreplay)
 ├── conversion/  # Format conversion utilities
 ├── events/      # Event detection algorithms
 └── processing/  # Frame processing pipeline
@@ -30,53 +31,78 @@ pkg/
 ## Building
 
 ```bash
-# Download dependencies
-go mod download
-
-# Run tests
-go test -v ./...
-
-# Run benchmarks
-go test -bench=. -benchmem ./...
+go test -v ./...                  # Run tests
+go test -bench=. -benchmem ./... # Run benchmarks
+go vet ./...                      # Static analysis
 ```
 
 ## Usage
 
-### Codecs
+### Tape v2 Codec (recommended for new code)
 
-#### NevrCap Codec (.nevrcap files)
-
-Zstd-compressed protobuf format for efficient storage and streaming.
+Zstd-compressed `telemetry.v2.Envelope` stream with header, frames, and footer.
 
 ```go
-import "github.com/echotools/nevr-capture/v3/pkg/codecs"
+import "github.com/echotools/nevr-tape/v1/pkg/codecs"
 
 // Writing
-writer, err := codecs.NewNevrCapWriter("capture.nevrcap")
+w, err := codecs.NewTapeV2Writer("capture.tape")
+if err != nil {
+    log.Fatal(err)
+}
+err = w.WriteHeader(header) // *telemetryv2.CaptureHeader
+for _, frame := range frames {
+    err = w.WriteFrame(frame) // *telemetryv2.Frame
+}
+err = w.Close() // writes footer, closes zstd, closes file
+
+// Reading
+r, err := codecs.NewTapeV2Reader("capture.tape")
+if err != nil {
+    log.Fatal(err)
+}
+defer r.Close()
+
+header, err := r.ReadHeader()
+for {
+    frame, err := r.ReadFrame()
+    if err != nil {
+        break // io.EOF when footer is reached
+    }
+}
+footer, err := r.ReadFooter() // frame count, duration, keyframe/event indexes
+```
+
+### Tape v1 Codec (legacy)
+
+Zstd-compressed protobuf stream for `telemetry.v1` types. Reads both `.tape` and `.nevrcap` files.
+
+```go
+import "github.com/echotools/nevr-tape/v1/pkg/codecs"
+
+// Writing
+writer, err := codecs.NewTapeV1Writer("capture.tape")
 if err != nil {
     log.Fatal(err)
 }
 defer writer.Close()
-
-// Write frames
 err = writer.WriteFrame(frame)
 
 // Reading
-reader, err := codecs.NewNevrCapReader("capture.nevrcap")
+reader, err := codecs.NewTapeV1Reader("capture.tape")
 if err != nil {
     log.Fatal(err)
 }
 defer reader.Close()
-
 frame, err := reader.ReadFrame()
 ```
 
-#### EchoReplay Codec (.echoreplay files)
+### EchoReplay Codec (.echoreplay files)
 
 ZIP-compressed JSON format for legacy compatibility.
 
 ```go
-import "github.com/echotools/nevr-capture/v3/pkg/codecs"
+import "github.com/echotools/nevr-tape/v1/pkg/codecs"
 
 // Writing
 writer, err := codecs.NewEchoReplayWriter("replay.echoreplay")
@@ -96,111 +122,75 @@ defer reader.Close()
 ### File Conversion
 
 ```go
-import "github.com/echotools/nevr-capture/v3/pkg/conversion"
+import "github.com/echotools/nevr-tape/v1/pkg/conversion"
 
-// Convert .echoreplay to .nevrcap
-err := conversion.ConvertEchoReplayToNevrcap("input.echoreplay", "output.nevrcap")
+// Convert .echoreplay to .tape (v1)
+err := conversion.ConvertEchoReplayToNevrcap("input.echoreplay", "output.tape")
 
-// Convert .nevrcap to .echoreplay  
-err := conversion.ConvertNevrcapToEchoReplay("input.nevrcap", "output.echoreplay")
-
-// Batch convert all files matching pattern
-err := conversion.BatchConvert("*.echoreplay", "./output", true) // toNevrcap=true
+// Convert .tape (v1) to .echoreplay
+err := conversion.ConvertNevrcapToEchoReplay("input.tape", "output.echoreplay")
 ```
 
 ### Event Detection
 
 ```go
-import "github.com/echotools/nevr-capture/v3/pkg/events"
+import "github.com/echotools/nevr-tape/v1/pkg/events"
 
 detector := events.NewEventDetector()
-
-// Detect events between consecutive frames
 detectedEvents := detector.DetectEvents(previousFrame, currentFrame)
-
-for _, event := range detectedEvents {
-    fmt.Printf("Event: %s\n", event.Type)
-}
 ```
-
-## Event Types
-
-The system automatically detects various game events:
-
-### Game State Events
-- Round started/ended
-- Match ended
-- Scoreboard updates
-- Game paused/unpaused
-
-### Player Events
-- Player joined/left
-- Team switches
-- Emote playing
-
-### Disc Events
-- Possession changes
-- Disc thrown/caught
-
-### Stat Events
-- Saves, stuns, passes
-- Catches, steals, blocks
-- Interceptions, assists
-- Shots taken
 
 ## File Formats
 
-### .nevrcap Format
+### .tape v2 (recommended)
 
 | Property | Value |
 |----------|-------|
 | Compression | Zstd |
-| Serialization | Protocol Buffers |
+| Serialization | `telemetry.v2.Envelope` protobuf |
+| Structure | Header + frames + footer with seek indexes |
+| Wire size | ~73.5% smaller than v1 (float32 vs float64 spatial) |
+| Random access | Footer-based scanning (true seeking needs Zstd seekable frames) |
+
+### .tape / .nevrcap v1 (legacy)
+
+| Property | Value |
+|----------|-------|
+| Compression | Zstd |
+| Serialization | `telemetry.v1` protobuf |
 | Structure | Header + length-delimited frames |
-| Features | Event detection, streaming support |
 | Size | ~57% of .echoreplay size |
 
-### .echoreplay Format  
+### .echoreplay (legacy)
 
 | Property | Value |
 |----------|-------|
 | Compression | ZIP |
 | Serialization | JSON |
-| Structure | ZIP archive with replay.txt |
+| Structure | ZIP archive with TSV lines |
 | Features | Legacy compatibility |
-| Size | Baseline reference |
 
-## Benchmarks
+## Migration from nevr-capture
 
-```bash
-# Run all benchmarks
-go test -bench=. -benchmem ./...
-
-# Quick benchmark (frame processing only)
-go test -bench=BenchmarkFrameProcessing -benchtime=1s ./pkg/processing
+```diff
+- go get github.com/echotools/nevr-capture/v3
++ go get github.com/echotools/nevr-tape/v1
 ```
 
-**Performance Targets:**
-- Frame Processing: 600+ Hz (achieved: 14,000+ Hz)
-- Event Detection: <1ms per frame
+| Old | New |
+|-----|-----|
+| `codecs.NewNevrCapWriter` | `codecs.NewTapeV1Writer` |
+| `codecs.NewNevrCapReader` | `codecs.NewTapeV1Reader` |
+| `codecs.NevrCap` struct | `codecs.TapeV1` struct |
+| `apigame.SessionResponse` | `enginev1.SessionResponse` |
 
-See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance metrics.
+Proto imports changed from `github.com/echotools/nevr-common/v4/gen/go/` to
+`buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/`.
 
 ## Related Repositories
 
-- [nevr-proto](https://github.com/echotools/nevr-proto) - Protobuf definitions
-- [nevr-agent](https://github.com/echotools/nevr-agent) - Recording and streaming CLI
-
-## Contributing
-
-When adding new event types:
-
-1. Update protobuf definitions in `nevr-proto/proto/telemetry/`
-2. Regenerate protobuf code in nevr-proto
-3. Add detection logic in `pkg/events/`
-4. Add tests in `*_test.go` files
-5. Update benchmarks if needed
-6. Run the full test suite: `go test -v ./...`
+- [nevr-proto](https://github.com/echotools/nevr-proto) — Protobuf definitions (BSR: `buf.build/echotools/nevr-api`)
+- [nevr-agent](https://github.com/echotools/nevr-agent) — Recording and streaming CLI
 
 ## License
 

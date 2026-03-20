@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -99,7 +99,7 @@ func BenchmarkAsyncDetector_ProcessFrame_Sequence(b *testing.B) {
 		frames[j] = &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(j),
 			Timestamp:  timestamppb.New(time.Now()),
-			Session: &apigame.SessionResponse{
+			Session: &enginev1.SessionResponse{
 				GameStatus:   status,
 				BluePoints:   int32(j / 20),
 				OrangePoints: int32(j / 30),

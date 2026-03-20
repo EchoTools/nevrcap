@@ -3,7 +3,7 @@ package events
 import (
 	"testing"
 
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 func TestAsyncDetector_getFrame(t *testing.T) {

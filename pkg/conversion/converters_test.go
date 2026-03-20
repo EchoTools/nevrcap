@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echotools/nevr-capture/v3/pkg/codecs"
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"github.com/echotools/nevr-tape/v1/pkg/codecs"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -68,18 +68,18 @@ func TestFileConversion(t *testing.T) {
 // Helper functions for creating test data
 
 func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
-	sessionResponse := &apigame.SessionResponse{
+	sessionResponse := &enginev1.SessionResponse{
 		SessionId:        "test-session",
 		GameStatus:       "running",
 		BluePoints:       0,
 		OrangePoints:     0,
 		BlueRoundScore:   0,
 		OrangeRoundScore: 0,
-		Teams:            []*apigame.Team{},
+		Teams:            []*enginev1.Team{},
 	}
 
-	bonesResponse := &apigame.PlayerBonesResponse{
-		UserBones: []*apigame.UserBones{},
+	bonesResponse := &enginev1.PlayerBonesResponse{
+		UserBones: []*enginev1.UserBones{},
 		ErrCode:   0,
 	}
 
@@ -122,7 +122,7 @@ func TestConversionGeneratesEvents(t *testing.T) {
 	}
 
 	// Read nevrcap and check for events
-	reader, err := codecs.NewNevrCapReader(nevrcapFile)
+	reader, err := codecs.NewTapeV1Reader(nevrcapFile)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // Detector defines the behavior required to process frames and emit lobby events.

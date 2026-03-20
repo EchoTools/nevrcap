@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // TestSynchronousMode_BlockingBug validates that synchronous mode doesn't block
@@ -30,7 +30,7 @@ func TestSynchronousMode_BlockingBug(t *testing.T) {
 		for i := 0; i < 2; i++ {
 			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
-				Session: &apigame.SessionResponse{
+				Session: &enginev1.SessionResponse{
 					GameStatus: GameStatusPostMatch, // Generates match ended event
 				},
 			})
@@ -62,7 +62,7 @@ func TestSynchronousMode_ImmediateProcessing(t *testing.T) {
 	// Process a frame that generates an event
 	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus: GameStatusPostMatch,
 		},
 	})
@@ -85,7 +85,7 @@ func TestSynchronousMode_NoBackgroundGoroutine(t *testing.T) {
 	// Process a frame
 	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus: "playing",
 		},
 	})
@@ -114,7 +114,7 @@ func TestAsyncMode_UsesBackgroundGoroutine(t *testing.T) {
 	// Process a frame that generates an event
 	detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus: GameStatusPostMatch,
 		},
 	})
@@ -153,7 +153,7 @@ func TestSynchronousMode_MultipleEventsWithConsumer(t *testing.T) {
 	for i, status := range statuses {
 		detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
-			Session: &apigame.SessionResponse{
+			Session: &enginev1.SessionResponse{
 				GameStatus: status,
 			},
 		})
@@ -194,7 +194,7 @@ func TestSynchronousMode_DropsEventsWhenChannelFull(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
-				Session: &apigame.SessionResponse{
+				Session: &enginev1.SessionResponse{
 					GameStatus: GameStatusPostMatch,
 				},
 			})

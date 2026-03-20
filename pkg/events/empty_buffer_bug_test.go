@@ -3,8 +3,8 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -127,7 +127,7 @@ func TestFrameBufferAfterAddingFrame(t *testing.T) {
 	testFrame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 42,
 		Timestamp:  timestamppb.Now(),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus: "playing",
 		},
 	}

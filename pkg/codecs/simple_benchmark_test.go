@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/gofrs/uuid/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -23,7 +23,7 @@ func BenchmarkOptimizedWriteFrame(b *testing.B) {
 
 	frame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			SessionId: uuid.Must(uuid.NewV4()).String(),
 		},
 	}

@@ -3,24 +3,24 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // Test helper functions
 
-func createFrameWithPlayers(players ...*apigame.TeamMember) *telemetry.LobbySessionStateFrame {
+func createFrameWithPlayers(players ...*enginev1.TeamMember) *telemetry.LobbySessionStateFrame {
 	return &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
 				{Players: players},
 			},
 		},
 	}
 }
 
-func createPlayer(slot int32, name string, jerseyNumber int32) *apigame.TeamMember {
-	return &apigame.TeamMember{
+func createPlayer(slot int32, name string, jerseyNumber int32) *enginev1.TeamMember {
+	return &enginev1.TeamMember{
 		SlotNumber:   slot,
 		DisplayName:  name,
 		JerseyNumber: jerseyNumber,
@@ -34,8 +34,8 @@ func TestPlayerJoinSensor_DetectsNewPlayer(t *testing.T) {
 
 	// First frame: no players
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{{}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{{}},
 		},
 	}
 	event := sensor.AddFrame(frame1)
@@ -95,8 +95,8 @@ func TestPlayerLeaveSensor_DetectsPlayerLeaving(t *testing.T) {
 
 	// Second frame: no players
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{{}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{{}},
 		},
 	}
 	event = sensor.AddFrame(frame2)
@@ -142,7 +142,7 @@ func TestPlayerTeamSwitchSensor_DetectsTeamSwitch(t *testing.T) {
 	// Second frame: same player, different slot (indicating team switch)
 	frame2 := createFrameWithPlayers(createPlayer(1, "Player1", 5)) // jersey 5 = orange
 	// Actually team is determined by slot in our implementation
-	frame2 = createFrameWithPlayers(&apigame.TeamMember{
+	frame2 = createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:   5, // Changed slot to orange team range
 		DisplayName:  "Player1",
 		JerseyNumber: 5,
@@ -152,7 +152,7 @@ func TestPlayerTeamSwitchSensor_DetectsTeamSwitch(t *testing.T) {
 
 	// Reset and test spectator transition
 	sensor = NewPlayerTeamSwitchSensor()
-	frame1 = createFrameWithPlayers(&apigame.TeamMember{
+	frame1 = createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:   1,
 		DisplayName:  "Player1",
 		JerseyNumber: 0, // Blue team
@@ -160,7 +160,7 @@ func TestPlayerTeamSwitchSensor_DetectsTeamSwitch(t *testing.T) {
 	sensor.AddFrame(frame1)
 
 	// Player becomes spectator
-	frame2 = createFrameWithPlayers(&apigame.TeamMember{
+	frame2 = createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:   1,
 		DisplayName:  "Player1",
 		JerseyNumber: -1, // Spectator
@@ -191,7 +191,7 @@ func TestEmoteSensor_DetectsEmotePlayed(t *testing.T) {
 	sensor := NewEmoteSensor()
 
 	// First frame: player not playing emote
-	frame1 := createFrameWithPlayers(&apigame.TeamMember{
+	frame1 := createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:     1,
 		DisplayName:    "Player1",
 		IsEmotePlaying: false,
@@ -202,7 +202,7 @@ func TestEmoteSensor_DetectsEmotePlayed(t *testing.T) {
 	}
 
 	// Second frame: player playing emote
-	frame2 := createFrameWithPlayers(&apigame.TeamMember{
+	frame2 := createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:     1,
 		DisplayName:    "Player1",
 		IsEmotePlaying: true,
@@ -227,14 +227,14 @@ func TestEmoteSensor_NoEventWhenAlreadyPlaying(t *testing.T) {
 	sensor := NewEmoteSensor()
 
 	// First frame: player playing emote
-	frame1 := createFrameWithPlayers(&apigame.TeamMember{
+	frame1 := createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:     1,
 		IsEmotePlaying: true,
 	})
 	sensor.AddFrame(frame1)
 
 	// Second frame: still playing emote
-	frame2 := createFrameWithPlayers(&apigame.TeamMember{
+	frame2 := createFrameWithPlayers(&enginev1.TeamMember{
 		SlotNumber:     1,
 		IsEmotePlaying: true,
 	})
@@ -248,7 +248,7 @@ func TestEmoteSensor_NoEventWhenAlreadyPlaying(t *testing.T) {
 // Helper function tests
 
 func TestDeterminePlayerRole_Spectator(t *testing.T) {
-	player := &apigame.TeamMember{JerseyNumber: -1}
+	player := &enginev1.TeamMember{JerseyNumber: -1}
 	role := determinePlayerRole(player)
 	if role != telemetry.Role_ROLE_SPECTATOR {
 		t.Errorf("expected SPECTATOR, got %v", role)
@@ -256,7 +256,7 @@ func TestDeterminePlayerRole_Spectator(t *testing.T) {
 }
 
 func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
-	player := &apigame.TeamMember{SlotNumber: 1, JerseyNumber: 0}
+	player := &enginev1.TeamMember{SlotNumber: 1, JerseyNumber: 0}
 	role := determinePlayerRole(player)
 	if role != telemetry.Role_ROLE_BLUE_TEAM {
 		t.Errorf("expected BLUE_TEAM, got %v", role)
@@ -264,7 +264,7 @@ func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
 }
 
 func TestDeterminePlayerRole_OrangeTeam(t *testing.T) {
-	player := &apigame.TeamMember{SlotNumber: 5, JerseyNumber: 1}
+	player := &enginev1.TeamMember{SlotNumber: 5, JerseyNumber: 1}
 	role := determinePlayerRole(player)
 	if role != telemetry.Role_ROLE_ORANGE_TEAM {
 		t.Errorf("expected ORANGE_TEAM, got %v", role)
@@ -279,16 +279,16 @@ func TestDeterminePlayerRole_NilPlayer(t *testing.T) {
 }
 
 func TestExtractPlayersMap(t *testing.T) {
-	session := &apigame.SessionResponse{
-		Teams: []*apigame.Team{
+	session := &enginev1.SessionResponse{
+		Teams: []*enginev1.Team{
 			{
-				Players: []*apigame.TeamMember{
+				Players: []*enginev1.TeamMember{
 					{SlotNumber: 1, DisplayName: "Player1"},
 					{SlotNumber: 2, DisplayName: "Player2"},
 				},
 			},
 			{
-				Players: []*apigame.TeamMember{
+				Players: []*enginev1.TeamMember{
 					{SlotNumber: 5, DisplayName: "Player3"},
 				},
 			},

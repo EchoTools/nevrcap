@@ -1,7 +1,7 @@
 package events
 
 import (
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 var (

@@ -1,13 +1,13 @@
 package events
 
-import "github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+import telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 
 import (
 	"os"
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 )
 
 func TestAsyncDetector_ProcessFrameRoundOverTransition(t *testing.T) {
@@ -299,6 +299,6 @@ func (r *recordingSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 
 func newStatusOnlyFrame(status string) *telemetry.LobbySessionStateFrame {
 	return &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{GameStatus: status},
+		Session: &enginev1.SessionResponse{GameStatus: status},
 	}
 }

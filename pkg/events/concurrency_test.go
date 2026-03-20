@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 func TestAsyncDetector_ConcurrentReset(t *testing.T) {
@@ -29,7 +29,7 @@ func TestAsyncDetector_ConcurrentReset(t *testing.T) {
 			default:
 				frame := &telemetry.LobbySessionStateFrame{
 					FrameIndex: uint32(i),
-					Session: &apigame.SessionResponse{
+					Session: &enginev1.SessionResponse{
 						GameStatus: "playing",
 					},
 				}
@@ -101,7 +101,7 @@ func TestAsyncDetector_MultipleSensors(t *testing.T) {
 	// Process a frame
 	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex: 1,
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus: "playing",
 		},
 	}

@@ -3,8 +3,8 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // ScoreboardSensor Tests
@@ -14,7 +14,7 @@ func TestScoreboardSensor_DetectsScoreChange(t *testing.T) {
 
 	// First frame: initial score
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			BluePoints:       0,
 			OrangePoints:     0,
 			BlueRoundScore:   0,
@@ -29,7 +29,7 @@ func TestScoreboardSensor_DetectsScoreChange(t *testing.T) {
 
 	// Second frame: blue scores
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			BluePoints:       2,
 			OrangePoints:     0,
 			BlueRoundScore:   0,
@@ -66,7 +66,7 @@ func TestScoreboardSensor_DetectsRoundScoreChange(t *testing.T) {
 
 	// First frame
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			BlueRoundScore:   0,
 			OrangeRoundScore: 0,
 		},
@@ -75,7 +75,7 @@ func TestScoreboardSensor_DetectsRoundScoreChange(t *testing.T) {
 
 	// Second frame: round score changes
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			BlueRoundScore:   1,
 			OrangeRoundScore: 0,
 		},
@@ -96,7 +96,7 @@ func TestScoreboardSensor_NoEventWhenUnchanged(t *testing.T) {
 	sensor := NewScoreboardSensor()
 
 	frame := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			BluePoints:       2,
 			OrangePoints:     2,
 			BlueRoundScore:   1,
@@ -127,7 +127,7 @@ func TestGoalScoredSensor_DetectsGoal(t *testing.T) {
 
 	// First frame: no last score
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{},
+		Session: &enginev1.SessionResponse{},
 	}
 	event := sensor.AddFrame(frame1)
 	if event != nil {
@@ -136,8 +136,8 @@ func TestGoalScoredSensor_DetectsGoal(t *testing.T) {
 
 	// Second frame: goal scored
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			LastScore: &apigame.LastScore{
+		Session: &enginev1.SessionResponse{
+			LastScore: &enginev1.LastScore{
 				PersonScored:   "Player1",
 				DiscSpeed:      15.5,
 				DistanceThrown: 8.2,
@@ -174,7 +174,7 @@ func TestGoalScoredSensor_DetectsGoal(t *testing.T) {
 func TestGoalScoredSensor_NoEventForSameGoal(t *testing.T) {
 	sensor := NewGoalScoredSensor()
 
-	lastScore := &apigame.LastScore{
+	lastScore := &enginev1.LastScore{
 		PersonScored:   "Player1",
 		DiscSpeed:      15.5,
 		DistanceThrown: 8.2,
@@ -182,7 +182,7 @@ func TestGoalScoredSensor_NoEventForSameGoal(t *testing.T) {
 	}
 
 	frame := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			LastScore: lastScore,
 		},
 	}
@@ -205,8 +205,8 @@ func TestGoalScoredSensor_DetectsNewGoal(t *testing.T) {
 
 	// First goal
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			LastScore: &apigame.LastScore{
+		Session: &enginev1.SessionResponse{
+			LastScore: &enginev1.LastScore{
 				PersonScored: "Player1",
 				DiscSpeed:    15.5,
 			},
@@ -216,8 +216,8 @@ func TestGoalScoredSensor_DetectsNewGoal(t *testing.T) {
 
 	// Second goal (different person)
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			LastScore: &apigame.LastScore{
+		Session: &enginev1.SessionResponse{
+			LastScore: &enginev1.LastScore{
 				PersonScored: "Player2",
 				DiscSpeed:    18.0,
 			},
@@ -244,7 +244,7 @@ func TestLastScoreEqual_BothNil(t *testing.T) {
 }
 
 func TestLastScoreEqual_OneNil(t *testing.T) {
-	score := &apigame.LastScore{PersonScored: "Player1"}
+	score := &enginev1.LastScore{PersonScored: "Player1"}
 	if lastScoreEqual(nil, score) {
 		t.Error("expected false when one is nil")
 	}
@@ -254,13 +254,13 @@ func TestLastScoreEqual_OneNil(t *testing.T) {
 }
 
 func TestLastScoreEqual_Equal(t *testing.T) {
-	a := &apigame.LastScore{
+	a := &enginev1.LastScore{
 		PersonScored:   "Player1",
 		DiscSpeed:      15.5,
 		DistanceThrown: 8.2,
 		PointAmount:    2,
 	}
-	b := &apigame.LastScore{
+	b := &enginev1.LastScore{
 		PersonScored:   "Player1",
 		DiscSpeed:      15.5,
 		DistanceThrown: 8.2,
@@ -272,8 +272,8 @@ func TestLastScoreEqual_Equal(t *testing.T) {
 }
 
 func TestLastScoreEqual_NotEqual(t *testing.T) {
-	a := &apigame.LastScore{PersonScored: "Player1", DiscSpeed: 15.5}
-	b := &apigame.LastScore{PersonScored: "Player2", DiscSpeed: 15.5}
+	a := &enginev1.LastScore{PersonScored: "Player1", DiscSpeed: 15.5}
+	b := &enginev1.LastScore{PersonScored: "Player2", DiscSpeed: 15.5}
 	if lastScoreEqual(a, b) {
 		t.Error("expected false for different scores")
 	}

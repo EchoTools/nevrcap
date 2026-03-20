@@ -1,8 +1,8 @@
 package events
 
 import (
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // ScoreboardSensor detects scoreboard changes
@@ -70,7 +70,7 @@ func (s *ScoreboardSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 // GoalScoredSensor detects when a goal is scored using LastScore data
 type GoalScoredSensor struct {
-	prevLastScore *apigame.LastScore
+	prevLastScore *enginev1.LastScore
 }
 
 // NewGoalScoredSensor creates a new GoalScoredSensor
@@ -106,7 +106,7 @@ func (s *GoalScoredSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 }
 
 // lastScoreEqual compares two LastScore objects for equality
-func lastScoreEqual(a, b *apigame.LastScore) bool {
+func lastScoreEqual(a, b *enginev1.LastScore) bool {
 	if a == nil && b == nil {
 		return true
 	}

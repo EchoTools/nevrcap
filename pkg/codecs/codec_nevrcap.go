@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 )
@@ -35,8 +35,8 @@ func DefaultOutputFilename(path string) string {
 	return path[:len(path)-len(ext)] + ExtTape
 }
 
-// NevrCap handles streaming to/from Zstd-compressed .tape / .nevrcap files
-type NevrCap struct {
+// TapeV1 handles streaming to/from Zstd-compressed .tape / .nevrcap files
+type TapeV1 struct {
 	file    *os.File
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
@@ -44,8 +44,8 @@ type NevrCap struct {
 	reader  io.Reader
 }
 
-// NewNevrCapWriter creates a new Zstd codec for writing .tape / .nevrcap files
-func NewNevrCapWriter(filename string) (*NevrCap, error) {
+// NewTapeV1Writer creates a new Zstd codec for writing .tape / .nevrcap files
+func NewTapeV1Writer(filename string) (*TapeV1, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -57,19 +57,19 @@ func NewNevrCapWriter(filename string) (*NevrCap, error) {
 		return nil, err
 	}
 
-	return &NevrCap{
+	return &TapeV1{
 		file:    file,
 		encoder: encoder,
 		writer:  encoder,
 	}, nil
 }
 
-// NewNevrCapReader creates a new Zstd codec for reading .tape / .nevrcap files
-func NewNevrCapReader(filename string) (*NevrCap, error) {
-	return NewNevrCapReaderWithProgress(filename, nil)
+// NewTapeV1Reader creates a new Zstd codec for reading .tape / .nevrcap files
+func NewTapeV1Reader(filename string) (*TapeV1, error) {
+	return NewTapeV1ReaderWithProgress(filename, nil)
 }
 
-func NewNevrCapReaderWithProgress(filename string, progress io.Writer) (*NevrCap, error) {
+func NewTapeV1ReaderWithProgress(filename string, progress io.Writer) (*TapeV1, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func NewNevrCapReaderWithProgress(filename string, progress io.Writer) (*NevrCap
 		return nil, err
 	}
 
-	return &NevrCap{
+	return &TapeV1{
 		file:    file,
 		decoder: decoder,
 		reader:  decoder,
@@ -94,7 +94,7 @@ func NewNevrCapReaderWithProgress(filename string, progress io.Writer) (*NevrCap
 }
 
 // WriteHeader writes the nevrcap header to the file
-func (z *NevrCap) WriteHeader(header *telemetry.TelemetryHeader) error {
+func (z *TapeV1) WriteHeader(header *telemetry.TelemetryHeader) error {
 	data, err := proto.Marshal(header)
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (z *NevrCap) WriteHeader(header *telemetry.TelemetryHeader) error {
 }
 
 // WriteFrame writes a frame to the file
-func (z *NevrCap) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
+func (z *TapeV1) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 	data, err := proto.Marshal(frame)
 	if err != nil {
 		return err
@@ -116,7 +116,7 @@ func (z *NevrCap) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 }
 
 // ReadHeader reads the nevrcap header from the file
-func (z *NevrCap) ReadHeader() (*telemetry.TelemetryHeader, error) {
+func (z *TapeV1) ReadHeader() (*telemetry.TelemetryHeader, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (z *NevrCap) ReadHeader() (*telemetry.TelemetryHeader, error) {
 }
 
 // ReadFrame reads a frame from the file
-func (z *NevrCap) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
+func (z *TapeV1) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (z *NevrCap) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 }
 
 // ReadFrameTo reads a frame into the provided frame object
-func (z *NevrCap) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
+func (z *TapeV1) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		if err == io.EOF {
@@ -166,7 +166,7 @@ func (z *NevrCap) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, er
 }
 
 // writeDelimitedMessage writes a length-delimited protobuf message
-func (z *NevrCap) writeDelimitedMessage(data []byte) error {
+func (z *TapeV1) writeDelimitedMessage(data []byte) error {
 	// Buffer for varint encoding (max 10 bytes for uint64)
 	var buf [10]byte
 	length := uint64(len(data))
@@ -190,7 +190,7 @@ func (z *NevrCap) writeDelimitedMessage(data []byte) error {
 }
 
 // readDelimitedMessage reads a length-delimited protobuf message
-func (z *NevrCap) readDelimitedMessage() ([]byte, error) {
+func (z *TapeV1) readDelimitedMessage() ([]byte, error) {
 	// Read varint length
 	var length uint64
 	var shift uint
@@ -217,7 +217,7 @@ func (z *NevrCap) readDelimitedMessage() ([]byte, error) {
 }
 
 // Close closes the codec and underlying file
-func (z *NevrCap) Close() error {
+func (z *TapeV1) Close() error {
 	var err error
 
 	if z.encoder != nil {

@@ -3,17 +3,17 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // Helper to create a frame with a player that has specific stats
-func createFrameWithPlayerStats(slot int32, stats *apigame.PlayerStats) *telemetry.LobbySessionStateFrame {
+func createFrameWithPlayerStats(slot int32, stats *enginev1.PlayerStats) *telemetry.LobbySessionStateFrame {
 	return &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
 				{
-					Players: []*apigame.TeamMember{
+					Players: []*enginev1.TeamMember{
 						{SlotNumber: slot, Stats: stats},
 					},
 				},
@@ -23,12 +23,12 @@ func createFrameWithPlayerStats(slot int32, stats *apigame.PlayerStats) *telemet
 }
 
 // Helper to create a frame with two players (for steal victim tracking)
-func createFrameWithTwoPlayers(slot1 int32, stats1 *apigame.PlayerStats, hasPossession1 bool, slot2 int32, stats2 *apigame.PlayerStats, hasPossession2 bool) *telemetry.LobbySessionStateFrame {
+func createFrameWithTwoPlayers(slot1 int32, stats1 *enginev1.PlayerStats, hasPossession1 bool, slot2 int32, stats2 *enginev1.PlayerStats, hasPossession2 bool) *telemetry.LobbySessionStateFrame {
 	return &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
 				{
-					Players: []*apigame.TeamMember{
+					Players: []*enginev1.TeamMember{
 						{SlotNumber: slot1, Stats: stats1, HasPossession: hasPossession1},
 						{SlotNumber: slot2, Stats: stats2, HasPossession: hasPossession2},
 					},
@@ -44,14 +44,14 @@ func TestStatEventSensor_DetectsGoal(t *testing.T) {
 	sensor := NewStatEventSensor()
 
 	// First frame: no goals
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Goals: 0, Points: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Goals: 0, Points: 0})
 	event := sensor.AddFrame(frame1)
 	if event != nil {
 		t.Fatalf("expected no event on first frame, got %v", event)
 	}
 
 	// Second frame: player scored
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Goals: 1, Points: 2})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Goals: 1, Points: 2})
 	event = sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -79,10 +79,10 @@ func TestStatEventSensor_DetectsGoal(t *testing.T) {
 func TestStatEventSensor_DetectsSave(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Saves: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Saves: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Saves: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Saves: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -106,10 +106,10 @@ func TestStatEventSensor_DetectsSave(t *testing.T) {
 func TestStatEventSensor_DetectsStun(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Stuns: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Stuns: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Stuns: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Stuns: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -129,10 +129,10 @@ func TestStatEventSensor_DetectsStun(t *testing.T) {
 func TestStatEventSensor_DetectsPass(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Passes: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Passes: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Passes: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Passes: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -152,10 +152,10 @@ func TestStatEventSensor_DetectsPass(t *testing.T) {
 func TestStatEventSensor_DetectsSteal(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Steals: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Steals: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Steals: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Steals: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -181,11 +181,11 @@ func TestStatEventSensor_DetectsStealWithVictim(t *testing.T) {
 	sensor := NewStatEventSensor()
 
 	// Frame 1: Player 2 (slot 2) has possession, player 1 (slot 1) has 0 steals
-	frame1 := createFrameWithTwoPlayers(1, &apigame.PlayerStats{Steals: 0}, false, 2, &apigame.PlayerStats{Steals: 0}, true)
+	frame1 := createFrameWithTwoPlayers(1, &enginev1.PlayerStats{Steals: 0}, false, 2, &enginev1.PlayerStats{Steals: 0}, true)
 	sensor.AddFrame(frame1)
 
 	// Frame 2: Player 1 now has possession (stole it), steals stat incremented
-	frame2 := createFrameWithTwoPlayers(1, &apigame.PlayerStats{Steals: 1}, true, 2, &apigame.PlayerStats{Steals: 0}, false)
+	frame2 := createFrameWithTwoPlayers(1, &enginev1.PlayerStats{Steals: 1}, true, 2, &enginev1.PlayerStats{Steals: 0}, false)
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -214,10 +214,10 @@ func TestStatEventSensor_DetectsStealWithVictim(t *testing.T) {
 func TestStatEventSensor_DetectsBlock(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Blocks: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Blocks: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Blocks: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Blocks: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -237,10 +237,10 @@ func TestStatEventSensor_DetectsBlock(t *testing.T) {
 func TestStatEventSensor_DetectsInterception(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Interceptions: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Interceptions: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Interceptions: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Interceptions: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -260,10 +260,10 @@ func TestStatEventSensor_DetectsInterception(t *testing.T) {
 func TestStatEventSensor_DetectsAssist(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Assists: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Assists: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{Assists: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{Assists: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -283,10 +283,10 @@ func TestStatEventSensor_DetectsAssist(t *testing.T) {
 func TestStatEventSensor_DetectsShotTaken(t *testing.T) {
 	sensor := NewStatEventSensor()
 
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{ShotsTaken: 0})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{ShotsTaken: 0})
 	sensor.AddFrame(frame1)
 
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{ShotsTaken: 1})
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{ShotsTaken: 1})
 	event := sensor.AddFrame(frame2)
 
 	if event == nil {
@@ -307,11 +307,11 @@ func TestStatEventSensor_MultipleEventsInOneFrame(t *testing.T) {
 	sensor := NewStatEventSensor()
 
 	// First frame: no stats
-	frame1 := createFrameWithPlayerStats(1, &apigame.PlayerStats{})
+	frame1 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{})
 	sensor.AddFrame(frame1)
 
 	// Second frame: multiple stat increases
-	frame2 := createFrameWithPlayerStats(1, &apigame.PlayerStats{
+	frame2 := createFrameWithPlayerStats(1, &enginev1.PlayerStats{
 		Stuns:  2,
 		Passes: 1,
 	})
@@ -363,18 +363,18 @@ func TestStatEventSensor_NilStats(t *testing.T) {
 	sensor := NewStatEventSensor()
 
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, Stats: nil}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, Stats: nil}}},
 			},
 		},
 	}
 	sensor.AddFrame(frame1)
 
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, Stats: nil}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, Stats: nil}}},
 			},
 		},
 	}
@@ -396,7 +396,7 @@ func TestSnapshotFromStats_NilStats(t *testing.T) {
 }
 
 func TestSnapshotFromStats_WithStats(t *testing.T) {
-	stats := &apigame.PlayerStats{
+	stats := &enginev1.PlayerStats{
 		Goals:         3,
 		Saves:         2,
 		Stuns:         5,

@@ -3,8 +3,8 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // DiscPossessionSensor Tests
@@ -14,10 +14,10 @@ func TestDiscPossessionSensor_DetectsPossessionChange(t *testing.T) {
 
 	// First frame: player 1 has possession
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
 				{
-					Players: []*apigame.TeamMember{
+					Players: []*enginev1.TeamMember{
 						{SlotNumber: 1, HasPossession: true},
 						{SlotNumber: 2, HasPossession: false},
 					},
@@ -32,10 +32,10 @@ func TestDiscPossessionSensor_DetectsPossessionChange(t *testing.T) {
 
 	// Second frame: player 2 has possession
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
 				{
-					Players: []*apigame.TeamMember{
+					Players: []*enginev1.TeamMember{
 						{SlotNumber: 1, HasPossession: false},
 						{SlotNumber: 2, HasPossession: true},
 					},
@@ -68,9 +68,9 @@ func TestDiscPossessionSensor_DetectsLostPossession(t *testing.T) {
 
 	// First frame: player 1 has possession
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, HasPossession: true}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, HasPossession: true}}},
 			},
 		},
 	}
@@ -78,9 +78,9 @@ func TestDiscPossessionSensor_DetectsLostPossession(t *testing.T) {
 
 	// Second frame: no one has possession
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, HasPossession: false}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, HasPossession: false}}},
 			},
 		},
 	}
@@ -111,9 +111,9 @@ func TestDiscThrownSensor_DetectsThrow(t *testing.T) {
 
 	// First frame: player 1 has possession, no throw yet
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, HasPossession: true}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, HasPossession: true}}},
 			},
 		},
 	}
@@ -124,11 +124,11 @@ func TestDiscThrownSensor_DetectsThrow(t *testing.T) {
 
 	// Second frame: throw info appears
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, HasPossession: false}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, HasPossession: false}}},
 			},
-			LastThrow: &apigame.LastThrowInfo{
+			LastThrow: &enginev1.LastThrowInfo{
 				ArmSpeed:   12.5,
 				TotalSpeed: 18.0,
 				RotPerSec:  5.0,
@@ -162,16 +162,16 @@ func TestDiscThrownSensor_DetectsThrow(t *testing.T) {
 func TestDiscThrownSensor_NoEventForSameThrow(t *testing.T) {
 	sensor := NewDiscThrownSensor()
 
-	throwInfo := &apigame.LastThrowInfo{
+	throwInfo := &enginev1.LastThrowInfo{
 		ArmSpeed:   12.5,
 		TotalSpeed: 18.0,
 		RotPerSec:  5.0,
 	}
 
 	frame := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{{SlotNumber: 1, HasPossession: true}}},
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{{SlotNumber: 1, HasPossession: true}}},
 			},
 			LastThrow: throwInfo,
 		},
@@ -197,9 +197,9 @@ func TestDiscCaughtSensor_DetectsCatch(t *testing.T) {
 
 	// First frame: disc is free
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{
 					{SlotNumber: 1, HasPossession: false},
 					{SlotNumber: 2, HasPossession: false},
 				}},
@@ -213,9 +213,9 @@ func TestDiscCaughtSensor_DetectsCatch(t *testing.T) {
 
 	// Second frame: player 2 catches
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{
 					{SlotNumber: 1, HasPossession: false},
 					{SlotNumber: 2, HasPossession: true},
 				}},
@@ -243,9 +243,9 @@ func TestDiscCaughtSensor_DetectsInterception(t *testing.T) {
 
 	// First frame: player 1 has possession
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{
 					{SlotNumber: 1, HasPossession: true},
 					{SlotNumber: 5, HasPossession: false},
 				}},
@@ -256,9 +256,9 @@ func TestDiscCaughtSensor_DetectsInterception(t *testing.T) {
 
 	// Second frame: player 5 catches (interception)
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Teams: []*apigame.Team{
-				{Players: []*apigame.TeamMember{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{
 					{SlotNumber: 1, HasPossession: false},
 					{SlotNumber: 5, HasPossession: true},
 				}},
@@ -280,9 +280,9 @@ func TestDiscCaughtSensor_DetectsInterception(t *testing.T) {
 // findPossessorSlot Tests
 
 func TestFindPossessorSlot_NoOne(t *testing.T) {
-	session := &apigame.SessionResponse{
-		Teams: []*apigame.Team{
-			{Players: []*apigame.TeamMember{
+	session := &enginev1.SessionResponse{
+		Teams: []*enginev1.Team{
+			{Players: []*enginev1.TeamMember{
 				{SlotNumber: 1, HasPossession: false},
 				{SlotNumber: 2, HasPossession: false},
 			}},
@@ -296,9 +296,9 @@ func TestFindPossessorSlot_NoOne(t *testing.T) {
 }
 
 func TestFindPossessorSlot_Found(t *testing.T) {
-	session := &apigame.SessionResponse{
-		Teams: []*apigame.Team{
-			{Players: []*apigame.TeamMember{
+	session := &enginev1.SessionResponse{
+		Teams: []*enginev1.Team{
+			{Players: []*enginev1.TeamMember{
 				{SlotNumber: 1, HasPossession: false},
 				{SlotNumber: 2, HasPossession: true},
 			}},
@@ -320,7 +320,7 @@ func TestLastThrowEqual_BothNil(t *testing.T) {
 }
 
 func TestLastThrowEqual_OneNil(t *testing.T) {
-	throw := &apigame.LastThrowInfo{ArmSpeed: 10.0}
+	throw := &enginev1.LastThrowInfo{ArmSpeed: 10.0}
 	if lastThrowEqual(nil, throw) {
 		t.Error("expected false when one is nil")
 	}
@@ -330,16 +330,16 @@ func TestLastThrowEqual_OneNil(t *testing.T) {
 }
 
 func TestLastThrowEqual_Equal(t *testing.T) {
-	a := &apigame.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0, RotPerSec: 5.0}
-	b := &apigame.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0, RotPerSec: 5.0}
+	a := &enginev1.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0, RotPerSec: 5.0}
+	b := &enginev1.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0, RotPerSec: 5.0}
 	if !lastThrowEqual(a, b) {
 		t.Error("expected true for equal throws")
 	}
 }
 
 func TestLastThrowEqual_NotEqual(t *testing.T) {
-	a := &apigame.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0}
-	b := &apigame.LastThrowInfo{ArmSpeed: 12.0, TotalSpeed: 15.0}
+	a := &enginev1.LastThrowInfo{ArmSpeed: 10.0, TotalSpeed: 15.0}
+	b := &enginev1.LastThrowInfo{ArmSpeed: 12.0, TotalSpeed: 15.0}
 	if lastThrowEqual(a, b) {
 		t.Error("expected false for different throws")
 	}

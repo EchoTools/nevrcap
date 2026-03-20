@@ -3,14 +3,14 @@ package events
 import (
 	"testing"
 
-	apigame "github.com/echotools/nevr-common/v4/gen/go/apigame/v1"
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // Helper to create a frame with game status and scores
 func createGameStateFrame(status string, blueRound, orangeRound int32) *telemetry.LobbySessionStateFrame {
 	return &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:       status,
 			BlueRoundScore:   blueRound,
 			OrangeRoundScore: orangeRound,
@@ -90,8 +90,8 @@ func TestPauseSensor_DetectsPause(t *testing.T) {
 
 	// First frame: not paused
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Pause: &apigame.PauseState{PausedState: "none"},
+		Session: &enginev1.SessionResponse{
+			Pause: &enginev1.PauseState{PausedState: "none"},
 		},
 	}
 	event := sensor.AddFrame(frame1)
@@ -101,8 +101,8 @@ func TestPauseSensor_DetectsPause(t *testing.T) {
 
 	// Second frame: paused
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Pause: &apigame.PauseState{
+		Session: &enginev1.SessionResponse{
+			Pause: &enginev1.PauseState{
 				PausedState:         "paused",
 				PausedRequestedTeam: "blue",
 			},
@@ -125,16 +125,16 @@ func TestPauseSensor_DetectsUnpause(t *testing.T) {
 
 	// First frame: paused
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Pause: &apigame.PauseState{PausedState: "paused"},
+		Session: &enginev1.SessionResponse{
+			Pause: &enginev1.PauseState{PausedState: "paused"},
 		},
 	}
 	sensor.AddFrame(frame1)
 
 	// Second frame: unpaused
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
-			Pause: &apigame.PauseState{PausedState: "none"},
+		Session: &enginev1.SessionResponse{
+			Pause: &enginev1.PauseState{PausedState: "none"},
 		},
 	}
 	event := sensor.AddFrame(frame2)
@@ -153,7 +153,7 @@ func TestPauseSensor_NilPauseState(t *testing.T) {
 	sensor := NewPauseSensor()
 
 	frame := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			Pause: nil,
 		},
 	}
@@ -246,7 +246,7 @@ func TestMatchEndSensor_DetectsMatchEnd(t *testing.T) {
 
 	// First frame: playing
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPlaying,
 			BluePoints:   10,
 			OrangePoints: 8,
@@ -259,7 +259,7 @@ func TestMatchEndSensor_DetectsMatchEnd(t *testing.T) {
 
 	// Second frame: post match
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPostMatch,
 			BluePoints:   10,
 			OrangePoints: 8,
@@ -285,7 +285,7 @@ func TestMatchEndSensor_OrangeWins(t *testing.T) {
 	sensor := NewMatchEndSensor()
 
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPlaying,
 			BluePoints:   5,
 			OrangePoints: 12,
@@ -294,7 +294,7 @@ func TestMatchEndSensor_OrangeWins(t *testing.T) {
 	sensor.AddFrame(frame1)
 
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPostMatch,
 			BluePoints:   5,
 			OrangePoints: 12,
@@ -316,7 +316,7 @@ func TestMatchEndSensor_TiedMatch(t *testing.T) {
 	sensor := NewMatchEndSensor()
 
 	frame1 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPlaying,
 			BluePoints:   8,
 			OrangePoints: 8,
@@ -325,7 +325,7 @@ func TestMatchEndSensor_TiedMatch(t *testing.T) {
 	sensor.AddFrame(frame1)
 
 	frame2 := &telemetry.LobbySessionStateFrame{
-		Session: &apigame.SessionResponse{
+		Session: &enginev1.SessionResponse{
 			GameStatus:   GameStatusPostMatch,
 			BluePoints:   8,
 			OrangePoints: 8,

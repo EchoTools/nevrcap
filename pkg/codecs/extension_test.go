@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/echotools/nevr-common/v4/gen/go/telemetry/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -72,9 +72,9 @@ func TestReadWriteBothExtensions(t *testing.T) {
 			defer os.Remove(tmpFile)
 
 			// Write
-			writer, err := NewNevrCapWriter(tmpFile)
+			writer, err := NewTapeV1Writer(tmpFile)
 			if err != nil {
-				t.Fatalf("NewNevrCapWriter(%q): %v", tmpFile, err)
+				t.Fatalf("NewTapeV1Writer(%q): %v", tmpFile, err)
 			}
 
 			header := &telemetry.TelemetryHeader{
@@ -94,9 +94,9 @@ func TestReadWriteBothExtensions(t *testing.T) {
 			}
 
 			// Read
-			reader, err := NewNevrCapReader(tmpFile)
+			reader, err := NewTapeV1Reader(tmpFile)
 			if err != nil {
-				t.Fatalf("NewNevrCapReader(%q): %v", tmpFile, err)
+				t.Fatalf("NewTapeV1Reader(%q): %v", tmpFile, err)
 			}
 			defer reader.Close()
 
@@ -127,9 +127,9 @@ func TestRoundTripCrossExtension(t *testing.T) {
 	nevrcapPath := dir + "/capture.nevrcap"
 
 	// Write as .tape
-	writer, err := NewNevrCapWriter(tapePath)
+	writer, err := NewTapeV1Writer(tapePath)
 	if err != nil {
-		t.Fatalf("NewNevrCapWriter: %v", err)
+		t.Fatalf("NewTapeV1Writer: %v", err)
 	}
 	header := &telemetry.TelemetryHeader{
 		CaptureId: "cross-ext-test",
@@ -154,9 +154,9 @@ func TestRoundTripCrossExtension(t *testing.T) {
 	}
 
 	// Read from .nevrcap copy
-	reader, err := NewNevrCapReader(nevrcapPath)
+	reader, err := NewTapeV1Reader(nevrcapPath)
 	if err != nil {
-		t.Fatalf("NewNevrCapReader: %v", err)
+		t.Fatalf("NewTapeV1Reader: %v", err)
 	}
 	defer reader.Close()
 
