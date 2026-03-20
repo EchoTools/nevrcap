@@ -1,19 +1,16 @@
 package codecs
 
 import (
-	"os"
 	"testing"
 	"time"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/gofrs/uuid/v5"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func BenchmarkOptimizedWriteFrame(b *testing.B) {
-	tempFile := "/tmp/benchmark.echoreplay"
-	defer os.Remove(tempFile)
+	tempFile := b.TempDir() + "/benchmark.echoreplay"
 
 	codec, err := NewEchoReplayWriter(tempFile)
 	if err != nil {
@@ -24,7 +21,7 @@ func BenchmarkOptimizedWriteFrame(b *testing.B) {
 	frame := &telemetry.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(time.Now()),
 		Session: &enginev1.SessionResponse{
-			SessionId: uuid.Must(uuid.NewV4()).String(),
+			SessionId: "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
 		},
 	}
 

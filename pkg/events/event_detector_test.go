@@ -1,13 +1,12 @@
 package events
 
-import telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-
 import (
-	"os"
+	"sync"
 	"testing"
 	"time"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 func TestAsyncDetector_ProcessFrameRoundOverTransition(t *testing.T) {
@@ -113,10 +112,6 @@ func TestAsyncDetector_StopClosesEventsChan(t *testing.T) {
 }
 
 func TestAsyncDetector_SensorIntegrationReceivesFrames(t *testing.T) {
-	if os.Getenv("SKIP_RACE_FLAKY") == "1" {
-		t.Skip("Skipping flaky race test (known issue tracked separately)")
-	}
-
 	detector := newTestAsyncDetector(t)
 	sensor := &recordingSensor{}
 	detector.sensors = []Sensor{sensor}
@@ -125,12 +120,12 @@ func TestAsyncDetector_SensorIntegrationReceivesFrames(t *testing.T) {
 
 	deadline := time.After(200 * time.Millisecond)
 	for {
-		if len(sensor.frames) > 0 {
+		if sensor.Len() > 0 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("sensor did not observe any frames: %d", len(sensor.frames))
+			t.Fatalf("sensor did not observe any frames: %d", sensor.Len())
 		default:
 			time.Sleep(time.Millisecond)
 		}
@@ -289,12 +284,21 @@ func assertNoEvents(tb testing.TB, detector *AsyncDetector, timeout time.Duratio
 }
 
 type recordingSensor struct {
+	mu     sync.Mutex
 	frames []*telemetry.LobbySessionStateFrame
 }
 
 func (r *recordingSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
+	r.mu.Lock()
 	r.frames = append(r.frames, frame)
+	r.mu.Unlock()
 	return nil
+}
+
+func (r *recordingSensor) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.frames)
 }
 
 func newStatusOnlyFrame(status string) *telemetry.LobbySessionStateFrame {

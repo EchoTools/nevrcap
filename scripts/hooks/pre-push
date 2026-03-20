@@ -27,9 +27,8 @@ if ! go test -timeout=2m ./...; then
   exit 1
 fi
 
-# Check 2: Run race detector with flaky test skipped
+# Check 2: Run race detector
 echo "Running race detector..."
-export SKIP_RACE_FLAKY=1
 if ! go test -race -timeout=3m ./...; then
   echo "ERROR: Race detector found issues"
   exit 1

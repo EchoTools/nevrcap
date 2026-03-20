@@ -3,7 +3,6 @@ module github.com/echotools/nevr-tape/v1
 go 1.25.0
 
 require (
-	github.com/gofrs/uuid/v5 v5.4.0
 	github.com/klauspost/compress v1.18.4
 	google.golang.org/protobuf v1.36.11
 )

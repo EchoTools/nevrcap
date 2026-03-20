@@ -56,3 +56,4 @@ _local/
 # Tool session files
 .sisyphus/
 .serena/
+.opencode/

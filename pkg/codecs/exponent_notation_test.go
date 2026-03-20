@@ -4,15 +4,13 @@ import (
 	"archive/zip"
 	"bytes"
 	"io"
-	"os"
 	"strings"
 	"testing"
 )
 
 // TestEchoReplayNoExponentNotation verifies that float values are never stored with e-notation
 func TestEchoReplayNoExponentNotation(t *testing.T) {
-	tempFile := "/tmp/test_no_exponent.echoreplay"
-	defer os.Remove(tempFile)
+	tempFile := t.TempDir() + "/test_no_exponent.echoreplay"
 
 	// Create writer
 	writer, err := NewEchoReplayWriter(tempFile)
