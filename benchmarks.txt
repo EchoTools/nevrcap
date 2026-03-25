@@ -1,0 +1,40 @@
+PASS
+ok  	github.com/echotools/tape/cmd/tapedeck	0.003s
+goos: linux
+goarch: amd64
+pkg: github.com/echotools/tape/pkg/codec
+cpu: AMD Ryzen 9 5950X 16-Core Processor            
+BenchmarkReadFrameTo-32                   	   94578	     12594 ns/op	    1370 B/op	      68 allocs/op
+BenchmarkNewEchoReplayReader-32           	  105105	     12614 ns/op	   73488 B/op	      27 allocs/op
+BenchmarkTimeParse-32                     	 8945728	       133.3 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFastParseTimestamp-32            	80013254	        14.80 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimeFormat-32                    	 8768664	       133.4 ns/op	      24 B/op	       1 allocs/op
+BenchmarkFastFormatTimestamp-32           	44830434	        26.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkOptimizedWriteFrame-32           	   98558	     12614 ns/op	    5877 B/op	      14 allocs/op
+BenchmarkFixProtojsonUint64Encoding-32    	 1725483	       698.5 ns/op	    1280 B/op	       4 allocs/op
+PASS
+ok  	github.com/echotools/tape/pkg/codec	10.898s
+goos: linux
+goarch: amd64
+pkg: github.com/echotools/tape/pkg/conversion
+cpu: AMD Ryzen 9 5950X 16-Core Processor            
+BenchmarkConvertNevrcap-32       	     146	   7628555 ns/op	      1000 frames/op	26353809 B/op	   75315 allocs/op
+PASS
+ok  	github.com/echotools/tape/pkg/conversion	1.959s
+goos: linux
+goarch: amd64
+pkg: github.com/echotools/tape/pkg/events
+cpu: AMD Ryzen 9 5950X 16-Core Processor            
+BenchmarkAsyncDetector_detectPostMatchEventRoundOver-32     	14079784	        84.51 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_detectPostMatchEventMatchEnded-32    	13864464	        87.88 ns/op	     128 B/op	       4 allocs/op
+BenchmarkAsyncDetector_addFrameToBuffer-32                  	427098772	         2.803 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_detectEventsWithSensors-32           	 5980719	       194.8 ns/op	     304 B/op	       8 allocs/op
+BenchmarkAsyncDetector_detectEventsNoTransition-32          	126798888	         9.513 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame-32                      	 9401610	       125.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_WithTransition-32       	  605706	      2056 ns/op	    2104 B/op	      15 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_FullBuffer-32           	 8755506	       123.1 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAsyncDetector_ProcessFrame_Sequence-32             	  125007	      9351 ns/op	    2072 B/op	      14 allocs/op
+PASS
+ok  	github.com/echotools/tape/pkg/events	12.273s
+PASS
+ok  	github.com/echotools/tape/pkg/processing	0.002s
