@@ -3,7 +3,7 @@ package codec
 import (
 	"testing"
 
-	telemetryv2 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -11,29 +11,29 @@ import (
 func TestTapeRoundTrip(t *testing.T) {
 	path := t.TempDir() + "/test.tape"
 
-	header := &telemetryv2.CaptureHeader{
+	header := &capturepb.CaptureHeader{
 		CaptureId:     "test-capture-001",
 		CreatedAt:     timestamppb.Now(),
 		FormatVersion: 2,
 		Metadata:      map[string]string{"game_version": "1.0"},
-		GameHeader: &telemetryv2.CaptureHeader_EchoArena{
-			EchoArena: &telemetryv2.EchoArenaHeader{
+		GameHeader: &capturepb.CaptureHeader_EchoArena{
+			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: "ABC-123",
 				MapName:   "mpl_arena_a",
-				MatchType: telemetryv2.MatchType_MATCH_TYPE_ARENA,
+				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}
 
 	const frameCount = 250
-	frames := make([]*telemetryv2.Frame, frameCount)
+	frames := make([]*capturepb.Frame, frameCount)
 	for i := uint32(0); i < frameCount; i++ {
-		frames[i] = &telemetryv2.Frame{
+		frames[i] = &capturepb.Frame{
 			FrameIndex:        i,
 			TimestampOffsetMs: i * 16, // ~60 Hz
-			Payload: &telemetryv2.Frame_EchoArena{
-				EchoArena: &telemetryv2.EchoArenaFrame{
-					GameStatus:   telemetryv2.GameStatus_GAME_STATUS_PLAYING,
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{
+					GameStatus:   capturepb.GameStatus_GAME_STATUS_PLAYING,
 					GameClock:    float32(300) - float32(i)*0.016,
 					BluePoints:   int32(i / 100),
 					OrangePoints: int32(i / 150),
@@ -43,11 +43,11 @@ func TestTapeRoundTrip(t *testing.T) {
 	}
 
 	// Add an event at frame 50.
-	frames[50].GetEchoArena().Events = []*telemetryv2.EchoEvent{
-		{Event: &telemetryv2.EchoEvent_GoalScored{GoalScored: &telemetryv2.GoalScored{
+	frames[50].GetEchoArena().Events = []*capturepb.EchoEvent{
+		{Event: &capturepb.EchoEvent_GoalScored{GoalScored: &capturepb.GoalScored{
 			DiscSpeed:   15.5,
-			Team:        telemetryv2.Role_ROLE_BLUE_TEAM,
-			GoalType:    telemetryv2.GoalType_GOAL_TYPE_LONG_SHOT,
+			Team:        capturepb.Role_ROLE_BLUE_TEAM,
+			GoalType:    capturepb.GoalType_GOAL_TYPE_LONG_SHOT,
 			PointAmount: 3,
 		}}},
 	}
@@ -84,7 +84,7 @@ func TestTapeRoundTrip(t *testing.T) {
 		t.Errorf("header mismatch")
 	}
 
-	var readFrames []*telemetryv2.Frame
+	var readFrames []*capturepb.Frame
 	for {
 		f, err := r.ReadFrame()
 		if err != nil {
@@ -142,7 +142,7 @@ func TestTapeRoundTrip(t *testing.T) {
 		t.Errorf("event_index length: got %d, want 1", len(footer.EventIndex))
 	} else {
 		entry := footer.EventIndex[0]
-		if entry.EventType != telemetryv2.EventType_EVENT_TYPE_GOAL_SCORED {
+		if entry.EventType != capturepb.EventType_EVENT_TYPE_GOAL_SCORED {
 			t.Errorf("event_index[0].event_type: got %v, want GOAL_SCORED", entry.EventType)
 		}
 		if len(entry.FrameIndices) != 1 || entry.FrameIndices[0] != 50 {
@@ -154,7 +154,7 @@ func TestTapeRoundTrip(t *testing.T) {
 func TestTapeEmptyCapture(t *testing.T) {
 	path := t.TempDir() + "/empty.tape"
 
-	header := &telemetryv2.CaptureHeader{
+	header := &capturepb.CaptureHeader{
 		CaptureId:     "empty-capture",
 		CreatedAt:     timestamppb.Now(),
 		FormatVersion: 2,
@@ -207,7 +207,7 @@ func TestTapeCustomKeyframeInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWriterWithKeyframeInterval: %v", err)
 	}
-	if err := w.WriteHeader(&telemetryv2.CaptureHeader{
+	if err := w.WriteHeader(&capturepb.CaptureHeader{
 		CaptureId:     "kf-test",
 		FormatVersion: 2,
 	}); err != nil {
@@ -215,7 +215,7 @@ func TestTapeCustomKeyframeInterval(t *testing.T) {
 	}
 
 	for i := uint32(0); i < 25; i++ {
-		if err := w.WriteFrame(&telemetryv2.Frame{
+		if err := w.WriteFrame(&capturepb.Frame{
 			FrameIndex:        i,
 			TimestampOffsetMs: i * 16,
 		}); err != nil {

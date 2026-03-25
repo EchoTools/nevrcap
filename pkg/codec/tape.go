@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	telemetryv2 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 )
@@ -15,7 +15,7 @@ const (
 	DefaultKeyframeInterval = 100
 )
 
-// Writer writes telemetry v2 captures in the envelope stream format.
+// Writer writes tape captures in the envelope stream format.
 //
 // Wire format:
 //
@@ -33,8 +33,8 @@ const (
 type Writer struct {
 	file       *os.File
 	encoder    *zstd.Encoder
-	eventIndex map[telemetryv2.EventType][]uint32
-	keyframes  []*telemetryv2.KeyframeEntry
+	eventIndex map[capturepb.EventType][]uint32
+	keyframes  []*capturepb.KeyframeEntry
 	// bytesWritten tracks uncompressed bytes for footer_offset.
 	bytesWritten     uint64
 	frameCount       uint32
@@ -42,7 +42,7 @@ type Writer struct {
 	keyframeInterval uint32
 }
 
-// NewWriter creates a writer for v2 tape files.
+// NewWriter creates a writer for tape files.
 func NewWriter(filename string) (*Writer, error) {
 	return NewWriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
 }
@@ -63,25 +63,25 @@ func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*W
 		file:             file,
 		encoder:          encoder,
 		keyframeInterval: keyframeInterval,
-		eventIndex:       make(map[telemetryv2.EventType][]uint32),
+		eventIndex:       make(map[capturepb.EventType][]uint32),
 	}, nil
 }
 
 // WriteHeader writes the capture header as the first envelope.
-func (w *Writer) WriteHeader(header *telemetryv2.CaptureHeader) error {
-	env := &telemetryv2.Envelope{
-		Message: &telemetryv2.Envelope_Header{Header: header},
+func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
+	env := &capturepb.Envelope{
+		Message: &capturepb.Envelope_Header{Header: header},
 	}
 	return w.writeEnvelope(env)
 }
 
 // WriteFrame writes a frame envelope and updates indexes.
-func (w *Writer) WriteFrame(frame *telemetryv2.Frame) error {
+func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	frameIndex := w.frameCount
 
 	// Track keyframe offset before writing.
 	if frameIndex%w.keyframeInterval == 0 {
-		w.keyframes = append(w.keyframes, &telemetryv2.KeyframeEntry{
+		w.keyframes = append(w.keyframes, &capturepb.KeyframeEntry{
 			FrameIndex: frameIndex,
 			ByteOffset: w.bytesWritten,
 		})
@@ -91,14 +91,14 @@ func (w *Writer) WriteFrame(frame *telemetryv2.Frame) error {
 	if ea := frame.GetEchoArena(); ea != nil {
 		for _, evt := range ea.GetEvents() {
 			eventType := classifyEvent(evt)
-			if eventType != telemetryv2.EventType_EVENT_TYPE_UNSPECIFIED {
+			if eventType != capturepb.EventType_EVENT_TYPE_UNSPECIFIED {
 				w.eventIndex[eventType] = append(w.eventIndex[eventType], frameIndex)
 			}
 		}
 	}
 
-	env := &telemetryv2.Envelope{
-		Message: &telemetryv2.Envelope_Frame{Frame: frame},
+	env := &capturepb.Envelope{
+		Message: &capturepb.Envelope_Frame{Frame: frame},
 	}
 	if err := w.writeEnvelope(env); err != nil {
 		return err
@@ -112,15 +112,15 @@ func (w *Writer) WriteFrame(frame *telemetryv2.Frame) error {
 // Close writes the footer, closes the zstd encoder, and closes the file.
 func (w *Writer) Close() error {
 	// Build event index entries.
-	var eventEntries []*telemetryv2.EventIndexEntry
+	var eventEntries []*capturepb.EventIndexEntry
 	for eventType, frameIndices := range w.eventIndex {
-		eventEntries = append(eventEntries, &telemetryv2.EventIndexEntry{
+		eventEntries = append(eventEntries, &capturepb.EventIndexEntry{
 			EventType:    eventType,
 			FrameIndices: frameIndices,
 		})
 	}
 
-	footer := &telemetryv2.CaptureFooter{
+	footer := &capturepb.CaptureFooter{
 		FrameCount:    w.frameCount,
 		DurationMs:    w.lastTimestampMs,
 		FooterOffset:  w.bytesWritten,
@@ -128,8 +128,8 @@ func (w *Writer) Close() error {
 		EventIndex:    eventEntries,
 	}
 
-	env := &telemetryv2.Envelope{
-		Message: &telemetryv2.Envelope_Footer{Footer: footer},
+	env := &capturepb.Envelope{
+		Message: &capturepb.Envelope_Footer{Footer: footer},
 	}
 
 	var firstErr error
@@ -150,7 +150,7 @@ func (w *Writer) Close() error {
 }
 
 // writeEnvelope marshals and writes a length-delimited envelope.
-func (w *Writer) writeEnvelope(env *telemetryv2.Envelope) error {
+func (w *Writer) writeEnvelope(env *capturepb.Envelope) error {
 	data, err := proto.Marshal(env)
 	if err != nil {
 		return err
@@ -180,72 +180,72 @@ func (w *Writer) writeEnvelope(env *telemetryv2.Envelope) error {
 }
 
 // classifyEvent returns the EventType for an EchoEvent based on its oneof case.
-func classifyEvent(evt *telemetryv2.EchoEvent) telemetryv2.EventType {
+func classifyEvent(evt *capturepb.EchoEvent) capturepb.EventType {
 	switch evt.GetEvent().(type) {
-	case *telemetryv2.EchoEvent_RoundStarted:
-		return telemetryv2.EventType_EVENT_TYPE_ROUND_STARTED
-	case *telemetryv2.EchoEvent_RoundPaused:
-		return telemetryv2.EventType_EVENT_TYPE_ROUND_PAUSED
-	case *telemetryv2.EchoEvent_RoundUnpaused:
-		return telemetryv2.EventType_EVENT_TYPE_ROUND_UNPAUSED
-	case *telemetryv2.EchoEvent_RoundEnded:
-		return telemetryv2.EventType_EVENT_TYPE_ROUND_ENDED
-	case *telemetryv2.EchoEvent_MatchEnded:
-		return telemetryv2.EventType_EVENT_TYPE_MATCH_ENDED
-	case *telemetryv2.EchoEvent_ScoreboardUpdated:
-		return telemetryv2.EventType_EVENT_TYPE_SCOREBOARD_UPDATED
-	case *telemetryv2.EchoEvent_PlayerJoined:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_JOINED
-	case *telemetryv2.EchoEvent_PlayerLeft:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_LEFT
-	case *telemetryv2.EchoEvent_PlayerSwitchedTeam:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_SWITCHED_TEAM
-	case *telemetryv2.EchoEvent_EmotePlayed:
-		return telemetryv2.EventType_EVENT_TYPE_EMOTE_PLAYED
-	case *telemetryv2.EchoEvent_DiscPossessionChanged:
-		return telemetryv2.EventType_EVENT_TYPE_DISC_POSSESSION_CHANGED
-	case *telemetryv2.EchoEvent_DiscThrown:
-		return telemetryv2.EventType_EVENT_TYPE_DISC_THROWN
-	case *telemetryv2.EchoEvent_DiscCaught:
-		return telemetryv2.EventType_EVENT_TYPE_DISC_CAUGHT
-	case *telemetryv2.EchoEvent_GoalScored:
-		return telemetryv2.EventType_EVENT_TYPE_GOAL_SCORED
-	case *telemetryv2.EchoEvent_PlayerGoal:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_GOAL
-	case *telemetryv2.EchoEvent_PlayerSave:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_SAVE
-	case *telemetryv2.EchoEvent_PlayerStun:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_STUN
-	case *telemetryv2.EchoEvent_PlayerPass:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_PASS
-	case *telemetryv2.EchoEvent_PlayerSteal:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_STEAL
-	case *telemetryv2.EchoEvent_PlayerBlock:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_BLOCK
-	case *telemetryv2.EchoEvent_PlayerInterception:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_INTERCEPTION
-	case *telemetryv2.EchoEvent_PlayerAssist:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_ASSIST
-	case *telemetryv2.EchoEvent_PlayerShotTaken:
-		return telemetryv2.EventType_EVENT_TYPE_PLAYER_SHOT_TAKEN
-	case *telemetryv2.EchoEvent_GenericEvent:
-		return telemetryv2.EventType_EVENT_TYPE_GENERIC
+	case *capturepb.EchoEvent_RoundStarted:
+		return capturepb.EventType_EVENT_TYPE_ROUND_STARTED
+	case *capturepb.EchoEvent_RoundPaused:
+		return capturepb.EventType_EVENT_TYPE_ROUND_PAUSED
+	case *capturepb.EchoEvent_RoundUnpaused:
+		return capturepb.EventType_EVENT_TYPE_ROUND_UNPAUSED
+	case *capturepb.EchoEvent_RoundEnded:
+		return capturepb.EventType_EVENT_TYPE_ROUND_ENDED
+	case *capturepb.EchoEvent_MatchEnded:
+		return capturepb.EventType_EVENT_TYPE_MATCH_ENDED
+	case *capturepb.EchoEvent_ScoreboardUpdated:
+		return capturepb.EventType_EVENT_TYPE_SCOREBOARD_UPDATED
+	case *capturepb.EchoEvent_PlayerJoined:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_JOINED
+	case *capturepb.EchoEvent_PlayerLeft:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_LEFT
+	case *capturepb.EchoEvent_PlayerSwitchedTeam:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_SWITCHED_TEAM
+	case *capturepb.EchoEvent_EmotePlayed:
+		return capturepb.EventType_EVENT_TYPE_EMOTE_PLAYED
+	case *capturepb.EchoEvent_DiscPossessionChanged:
+		return capturepb.EventType_EVENT_TYPE_DISC_POSSESSION_CHANGED
+	case *capturepb.EchoEvent_DiscThrown:
+		return capturepb.EventType_EVENT_TYPE_DISC_THROWN
+	case *capturepb.EchoEvent_DiscCaught:
+		return capturepb.EventType_EVENT_TYPE_DISC_CAUGHT
+	case *capturepb.EchoEvent_GoalScored:
+		return capturepb.EventType_EVENT_TYPE_GOAL_SCORED
+	case *capturepb.EchoEvent_PlayerGoal:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_GOAL
+	case *capturepb.EchoEvent_PlayerSave:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_SAVE
+	case *capturepb.EchoEvent_PlayerStun:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_STUN
+	case *capturepb.EchoEvent_PlayerPass:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_PASS
+	case *capturepb.EchoEvent_PlayerSteal:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_STEAL
+	case *capturepb.EchoEvent_PlayerBlock:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_BLOCK
+	case *capturepb.EchoEvent_PlayerInterception:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_INTERCEPTION
+	case *capturepb.EchoEvent_PlayerAssist:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_ASSIST
+	case *capturepb.EchoEvent_PlayerShotTaken:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_SHOT_TAKEN
+	case *capturepb.EchoEvent_GenericEvent:
+		return capturepb.EventType_EVENT_TYPE_GENERIC
 	default:
-		return telemetryv2.EventType_EVENT_TYPE_UNSPECIFIED
+		return capturepb.EventType_EVENT_TYPE_UNSPECIFIED
 	}
 }
 
-// Reader reads telemetry v2 captures from the envelope stream format.
+// Reader reads tape captures from the envelope stream format.
 type Reader struct {
 	file    *os.File
 	decoder *zstd.Decoder
 	reader  io.Reader
 
 	// pendingFooter holds a footer envelope encountered during ReadFrame.
-	pendingFooter *telemetryv2.CaptureFooter
+	pendingFooter *capturepb.CaptureFooter
 }
 
-// NewReader opens a v2 tape file for streaming reads.
+// NewReader opens a tape file for streaming reads.
 func NewReader(filename string) (*Reader, error) {
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
@@ -265,7 +265,7 @@ func NewReader(filename string) (*Reader, error) {
 }
 
 // ReadHeader reads the first envelope, which must be a CaptureHeader.
-func (r *Reader) ReadHeader() (*telemetryv2.CaptureHeader, error) {
+func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
 		return nil, err
@@ -280,7 +280,7 @@ func (r *Reader) ReadHeader() (*telemetryv2.CaptureHeader, error) {
 
 // ReadFrame reads the next frame envelope. Returns io.EOF when the stream
 // ends or a non-frame envelope (the footer) is encountered.
-func (r *Reader) ReadFrame() (*telemetryv2.Frame, error) {
+func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
 		return nil, err
@@ -300,7 +300,7 @@ func (r *Reader) ReadFrame() (*telemetryv2.Frame, error) {
 
 // ReadFooter returns the capture footer. If ReadFrame already encountered it,
 // the cached value is returned. Otherwise reads the next envelope from the stream.
-func (r *Reader) ReadFooter() (*telemetryv2.CaptureFooter, error) {
+func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 	if r.pendingFooter != nil {
 		return r.pendingFooter, nil
 	}
@@ -324,7 +324,7 @@ func (r *Reader) Close() error {
 }
 
 // readEnvelope reads a single length-delimited envelope from the stream.
-func (r *Reader) readEnvelope() (*telemetryv2.Envelope, error) {
+func (r *Reader) readEnvelope() (*capturepb.Envelope, error) {
 	// Read varint length.
 	var length uint64
 	var shift uint
@@ -349,7 +349,7 @@ func (r *Reader) readEnvelope() (*telemetryv2.Envelope, error) {
 		return nil, err
 	}
 
-	env := &telemetryv2.Envelope{}
+	env := &capturepb.Envelope{}
 	if err := proto.Unmarshal(data, env); err != nil {
 		return nil, err
 	}
