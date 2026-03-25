@@ -1,20 +1,21 @@
-# nevr-tape
+# tape
 
-Go codec library for reading and writing `.tape` telemetry capture files.
-Core dependency of nevr-agent, evr-anticheat, and nevr-profiler.
+Go codec library and CLI for reading and writing `.tape` telemetry capture files.
+Core dependency of nevr-agent, nevr-anticheat, and nevr-profiler.
 
-Module: `github.com/echotools/nevr-tape/v1`
+Module: `github.com/echotools/tape`
 
 ## Build & Test
 
 ```bash
+go build ./...             # build library + tapedeck CLI
 go test ./...              # run all tests
 go test -bench=. ./...     # run benchmarks
 go vet ./...               # static analysis
 gofmt -l .                 # check formatting
 ```
 
-No binary is produced; this is a library-only module.
+The `tapedeck` CLI lives in `cmd/tapedeck/` (convert, show, replay commands).
 
 ## Architecture
 

@@ -36,11 +36,13 @@ Thumbs.db
 # Build artifacts
 /dist/
 /build/
+/bin/
+/tapedeck
 
-# Test files
-*.tape
-*.nevrcap
-*.echoreplay
+# Test artifacts (root only — testdata/ stays tracked)
+/*.tape
+/*.nevrcap
+/*.echoreplay
 /benchmark_*
 /test_*
 
