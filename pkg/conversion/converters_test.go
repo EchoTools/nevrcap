@@ -1,154 +1,122 @@
 package conversion
 
 import (
-	"os"
 	"testing"
-	"time"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/echotools/tape/pkg/codec"
+	"github.com/klauspost/compress/zstd"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"os"
 )
 
-// TestFileConversion tests the file format conversion utilities
-func TestFileConversion(t *testing.T) {
-	echoReplayFile := "/tmp/test_convert.echoreplay"
-	nevrcapFile := "/tmp/test_convert.nevrcap"
-	backToEchoFile := "/tmp/test_back.echoreplay"
+// writeLegacyV1File writes a v1-format file (zstd-compressed,
+// varint-length-delimited protobuf messages) for testing.
+func writeLegacyV1File(t *testing.T, filename string, header *telemetry.TelemetryHeader, frames ...*telemetry.LobbySessionStateFrame) {
+	t.Helper()
 
-	defer func() {
-		os.Remove(echoReplayFile)
-		os.Remove(nevrcapFile)
-		os.Remove(backToEchoFile)
-	}()
-
-	// Create a test .echoreplay file
-	writer, err := codec.NewEchoReplayWriter(echoReplayFile)
+	f, err := os.Create(filename)
 	if err != nil {
-		t.Fatalf("Failed to create EchoReplay writer: %v", err)
+		t.Fatalf("create file: %v", err)
 	}
 
+	enc, err := zstd.NewWriter(f, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	if err != nil {
+		f.Close()
+		t.Fatalf("create zstd encoder: %v", err)
+	}
+
+	writeMsg := func(msg proto.Message) {
+		t.Helper()
+		data, err := proto.Marshal(msg)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var buf [10]byte
+		length := uint64(len(data))
+		i := 0
+		for length >= 0x80 {
+			buf[i] = byte(length) | 0x80
+			length >>= 7
+			i++
+		}
+		buf[i] = byte(length)
+		i++
+		if _, err := enc.Write(buf[:i]); err != nil {
+			t.Fatalf("write varint: %v", err)
+		}
+		if _, err := enc.Write(data); err != nil {
+			t.Fatalf("write data: %v", err)
+		}
+	}
+
+	writeMsg(header)
+	for _, frame := range frames {
+		writeMsg(frame)
+	}
+
+	if err := enc.Close(); err != nil {
+		t.Fatalf("close encoder: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("close file: %v", err)
+	}
+}
+
+func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
+	t.Helper()
+	return &telemetry.LobbySessionStateFrame{
+		FrameIndex: 0,
+		Timestamp:  timestamppb.Now(),
+		Events:     []*telemetry.LobbySessionEvent{},
+		Session: &enginev1.SessionResponse{
+			SessionId:        "test-session",
+			GameStatus:       "running",
+			BluePoints:       0,
+			OrangePoints:     0,
+			BlueRoundScore:   0,
+			OrangeRoundScore: 0,
+			Teams:            []*enginev1.Team{},
+		},
+		PlayerBones: &enginev1.PlayerBonesResponse{
+			UserBones: []*enginev1.UserBones{},
+			ErrCode:   0,
+		},
+	}
+}
+
+// TestConvertNevrcapToEchoReplay tests nevrcap-to-echoreplay conversion.
+func TestConvertNevrcapToEchoReplay(t *testing.T) {
+	nevrcapFile := t.TempDir() + "/test.nevrcap"
+	echoReplayFile := t.TempDir() + "/test.echoreplay"
+
+	// Write a v1 nevrcap file.
+	header := &telemetry.TelemetryHeader{
+		CaptureId: "convert-test",
+		CreatedAt: timestamppb.Now(),
+	}
 	frame := createTestFrame(t)
-	if err := writer.WriteFrame(frame); err != nil {
-		t.Fatalf("Failed to write frame: %v", err)
+	writeLegacyV1File(t, nevrcapFile, header, frame)
+
+	// Convert nevrcap to echoreplay.
+	if err := ConvertNevrcapToEchoReplay(nevrcapFile, echoReplayFile); err != nil {
+		t.Fatalf("ConvertNevrcapToEchoReplay: %v", err)
 	}
 
-	if err := writer.Close(); err != nil {
-		t.Fatalf("Failed to close writer: %v", err)
-	}
-
-	// Convert .echoreplay to .nevrcap
-	if err := ConvertEchoReplayToNevrcap(echoReplayFile, nevrcapFile); err != nil {
-		t.Fatalf("Failed to convert echoreplay to nevrcap: %v", err)
-	}
-
-	// Convert .nevrcap back to .echoreplay
-	if err := ConvertNevrcapToEchoReplay(nevrcapFile, backToEchoFile); err != nil {
-		t.Fatalf("Failed to convert nevrcap back to echoreplay: %v", err)
-	}
-
-	// Verify the round-trip conversion
-	reader, err := codec.NewEchoReplayReader(backToEchoFile)
+	// Verify the echoreplay file is readable.
+	reader, err := codec.NewEchoReplayReader(echoReplayFile)
 	if err != nil {
-		t.Fatalf("Failed to create reader for converted file: %v", err)
+		t.Fatalf("NewEchoReplayReader: %v", err)
 	}
 	defer reader.Close()
 
 	frames, err := reader.ReadFrames()
 	if err != nil {
-		t.Fatalf("Failed to read converted frames: %v", err)
+		t.Fatalf("ReadFrames: %v", err)
 	}
-
 	if len(frames) != 1 {
-		t.Errorf("Expected 1 frame after conversion, got %d", len(frames))
-	}
-}
-
-// Helper functions for creating test data
-
-func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
-	sessionResponse := &enginev1.SessionResponse{
-		SessionId:        "test-session",
-		GameStatus:       "running",
-		BluePoints:       0,
-		OrangePoints:     0,
-		BlueRoundScore:   0,
-		OrangeRoundScore: 0,
-		Teams:            []*enginev1.Team{},
-	}
-
-	bonesResponse := &enginev1.PlayerBonesResponse{
-		UserBones: []*enginev1.UserBones{},
-		ErrCode:   0,
-	}
-
-	return &telemetry.LobbySessionStateFrame{
-		FrameIndex:  0,
-		Timestamp:   timestamppb.Now(),
-		Events:      []*telemetry.LobbySessionEvent{},
-		Session:     sessionResponse,
-		PlayerBones: bonesResponse,
-	}
-}
-
-func TestConversionGeneratesEvents(t *testing.T) {
-	echoReplayFile := t.TempDir() + "/events.echoreplay"
-	nevrcapFile := t.TempDir() + "/events.nevrcap"
-
-	// Create echoreplay with transition
-	writer, err := codec.NewEchoReplayWriter(echoReplayFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Frame 1: Playing
-	f1 := createTestFrame(t)
-	f1.Session.GameStatus = "playing"
-	f1.Timestamp = timestamppb.New(time.Now())
-	writer.WriteFrame(f1)
-
-	// Frame 2: Round Over (should trigger event)
-	f2 := createTestFrame(t)
-	f2.Session.GameStatus = "round_over"
-	f2.Timestamp = timestamppb.New(time.Now().Add(100 * time.Millisecond))
-	writer.WriteFrame(f2)
-
-	writer.Close()
-
-	// Convert
-	if err := ConvertEchoReplayToNevrcap(echoReplayFile, nevrcapFile); err != nil {
-		t.Fatalf("Conversion failed: %v", err)
-	}
-
-	// Read nevrcap and check for events
-	reader, err := codec.NewLegacyReader(nevrcapFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer reader.Close()
-
-	// Read header
-	if _, err := reader.ReadHeader(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Frame 1
-	rf1, err := reader.ReadFrame()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rf1.Events) != 0 {
-		t.Errorf("Expected 0 events in frame 1, got %d", len(rf1.Events))
-	}
-
-	// Frame 2
-	rf2, err := reader.ReadFrame()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// We expect 1 event (RoundEnded)
-	if len(rf2.Events) != 1 {
-		t.Errorf("Expected 1 event in frame 2, got %d", len(rf2.Events))
+		t.Errorf("expected 1 frame, got %d", len(frames))
 	}
 }

@@ -4,102 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"time"
 
-	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/events"
-	"github.com/echotools/tape/pkg/processing"
-	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
-
-// ConvertEchoReplayToNevrcap converts a .echoreplay file to a .nevrcap file
-func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
-	// Read the .echoreplay file
-	echoReader, err := codec.NewEchoReplayReader(echoReplayPath)
-	if err != nil {
-		return fmt.Errorf("failed to open echoreplay file: %w", err)
-	}
-	defer echoReader.Close()
-
-	frames, err := echoReader.ReadFrames()
-	if err != nil {
-		return fmt.Errorf("failed to read frames from echoreplay: %w", err)
-	}
-
-	// Create the .nevrcap file
-	nevrcapWriter, err := codec.NewLegacyWriter(nevrcapPath)
-	if err != nil {
-		return fmt.Errorf("failed to create nevrcap file: %w", err)
-	}
-	defer nevrcapWriter.Close()
-
-	// Write header
-	header := &telemetry.TelemetryHeader{
-		CaptureId: fmt.Sprintf("converted-%d", time.Now().Unix()),
-		CreatedAt: timestamppb.Now(),
-		Metadata: map[string]string{
-			"source":      "echoreplay",
-			"source_file": echoReplayPath,
-			"converted":   "true",
-		},
-	}
-
-	if err := nevrcapWriter.WriteHeader(header); err != nil {
-		return fmt.Errorf("failed to write header: %w", err)
-	}
-
-	// Process frames with event detection
-	// Use synchronous processing to ensure events are captured immediately
-	frameProcessor := processing.NewWithDetector(events.New(events.WithSynchronousProcessing()))
-	for i, frame := range frames {
-		// Re-process the frame to generate events if not already present
-		if len(frame.Events) == 0 && frame.Session != nil {
-			// Convert to raw data and back to generate events
-			marshaler := &protojson.MarshalOptions{
-				UseProtoNames:   false,
-				UseEnumNumbers:  true,
-				EmitUnpopulated: false,
-			}
-
-			sessionData, err := marshaler.Marshal(frame.Session)
-			if err != nil {
-				return fmt.Errorf("failed to marshal session data for frame %d: %w", i, err)
-			}
-
-			var userBonesData []byte
-			if frame.GetPlayerBones() != nil {
-				userBonesData, err = marshaler.Marshal(frame.GetPlayerBones())
-				if err != nil {
-					return fmt.Errorf("failed to marshal user bones data for frame %d: %w", i, err)
-				}
-			}
-
-			processedFrame, err := frameProcessor.ProcessAndDetectEvents(sessionData, userBonesData, frame.Timestamp.AsTime())
-			if err != nil {
-				return fmt.Errorf("failed to process frame %d: %w", i, err)
-			}
-
-			// Check for events immediately (synchronous processing ensures they are ready)
-			select {
-			case events := <-frameProcessor.EventsChan():
-				processedFrame.Events = append(processedFrame.Events, events...)
-			default:
-				// No events
-			}
-
-			// Use the processed frame with events
-			frame = processedFrame
-		}
-
-		if err := nevrcapWriter.WriteFrame(frame); err != nil {
-			return fmt.Errorf("failed to write frame %d: %w", i, err)
-		}
-	}
-
-	return nil
-}
 
 // ConvertNevrcapToEchoReplay converts a .nevrcap file to a .echoreplay file
 func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
@@ -152,18 +59,4 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	}
 
 	return nil
-}
-
-// ConvertUncompressedEchoReplayToNevrcap converts with optimizations for benchmarking
-func ConvertUncompressedEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
-	// This is an optimized version for benchmarking that skips compression
-	// and uses more efficient processing
-	return ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath)
-}
-
-// BatchConvert converts multiple files
-func BatchConvert(sourcePattern, targetDir string, toNevrcap bool) error {
-	// This would implement batch conversion logic
-	// For now, it's a placeholder for future enhancement
-	return fmt.Errorf("batch conversion not yet implemented")
 }

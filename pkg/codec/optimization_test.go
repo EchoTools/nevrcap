@@ -138,29 +138,31 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 }
 
 func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
-	// Similar test for Legacy (Zstd/Protobuf) codec
+	// Similar test for LegacyReader (Zstd/Protobuf) codec
 	tmpFile := t.TempDir() + "/test_zero_alloc.nevrcap"
-	writer, err := NewLegacyWriter(tmpFile)
-	if err != nil {
-		t.Fatalf("Failed to create writer: %v", err)
-	}
 
 	frameCount := 5
+	header := &telemetry.TelemetryHeader{CaptureId: "zero-alloc-test"}
+	frames := make([]*telemetry.LobbySessionStateFrame, frameCount)
 	for i := 0; i < frameCount; i++ {
-		frame := &telemetry.LobbySessionStateFrame{
+		frames[i] = &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
 			Session:    &enginev1.SessionResponse{SessionId: "test"},
 		}
-		writer.WriteFrame(frame)
 	}
-	writer.Close()
+	writeLegacyV1File(t, tmpFile, header, frames...)
 
 	reader, err := NewLegacyReader(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create reader: %v", err)
 	}
 	defer reader.Close()
+
+	// Must read header first (v1 format: header then frames).
+	if _, err := reader.ReadHeader(); err != nil {
+		t.Fatalf("ReadHeader: %v", err)
+	}
 
 	frame := &telemetry.LobbySessionStateFrame{}
 

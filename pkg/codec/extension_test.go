@@ -61,39 +61,22 @@ func TestExtensionConstants(t *testing.T) {
 	}
 }
 
-// TestReadWriteBothExtensions verifies that the codec can read and write files
+// TestReadBothExtensions verifies that the LegacyReader can read files
 // with both .tape and .nevrcap extensions (same binary format).
-func TestReadWriteBothExtensions(t *testing.T) {
+func TestReadBothExtensions(t *testing.T) {
 	extensions := []string{ExtTape, ExtNevrcap}
 
 	for _, ext := range extensions {
 		t.Run(ext, func(t *testing.T) {
 			tmpFile := t.TempDir() + "/test" + ext
-			defer os.Remove(tmpFile)
-
-			// Write
-			writer, err := NewLegacyWriter(tmpFile)
-			if err != nil {
-				t.Fatalf("NewLegacyWriter(%q): %v", tmpFile, err)
-			}
 
 			header := &telemetry.TelemetryHeader{
 				CaptureId: "ext-test-" + ext,
 				CreatedAt: timestamppb.Now(),
 			}
-			if err := writer.WriteHeader(header); err != nil {
-				t.Fatalf("WriteHeader: %v", err)
-			}
-
 			frame := createTestFrame(t)
-			if err := writer.WriteFrame(frame); err != nil {
-				t.Fatalf("WriteFrame: %v", err)
-			}
-			if err := writer.Close(); err != nil {
-				t.Fatalf("Close writer: %v", err)
-			}
+			writeLegacyV1File(t, tmpFile, header, frame)
 
-			// Read
 			reader, err := NewLegacyReader(tmpFile)
 			if err != nil {
 				t.Fatalf("NewLegacyReader(%q): %v", tmpFile, err)
@@ -126,23 +109,12 @@ func TestRoundTripCrossExtension(t *testing.T) {
 	tapePath := dir + "/capture.tape"
 	nevrcapPath := dir + "/capture.nevrcap"
 
-	// Write as .tape
-	writer, err := NewLegacyWriter(tapePath)
-	if err != nil {
-		t.Fatalf("NewLegacyWriter: %v", err)
-	}
 	header := &telemetry.TelemetryHeader{
 		CaptureId: "cross-ext-test",
 		CreatedAt: timestamppb.Now(),
 	}
-	if err := writer.WriteHeader(header); err != nil {
-		t.Fatalf("WriteHeader: %v", err)
-	}
 	frame := createTestFrame(t)
-	if err := writer.WriteFrame(frame); err != nil {
-		t.Fatalf("WriteFrame: %v", err)
-	}
-	writer.Close()
+	writeLegacyV1File(t, tapePath, header, frame)
 
 	// Copy the .tape file to .nevrcap — same bytes, different name
 	data, err := os.ReadFile(tapePath)
