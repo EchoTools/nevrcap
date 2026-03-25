@@ -7,7 +7,7 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codecs"
+	"github.com/echotools/tape/pkg/codec"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -24,7 +24,7 @@ func TestFileConversion(t *testing.T) {
 	}()
 
 	// Create a test .echoreplay file
-	writer, err := codecs.NewEchoReplayWriter(echoReplayFile)
+	writer, err := codec.NewEchoReplayWriter(echoReplayFile)
 	if err != nil {
 		t.Fatalf("Failed to create EchoReplay writer: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestFileConversion(t *testing.T) {
 	}
 
 	// Verify the round-trip conversion
-	reader, err := codecs.NewEchoReplayReader(backToEchoFile)
+	reader, err := codec.NewEchoReplayReader(backToEchoFile)
 	if err != nil {
 		t.Fatalf("Failed to create reader for converted file: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestConversionGeneratesEvents(t *testing.T) {
 	nevrcapFile := t.TempDir() + "/events.nevrcap"
 
 	// Create echoreplay with transition
-	writer, err := codecs.NewEchoReplayWriter(echoReplayFile)
+	writer, err := codec.NewEchoReplayWriter(echoReplayFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestConversionGeneratesEvents(t *testing.T) {
 	}
 
 	// Read nevrcap and check for events
-	reader, err := codecs.NewTapeV1Reader(nevrcapFile)
+	reader, err := codec.NewTapeV1Reader(nevrcapFile)
 	if err != nil {
 		t.Fatal(err)
 	}

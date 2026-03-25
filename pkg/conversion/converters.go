@@ -7,7 +7,7 @@ import (
 	"time"
 
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codecs"
+	"github.com/echotools/tape/pkg/codec"
 	"github.com/echotools/tape/pkg/events"
 	"github.com/echotools/tape/pkg/processing"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -17,7 +17,7 @@ import (
 // ConvertEchoReplayToNevrcap converts a .echoreplay file to a .nevrcap file
 func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	// Read the .echoreplay file
-	echoReader, err := codecs.NewEchoReplayReader(echoReplayPath)
+	echoReader, err := codec.NewEchoReplayReader(echoReplayPath)
 	if err != nil {
 		return fmt.Errorf("failed to open echoreplay file: %w", err)
 	}
@@ -29,7 +29,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 	}
 
 	// Create the .nevrcap file
-	nevrcapWriter, err := codecs.NewTapeV1Writer(nevrcapPath)
+	nevrcapWriter, err := codec.NewTapeV1Writer(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to create nevrcap file: %w", err)
 	}
@@ -104,7 +104,7 @@ func ConvertEchoReplayToNevrcap(echoReplayPath, nevrcapPath string) error {
 // ConvertNevrcapToEchoReplay converts a .nevrcap file to a .echoreplay file
 func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	// Read the .nevrcap file
-	nevrcapReader, err := codecs.NewTapeV1Reader(nevrcapPath)
+	nevrcapReader, err := codec.NewTapeV1Reader(nevrcapPath)
 	if err != nil {
 		return fmt.Errorf("failed to open nevrcap file: %w", err)
 	}
@@ -117,7 +117,7 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 	}
 
 	// Create the .echoreplay file
-	echoWriter, err := codecs.NewEchoReplayWriter(echoReplayPath)
+	echoWriter, err := codec.NewEchoReplayWriter(echoReplayPath)
 	if err != nil {
 		return fmt.Errorf("failed to create echoreplay file: %w", err)
 	}
