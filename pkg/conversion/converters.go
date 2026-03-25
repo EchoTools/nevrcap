@@ -7,9 +7,9 @@ import (
 	"time"
 
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/nevr-tape/v1/pkg/codecs"
-	"github.com/echotools/nevr-tape/v1/pkg/events"
-	"github.com/echotools/nevr-tape/v1/pkg/processing"
+	"github.com/echotools/tape/pkg/codecs"
+	"github.com/echotools/tape/pkg/events"
+	"github.com/echotools/tape/pkg/processing"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )

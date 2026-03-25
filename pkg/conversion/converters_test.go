@@ -7,7 +7,7 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/nevr-tape/v1/pkg/codecs"
+	"github.com/echotools/tape/pkg/codecs"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

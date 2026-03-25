@@ -1,4 +1,4 @@
-module github.com/echotools/nevr-tape/v1
+module github.com/echotools/tape
 
 go 1.25.0
 
