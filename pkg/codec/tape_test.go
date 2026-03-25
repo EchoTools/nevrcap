@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-func TestTapeV2RoundTrip(t *testing.T) {
+func TestTapeRoundTrip(t *testing.T) {
 	path := t.TempDir() + "/test.tape"
 
 	header := &telemetryv2.CaptureHeader{
@@ -53,9 +53,9 @@ func TestTapeV2RoundTrip(t *testing.T) {
 	}
 
 	// Write.
-	w, err := NewTapeV2Writer(path)
+	w, err := NewWriter(path)
 	if err != nil {
-		t.Fatalf("NewTapeV2Writer: %v", err)
+		t.Fatalf("NewWriter: %v", err)
 	}
 	if err := w.WriteHeader(header); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
@@ -70,9 +70,9 @@ func TestTapeV2RoundTrip(t *testing.T) {
 	}
 
 	// Read back.
-	r, err := NewTapeV2Reader(path)
+	r, err := NewReader(path)
 	if err != nil {
-		t.Fatalf("NewTapeV2Reader: %v", err)
+		t.Fatalf("NewReader: %v", err)
 	}
 	defer r.Close()
 
@@ -151,7 +151,7 @@ func TestTapeV2RoundTrip(t *testing.T) {
 	}
 }
 
-func TestTapeV2EmptyCapture(t *testing.T) {
+func TestTapeEmptyCapture(t *testing.T) {
 	path := t.TempDir() + "/empty.tape"
 
 	header := &telemetryv2.CaptureHeader{
@@ -160,9 +160,9 @@ func TestTapeV2EmptyCapture(t *testing.T) {
 		FormatVersion: 2,
 	}
 
-	w, err := NewTapeV2Writer(path)
+	w, err := NewWriter(path)
 	if err != nil {
-		t.Fatalf("NewTapeV2Writer: %v", err)
+		t.Fatalf("NewWriter: %v", err)
 	}
 	if err := w.WriteHeader(header); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
@@ -171,9 +171,9 @@ func TestTapeV2EmptyCapture(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	r, err := NewTapeV2Reader(path)
+	r, err := NewReader(path)
 	if err != nil {
-		t.Fatalf("NewTapeV2Reader: %v", err)
+		t.Fatalf("NewReader: %v", err)
 	}
 	defer r.Close()
 
@@ -200,12 +200,12 @@ func TestTapeV2EmptyCapture(t *testing.T) {
 	}
 }
 
-func TestTapeV2CustomKeyframeInterval(t *testing.T) {
+func TestTapeCustomKeyframeInterval(t *testing.T) {
 	path := t.TempDir() + "/keyframe.tape"
 
-	w, err := NewTapeV2WriterWithKeyframeInterval(path, 10)
+	w, err := NewWriterWithKeyframeInterval(path, 10)
 	if err != nil {
-		t.Fatalf("NewTapeV2WriterWithKeyframeInterval: %v", err)
+		t.Fatalf("NewWriterWithKeyframeInterval: %v", err)
 	}
 	if err := w.WriteHeader(&telemetryv2.CaptureHeader{
 		CaptureId:     "kf-test",
@@ -226,9 +226,9 @@ func TestTapeV2CustomKeyframeInterval(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	r, err := NewTapeV2Reader(path)
+	r, err := NewReader(path)
 	if err != nil {
-		t.Fatalf("NewTapeV2Reader: %v", err)
+		t.Fatalf("NewReader: %v", err)
 	}
 	defer r.Close()
 

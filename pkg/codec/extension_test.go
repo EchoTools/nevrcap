@@ -72,9 +72,9 @@ func TestReadWriteBothExtensions(t *testing.T) {
 			defer os.Remove(tmpFile)
 
 			// Write
-			writer, err := NewTapeV1Writer(tmpFile)
+			writer, err := NewLegacyWriter(tmpFile)
 			if err != nil {
-				t.Fatalf("NewTapeV1Writer(%q): %v", tmpFile, err)
+				t.Fatalf("NewLegacyWriter(%q): %v", tmpFile, err)
 			}
 
 			header := &telemetry.TelemetryHeader{
@@ -94,9 +94,9 @@ func TestReadWriteBothExtensions(t *testing.T) {
 			}
 
 			// Read
-			reader, err := NewTapeV1Reader(tmpFile)
+			reader, err := NewLegacyReader(tmpFile)
 			if err != nil {
-				t.Fatalf("NewTapeV1Reader(%q): %v", tmpFile, err)
+				t.Fatalf("NewLegacyReader(%q): %v", tmpFile, err)
 			}
 			defer reader.Close()
 
@@ -127,9 +127,9 @@ func TestRoundTripCrossExtension(t *testing.T) {
 	nevrcapPath := dir + "/capture.nevrcap"
 
 	// Write as .tape
-	writer, err := NewTapeV1Writer(tapePath)
+	writer, err := NewLegacyWriter(tapePath)
 	if err != nil {
-		t.Fatalf("NewTapeV1Writer: %v", err)
+		t.Fatalf("NewLegacyWriter: %v", err)
 	}
 	header := &telemetry.TelemetryHeader{
 		CaptureId: "cross-ext-test",
@@ -154,9 +154,9 @@ func TestRoundTripCrossExtension(t *testing.T) {
 	}
 
 	// Read from .nevrcap copy
-	reader, err := NewTapeV1Reader(nevrcapPath)
+	reader, err := NewLegacyReader(nevrcapPath)
 	if err != nil {
-		t.Fatalf("NewTapeV1Reader: %v", err)
+		t.Fatalf("NewLegacyReader: %v", err)
 	}
 	defer reader.Close()
 

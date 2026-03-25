@@ -138,9 +138,9 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 }
 
 func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
-	// Similar test for TapeV1 (Zstd/Protobuf) codec
+	// Similar test for Legacy (Zstd/Protobuf) codec
 	tmpFile := t.TempDir() + "/test_zero_alloc.nevrcap"
-	writer, err := NewTapeV1Writer(tmpFile)
+	writer, err := NewLegacyWriter(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create writer: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	}
 	writer.Close()
 
-	reader, err := NewTapeV1Reader(tmpFile)
+	reader, err := NewLegacyReader(tmpFile)
 	if err != nil {
 		t.Fatalf("Failed to create reader: %v", err)
 	}

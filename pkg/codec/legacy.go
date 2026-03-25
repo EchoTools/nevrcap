@@ -35,8 +35,8 @@ func DefaultOutputFilename(path string) string {
 	return path[:len(path)-len(ext)] + ExtTape
 }
 
-// TapeV1 handles streaming to/from Zstd-compressed .tape / .nevrcap files
-type TapeV1 struct {
+// Legacy handles streaming to/from Zstd-compressed .tape / .nevrcap files
+type Legacy struct {
 	file    *os.File
 	encoder *zstd.Encoder
 	decoder *zstd.Decoder
@@ -44,8 +44,8 @@ type TapeV1 struct {
 	reader  io.Reader
 }
 
-// NewTapeV1Writer creates a new Zstd codec for writing .tape / .nevrcap files
-func NewTapeV1Writer(filename string) (*TapeV1, error) {
+// NewLegacyWriter creates a new Zstd codec for writing .tape / .nevrcap files
+func NewLegacyWriter(filename string) (*Legacy, error) {
 	file, err := os.Create(filename)
 	if err != nil {
 		return nil, err
@@ -57,19 +57,19 @@ func NewTapeV1Writer(filename string) (*TapeV1, error) {
 		return nil, err
 	}
 
-	return &TapeV1{
+	return &Legacy{
 		file:    file,
 		encoder: encoder,
 		writer:  encoder,
 	}, nil
 }
 
-// NewTapeV1Reader creates a new Zstd codec for reading .tape / .nevrcap files
-func NewTapeV1Reader(filename string) (*TapeV1, error) {
-	return NewTapeV1ReaderWithProgress(filename, nil)
+// NewLegacyReader creates a new Zstd codec for reading .tape / .nevrcap files
+func NewLegacyReader(filename string) (*Legacy, error) {
+	return NewLegacyReaderWithProgress(filename, nil)
 }
 
-func NewTapeV1ReaderWithProgress(filename string, progress io.Writer) (*TapeV1, error) {
+func NewLegacyReaderWithProgress(filename string, progress io.Writer) (*Legacy, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func NewTapeV1ReaderWithProgress(filename string, progress io.Writer) (*TapeV1, 
 		return nil, err
 	}
 
-	return &TapeV1{
+	return &Legacy{
 		file:    file,
 		decoder: decoder,
 		reader:  decoder,
@@ -94,7 +94,7 @@ func NewTapeV1ReaderWithProgress(filename string, progress io.Writer) (*TapeV1, 
 }
 
 // WriteHeader writes the nevrcap header to the file
-func (z *TapeV1) WriteHeader(header *telemetry.TelemetryHeader) error {
+func (z *Legacy) WriteHeader(header *telemetry.TelemetryHeader) error {
 	data, err := proto.Marshal(header)
 	if err != nil {
 		return err
@@ -105,7 +105,7 @@ func (z *TapeV1) WriteHeader(header *telemetry.TelemetryHeader) error {
 }
 
 // WriteFrame writes a frame to the file
-func (z *TapeV1) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
+func (z *Legacy) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 	data, err := proto.Marshal(frame)
 	if err != nil {
 		return err
@@ -116,7 +116,7 @@ func (z *TapeV1) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 }
 
 // ReadHeader reads the nevrcap header from the file
-func (z *TapeV1) ReadHeader() (*telemetry.TelemetryHeader, error) {
+func (z *Legacy) ReadHeader() (*telemetry.TelemetryHeader, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (z *TapeV1) ReadHeader() (*telemetry.TelemetryHeader, error) {
 }
 
 // ReadFrame reads a frame from the file
-func (z *TapeV1) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
+func (z *Legacy) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		return nil, err
@@ -148,7 +148,7 @@ func (z *TapeV1) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 }
 
 // ReadFrameTo reads a frame into the provided frame object
-func (z *TapeV1) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
+func (z *Legacy) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, error) {
 	data, err := z.readDelimitedMessage()
 	if err != nil {
 		if err == io.EOF {
@@ -166,7 +166,7 @@ func (z *TapeV1) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool, err
 }
 
 // writeDelimitedMessage writes a length-delimited protobuf message
-func (z *TapeV1) writeDelimitedMessage(data []byte) error {
+func (z *Legacy) writeDelimitedMessage(data []byte) error {
 	// Buffer for varint encoding (max 10 bytes for uint64)
 	var buf [10]byte
 	length := uint64(len(data))
@@ -190,7 +190,7 @@ func (z *TapeV1) writeDelimitedMessage(data []byte) error {
 }
 
 // readDelimitedMessage reads a length-delimited protobuf message
-func (z *TapeV1) readDelimitedMessage() ([]byte, error) {
+func (z *Legacy) readDelimitedMessage() ([]byte, error) {
 	// Read varint length
 	var length uint64
 	var shift uint
@@ -217,7 +217,7 @@ func (z *TapeV1) readDelimitedMessage() ([]byte, error) {
 }
 
 // Close closes the codec and underlying file
-func (z *TapeV1) Close() error {
+func (z *Legacy) Close() error {
 	var err error
 
 	if z.encoder != nil {

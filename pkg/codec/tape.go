@@ -15,7 +15,7 @@ const (
 	DefaultKeyframeInterval = 100
 )
 
-// TapeV2Writer writes telemetry v2 captures in the envelope stream format.
+// Writer writes telemetry v2 captures in the envelope stream format.
 //
 // Wire format:
 //
@@ -30,7 +30,7 @@ const (
 // stream, keyframe and event indexes. Because the stream is Zstd-compressed,
 // byte-offset seeking requires decompressing from the start; true random
 // access would need Zstd seekable frames (future work).
-type TapeV2Writer struct {
+type Writer struct {
 	file       *os.File
 	encoder    *zstd.Encoder
 	eventIndex map[telemetryv2.EventType][]uint32
@@ -42,13 +42,13 @@ type TapeV2Writer struct {
 	keyframeInterval uint32
 }
 
-// NewTapeV2Writer creates a writer for v2 tape files.
-func NewTapeV2Writer(filename string) (*TapeV2Writer, error) {
-	return NewTapeV2WriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
+// NewWriter creates a writer for v2 tape files.
+func NewWriter(filename string) (*Writer, error) {
+	return NewWriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
 }
 
-// NewTapeV2WriterWithKeyframeInterval creates a writer with a custom keyframe interval.
-func NewTapeV2WriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*TapeV2Writer, error) {
+// NewWriterWithKeyframeInterval creates a writer with a custom keyframe interval.
+func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*Writer, error) {
 	file, err := os.Create(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func NewTapeV2WriterWithKeyframeInterval(filename string, keyframeInterval uint3
 		return nil, errors.Join(err, file.Close())
 	}
 
-	return &TapeV2Writer{
+	return &Writer{
 		file:             file,
 		encoder:          encoder,
 		keyframeInterval: keyframeInterval,
@@ -68,7 +68,7 @@ func NewTapeV2WriterWithKeyframeInterval(filename string, keyframeInterval uint3
 }
 
 // WriteHeader writes the capture header as the first envelope.
-func (w *TapeV2Writer) WriteHeader(header *telemetryv2.CaptureHeader) error {
+func (w *Writer) WriteHeader(header *telemetryv2.CaptureHeader) error {
 	env := &telemetryv2.Envelope{
 		Message: &telemetryv2.Envelope_Header{Header: header},
 	}
@@ -76,7 +76,7 @@ func (w *TapeV2Writer) WriteHeader(header *telemetryv2.CaptureHeader) error {
 }
 
 // WriteFrame writes a frame envelope and updates indexes.
-func (w *TapeV2Writer) WriteFrame(frame *telemetryv2.Frame) error {
+func (w *Writer) WriteFrame(frame *telemetryv2.Frame) error {
 	frameIndex := w.frameCount
 
 	// Track keyframe offset before writing.
@@ -110,7 +110,7 @@ func (w *TapeV2Writer) WriteFrame(frame *telemetryv2.Frame) error {
 }
 
 // Close writes the footer, closes the zstd encoder, and closes the file.
-func (w *TapeV2Writer) Close() error {
+func (w *Writer) Close() error {
 	// Build event index entries.
 	var eventEntries []*telemetryv2.EventIndexEntry
 	for eventType, frameIndices := range w.eventIndex {
@@ -150,7 +150,7 @@ func (w *TapeV2Writer) Close() error {
 }
 
 // writeEnvelope marshals and writes a length-delimited envelope.
-func (w *TapeV2Writer) writeEnvelope(env *telemetryv2.Envelope) error {
+func (w *Writer) writeEnvelope(env *telemetryv2.Envelope) error {
 	data, err := proto.Marshal(env)
 	if err != nil {
 		return err
@@ -235,8 +235,8 @@ func classifyEvent(evt *telemetryv2.EchoEvent) telemetryv2.EventType {
 	}
 }
 
-// TapeV2Reader reads telemetry v2 captures from the envelope stream format.
-type TapeV2Reader struct {
+// Reader reads telemetry v2 captures from the envelope stream format.
+type Reader struct {
 	file    *os.File
 	decoder *zstd.Decoder
 	reader  io.Reader
@@ -245,8 +245,8 @@ type TapeV2Reader struct {
 	pendingFooter *telemetryv2.CaptureFooter
 }
 
-// NewTapeV2Reader opens a v2 tape file for streaming reads.
-func NewTapeV2Reader(filename string) (*TapeV2Reader, error) {
+// NewReader opens a v2 tape file for streaming reads.
+func NewReader(filename string) (*Reader, error) {
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
@@ -257,7 +257,7 @@ func NewTapeV2Reader(filename string) (*TapeV2Reader, error) {
 		return nil, errors.Join(err, file.Close())
 	}
 
-	return &TapeV2Reader{
+	return &Reader{
 		file:    file,
 		decoder: decoder,
 		reader:  decoder,
@@ -265,7 +265,7 @@ func NewTapeV2Reader(filename string) (*TapeV2Reader, error) {
 }
 
 // ReadHeader reads the first envelope, which must be a CaptureHeader.
-func (r *TapeV2Reader) ReadHeader() (*telemetryv2.CaptureHeader, error) {
+func (r *Reader) ReadHeader() (*telemetryv2.CaptureHeader, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
 		return nil, err
@@ -280,7 +280,7 @@ func (r *TapeV2Reader) ReadHeader() (*telemetryv2.CaptureHeader, error) {
 
 // ReadFrame reads the next frame envelope. Returns io.EOF when the stream
 // ends or a non-frame envelope (the footer) is encountered.
-func (r *TapeV2Reader) ReadFrame() (*telemetryv2.Frame, error) {
+func (r *Reader) ReadFrame() (*telemetryv2.Frame, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
 		return nil, err
@@ -300,7 +300,7 @@ func (r *TapeV2Reader) ReadFrame() (*telemetryv2.Frame, error) {
 
 // ReadFooter returns the capture footer. If ReadFrame already encountered it,
 // the cached value is returned. Otherwise reads the next envelope from the stream.
-func (r *TapeV2Reader) ReadFooter() (*telemetryv2.CaptureFooter, error) {
+func (r *Reader) ReadFooter() (*telemetryv2.CaptureFooter, error) {
 	if r.pendingFooter != nil {
 		return r.pendingFooter, nil
 	}
@@ -318,13 +318,13 @@ func (r *TapeV2Reader) ReadFooter() (*telemetryv2.CaptureFooter, error) {
 }
 
 // Close closes the decoder and underlying file.
-func (r *TapeV2Reader) Close() error {
+func (r *Reader) Close() error {
 	r.decoder.Close()
 	return r.file.Close()
 }
 
 // readEnvelope reads a single length-delimited envelope from the stream.
-func (r *TapeV2Reader) readEnvelope() (*telemetryv2.Envelope, error) {
+func (r *Reader) readEnvelope() (*telemetryv2.Envelope, error) {
 	// Read varint length.
 	var length uint64
 	var shift uint

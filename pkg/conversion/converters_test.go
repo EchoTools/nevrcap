@@ -122,7 +122,7 @@ func TestConversionGeneratesEvents(t *testing.T) {
 	}
 
 	// Read nevrcap and check for events
-	reader, err := codec.NewTapeV1Reader(nevrcapFile)
+	reader, err := codec.NewLegacyReader(nevrcapFile)
 	if err != nil {
 		t.Fatal(err)
 	}

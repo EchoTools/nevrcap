@@ -23,7 +23,7 @@ func TestNevrCap_writeDelimitedMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			codec := &TapeV1{writer: &buf}
+			codec := &Legacy{writer: &buf}
 			err := codec.writeDelimitedMessage(tt.message)
 			if err != nil {
 				t.Fatalf("writeDelimitedMessage() error = %v", err)
@@ -63,7 +63,7 @@ func TestNevrCap_writeDelimitedMessage(t *testing.T) {
 func BenchmarkNevrCap_writeDelimitedMessage(b *testing.B) {
 	msg := bytes.Repeat([]byte{0x42}, 1024)
 	var buf bytes.Buffer
-	codec := &TapeV1{writer: &buf}
+	codec := &Legacy{writer: &buf}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf.Reset()
@@ -79,7 +79,7 @@ func TestZstdCodec(t *testing.T) {
 	defer os.Remove(tempFile)
 
 	// Test writing
-	writer, err := NewTapeV1Writer(tempFile)
+	writer, err := NewLegacyWriter(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to create Zstd writer: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestZstdCodec(t *testing.T) {
 	}
 
 	// Test reading
-	reader, err := NewTapeV1Reader(tempFile)
+	reader, err := NewLegacyReader(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to create Zstd reader: %v", err)
 	}
