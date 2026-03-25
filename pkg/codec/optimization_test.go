@@ -137,7 +137,7 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 	}
 }
 
-func TestNevrCap_ReadFrameTo_ZeroAlloc(t *testing.T) {
+func TestLegacyReader_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	// Similar test for LegacyReader (Zstd/Protobuf) codec
 	tmpFile := t.TempDir() + "/test_zero_alloc.nevrcap"
 
