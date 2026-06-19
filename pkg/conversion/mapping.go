@@ -135,6 +135,7 @@ func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capt
 	ea := &capturepb.EchoArenaFrame{
 		GameStatus:   gameStatusMap[session.GetGameStatus()],
 		GameClock:    float32(session.GetGameClock()),
+		PauseState:   mapPauseState(session.GetPause()),
 		BluePoints:   session.GetBluePoints(),
 		OrangePoints: session.GetOrangePoints(),
 	}
@@ -473,6 +474,8 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			pj.Slot = tm.GetSlotNumber()
 			pj.AccountNumber = uint64(tm.GetAccountNumber())
 			pj.DisplayName = tm.GetDisplayName()
+			pj.JerseyNumber = tm.GetJerseyNumber()
+			pj.Level = tm.GetLevel()
 		}
 		evt.Event = &capturepb.EchoEvent_PlayerJoined{
 			PlayerJoined: pj,
@@ -509,11 +512,27 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_DiscThrown:
-		evt.Event = &capturepb.EchoEvent_DiscThrown{
-			DiscThrown: &capturepb.DiscThrown{
-				PlayerSlot: e.DiscThrown.GetPlayerSlot(),
-			},
+		thrown := &capturepb.DiscThrown{
+			PlayerSlot: e.DiscThrown.GetPlayerSlot(),
 		}
+		if td := e.DiscThrown.GetThrowDetails(); td != nil {
+			thrown.ThrowDetails = &capturepb.ThrowDetails{
+				ArmSpeed:                float32(td.GetArmSpeed()),
+				TotalSpeed:              float32(td.GetTotalSpeed()),
+				OffAxisSpinDeg:          float32(td.GetOffAxisSpinDeg()),
+				WristThrowPenalty:       float32(td.GetWristThrowPenalty()),
+				RotPerSec:               float32(td.GetRotPerSec()),
+				PotSpeedFromRot:         float32(td.GetPotSpeedFromRot()),
+				SpeedFromArm:            float32(td.GetSpeedFromArm()),
+				SpeedFromMovement:       float32(td.GetSpeedFromMovement()),
+				SpeedFromWrist:          float32(td.GetSpeedFromWrist()),
+				WristAlignToThrowDeg:    float32(td.GetWristAlignToThrowDeg()),
+				ThrowAlignToMovementDeg: float32(td.GetThrowAlignToMovementDeg()),
+				OffAxisPenalty:          float32(td.GetOffAxisPenalty()),
+				ThrowMovePenalty:        float32(td.GetThrowMovePenalty()),
+			}
+		}
+		evt.Event = &capturepb.EchoEvent_DiscThrown{DiscThrown: thrown}
 	case *telemetryv1.LobbySessionEvent_DiscCaught:
 		evt.Event = &capturepb.EchoEvent_DiscCaught{
 			DiscCaught: &capturepb.DiscCaught{
@@ -521,9 +540,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_GoalScored:
-		evt.Event = &capturepb.EchoEvent_GoalScored{
-			GoalScored: &capturepb.GoalScored{},
+		scored := &capturepb.GoalScored{}
+		if sd := e.GoalScored.GetScoreDetails(); sd != nil {
+			scored.DiscSpeed = float32(sd.GetDiscSpeed())
+			scored.PointAmount = sd.GetPointAmount()
+			scored.DistanceThrown = float32(sd.GetDistanceThrown())
+			scored.GoalType = mapGoalType(sd.GetGoalType())
+			scored.Team = mapTeamString(sd.GetTeam())
 		}
+		evt.Event = &capturepb.EchoEvent_GoalScored{GoalScored: scored}
 	case *telemetryv1.LobbySessionEvent_PlayerGoal:
 		evt.Event = &capturepb.EchoEvent_PlayerGoal{
 			PlayerGoal: &capturepb.PlayerGoal{
@@ -603,4 +628,53 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 	}
 
 	return evt
+}
+
+// mapGoalType converts a v1 goal_type string to a v2 GoalType enum.
+func mapGoalType(s string) capturepb.GoalType {
+	switch s {
+	case "[NO GOAL]":
+		return capturepb.GoalType_GOAL_TYPE_UNSPECIFIED
+	case "INSIDE SHOT":
+		return capturepb.GoalType_GOAL_TYPE_INSIDE_SHOT
+	case "LONG SHOT":
+		return capturepb.GoalType_GOAL_TYPE_LONG_SHOT
+	case "BOUNCE SHOT":
+		return capturepb.GoalType_GOAL_TYPE_BOUNCE_SHOT
+	case "LONG BOUNCE SHOT":
+		return capturepb.GoalType_GOAL_TYPE_LONG_BOUNCE_SHOT
+	case "SELF GOAL":
+		return capturepb.GoalType_GOAL_TYPE_SELF_GOAL
+	default:
+		return capturepb.GoalType_GOAL_TYPE_UNSPECIFIED
+	}
+}
+
+// mapTeamString converts a v1 team name string to a v2 Role enum.
+func mapTeamString(s string) capturepb.Role {
+	switch s {
+	case "blue", "BLUE TEAM", "Blue Team":
+		return capturepb.Role_ROLE_BLUE_TEAM
+	case "orange", "ORANGE TEAM", "Orange Team":
+		return capturepb.Role_ROLE_ORANGE_TEAM
+	default:
+		return capturepb.Role_ROLE_UNSPECIFIED
+	}
+}
+
+// mapPauseState converts a v1 PauseState message to a v2 PauseState enum.
+func mapPauseState(ps *enginev1.PauseState) capturepb.PauseState {
+	if ps == nil {
+		return capturepb.PauseState_PAUSE_STATE_UNSPECIFIED
+	}
+	switch ps.GetPausedState() {
+	case "unpaused":
+		return capturepb.PauseState_PAUSE_STATE_NOT_PAUSED
+	case "paused", "paused_requested":
+		return capturepb.PauseState_PAUSE_STATE_PAUSED
+	case "unpausing":
+		return capturepb.PauseState_PAUSE_STATE_UNPAUSING
+	default:
+		return capturepb.PauseState_PAUSE_STATE_UNSPECIFIED
+	}
 }
