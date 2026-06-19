@@ -3,6 +3,7 @@ package events
 import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // ScoreboardSensor detects scoreboard changes
@@ -105,16 +106,8 @@ func (s *GoalScoredSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
-// lastScoreEqual compares two LastScore objects for equality
+// lastScoreEqual compares two LastScore objects for equality using
+// proto.Equal to ensure all 7 fields are compared.
 func lastScoreEqual(a, b *enginev1.LastScore) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.GetPersonScored() == b.GetPersonScored() &&
-		a.GetDiscSpeed() == b.GetDiscSpeed() &&
-		a.GetDistanceThrown() == b.GetDistanceThrown() &&
-		a.GetPointAmount() == b.GetPointAmount()
+	return proto.Equal(a, b)
 }

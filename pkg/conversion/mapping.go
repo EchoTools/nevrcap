@@ -35,6 +35,35 @@ var matchTypeMap = map[string]capturepb.MatchType{
 	"Echo_Arena_FFA":        capturepb.MatchType_MATCH_TYPE_FFA,
 }
 
+// teamStringToRole maps v1 team name strings to v2 Role enum.
+var teamStringToRoleMap = map[string]capturepb.Role{
+	"blue":   capturepb.Role_ROLE_BLUE_TEAM,
+	"orange": capturepb.Role_ROLE_ORANGE_TEAM,
+}
+
+func teamStringToRole(team string) capturepb.Role {
+	if r, ok := teamStringToRoleMap[team]; ok {
+		return r
+	}
+	return capturepb.Role_ROLE_UNSPECIFIED
+}
+
+// goalTypeStringToEnum maps v1 goal_type strings to v2 GoalType enum.
+var goalTypeStringMap = map[string]capturepb.GoalType{
+	"INSIDE SHOT":      capturepb.GoalType_GOAL_TYPE_INSIDE_SHOT,
+	"LONG SHOT":        capturepb.GoalType_GOAL_TYPE_LONG_SHOT,
+	"BOUNCE SHOT":      capturepb.GoalType_GOAL_TYPE_BOUNCE_SHOT,
+	"LONG BOUNCE SHOT": capturepb.GoalType_GOAL_TYPE_LONG_BOUNCE_SHOT,
+	"SELF GOAL":        capturepb.GoalType_GOAL_TYPE_SELF_GOAL,
+}
+
+func goalTypeStringToEnum(goalType string) capturepb.GoalType {
+	if gt, ok := goalTypeStringMap[goalType]; ok {
+		return gt
+	}
+	return capturepb.GoalType_GOAL_TYPE_UNSPECIFIED
+}
+
 // MapHeader converts a v1 TelemetryHeader to a v2 CaptureHeader.
 func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 	if v1 == nil {
@@ -509,10 +538,28 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_DiscThrown:
+		dt := &capturepb.DiscThrown{
+			PlayerSlot: e.DiscThrown.GetPlayerSlot(),
+		}
+		if td := e.DiscThrown.GetThrowDetails(); td != nil {
+			dt.ThrowDetails = &capturepb.ThrowDetails{
+				ArmSpeed:                float32(td.GetArmSpeed()),
+				TotalSpeed:              float32(td.GetTotalSpeed()),
+				OffAxisSpinDeg:          float32(td.GetOffAxisSpinDeg()),
+				WristThrowPenalty:       float32(td.GetWristThrowPenalty()),
+				RotPerSec:               float32(td.GetRotPerSec()),
+				PotSpeedFromRot:         float32(td.GetPotSpeedFromRot()),
+				SpeedFromArm:            float32(td.GetSpeedFromArm()),
+				SpeedFromMovement:       float32(td.GetSpeedFromMovement()),
+				SpeedFromWrist:          float32(td.GetSpeedFromWrist()),
+				WristAlignToThrowDeg:    float32(td.GetWristAlignToThrowDeg()),
+				ThrowAlignToMovementDeg: float32(td.GetThrowAlignToMovementDeg()),
+				OffAxisPenalty:          float32(td.GetOffAxisPenalty()),
+				ThrowMovePenalty:        float32(td.GetThrowMovePenalty()),
+			}
+		}
 		evt.Event = &capturepb.EchoEvent_DiscThrown{
-			DiscThrown: &capturepb.DiscThrown{
-				PlayerSlot: e.DiscThrown.GetPlayerSlot(),
-			},
+			DiscThrown: dt,
 		}
 	case *telemetryv1.LobbySessionEvent_DiscCaught:
 		evt.Event = &capturepb.EchoEvent_DiscCaught{
@@ -521,8 +568,19 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_GoalScored:
+		gs := &capturepb.GoalScored{}
+		if sd := e.GoalScored.GetScoreDetails(); sd != nil {
+			gs.DiscSpeed = float32(sd.GetDiscSpeed())
+			gs.Team = teamStringToRole(sd.GetTeam())
+			gs.GoalType = goalTypeStringToEnum(sd.GetGoalType())
+			gs.PointAmount = sd.GetPointAmount()
+			gs.DistanceThrown = float32(sd.GetDistanceThrown())
+			// PersonScored and AssistScored are display names in v1;
+			// ScorerSlot and AssistSlot are slot indices in v2 and cannot
+			// be resolved from names alone, so they remain at zero values.
+		}
 		evt.Event = &capturepb.EchoEvent_GoalScored{
-			GoalScored: &capturepb.GoalScored{},
+			GoalScored: gs,
 		}
 	case *telemetryv1.LobbySessionEvent_PlayerGoal:
 		evt.Event = &capturepb.EchoEvent_PlayerGoal{

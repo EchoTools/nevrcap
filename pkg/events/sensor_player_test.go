@@ -65,6 +65,62 @@ func TestPlayerJoinSensor_DetectsNewPlayer(t *testing.T) {
 	}
 }
 
+func TestPlayerJoinSensor_MultipleJoins(t *testing.T) {
+	sensor := NewPlayerJoinSensor()
+
+	// First frame: no players
+	frame1 := &telemetry.LobbySessionStateFrame{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{{}},
+		},
+	}
+	event := sensor.AddFrame(frame1)
+	if event != nil {
+		t.Fatalf("expected no event on first frame, got %v", event)
+	}
+
+	// Second frame: three players join simultaneously
+	frame2 := createFrameWithPlayers(
+		createPlayer(1, "Alice", 0),
+		createPlayer(2, "Bob", 1),
+		createPlayer(3, "Carol", 2),
+	)
+
+	// Collect all events by draining the sensor (same pattern the
+	// detector loop uses: first call with the frame, subsequent
+	// calls with nil to drain pending events).
+	var events []*telemetry.LobbySessionEvent
+	f := frame2
+	for {
+		event = sensor.AddFrame(f)
+		if event == nil {
+			break
+		}
+		events = append(events, event)
+		f = nil // drain mode
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 PlayerJoined events, got %d", len(events))
+	}
+
+	// Collect the names we got (map iteration order is non-deterministic).
+	names := make(map[string]bool)
+	for _, e := range events {
+		joined := e.GetPlayerJoined()
+		if joined == nil {
+			t.Fatalf("expected PlayerJoined, got %T", e.Event)
+		}
+		names[joined.Player.GetDisplayName()] = true
+	}
+
+	for _, want := range []string{"Alice", "Bob", "Carol"} {
+		if !names[want] {
+			t.Errorf("missing PlayerJoined event for %s", want)
+		}
+	}
+}
+
 func TestPlayerJoinSensor_NilFrame(t *testing.T) {
 	sensor := NewPlayerJoinSensor()
 	event := sensor.AddFrame(nil)

@@ -876,6 +876,101 @@ func TestMapEvent_AllTypes(t *testing.T) {
 	}
 }
 
+func TestMapEvent_DiscThrownWithThrowDetails(t *testing.T) {
+	v1evt := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_DiscThrown{
+			DiscThrown: &telemetryv1.DiscThrown{
+				PlayerSlot: 2,
+				ThrowDetails: &enginev1.LastThrowInfo{
+					ArmSpeed:                10.5,
+					TotalSpeed:              15.3,
+					OffAxisSpinDeg:          2.1,
+					WristThrowPenalty:       0.8,
+					RotPerSec:               3.7,
+					PotSpeedFromRot:         4.2,
+					SpeedFromArm:            6.1,
+					SpeedFromMovement:       1.9,
+					SpeedFromWrist:          2.3,
+					WristAlignToThrowDeg:    5.4,
+					ThrowAlignToMovementDeg: 8.7,
+					OffAxisPenalty:          0.3,
+					ThrowMovePenalty:        0.6,
+				},
+			},
+		},
+	}
+
+	got := mapEvent(v1evt)
+	if got == nil {
+		t.Fatal("mapEvent returned nil")
+	}
+
+	dt := got.GetDiscThrown()
+	if dt == nil {
+		t.Fatal("expected DiscThrown event")
+	}
+	if dt.PlayerSlot != 2 {
+		t.Errorf("PlayerSlot = %d, want 2", dt.PlayerSlot)
+	}
+
+	td := dt.GetThrowDetails()
+	if td == nil {
+		t.Fatal("expected ThrowDetails to be populated")
+	}
+
+	checks := []struct {
+		name string
+		got  float32
+		want float32
+	}{
+		{"ArmSpeed", td.GetArmSpeed(), 10.5},
+		{"TotalSpeed", td.GetTotalSpeed(), 15.3},
+		{"OffAxisSpinDeg", td.GetOffAxisSpinDeg(), 2.1},
+		{"WristThrowPenalty", td.GetWristThrowPenalty(), 0.8},
+		{"RotPerSec", td.GetRotPerSec(), 3.7},
+		{"PotSpeedFromRot", td.GetPotSpeedFromRot(), 4.2},
+		{"SpeedFromArm", td.GetSpeedFromArm(), 6.1},
+		{"SpeedFromMovement", td.GetSpeedFromMovement(), 1.9},
+		{"SpeedFromWrist", td.GetSpeedFromWrist(), 2.3},
+		{"WristAlignToThrowDeg", td.GetWristAlignToThrowDeg(), 5.4},
+		{"ThrowAlignToMovementDeg", td.GetThrowAlignToMovementDeg(), 8.7},
+		{"OffAxisPenalty", td.GetOffAxisPenalty(), 0.3},
+		{"ThrowMovePenalty", td.GetThrowMovePenalty(), 0.6},
+	}
+
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %f, want %f", c.name, c.got, c.want)
+		}
+	}
+}
+
+func TestMapEvent_DiscThrownWithoutThrowDetails(t *testing.T) {
+	v1evt := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_DiscThrown{
+			DiscThrown: &telemetryv1.DiscThrown{
+				PlayerSlot: 5,
+			},
+		},
+	}
+
+	got := mapEvent(v1evt)
+	if got == nil {
+		t.Fatal("mapEvent returned nil")
+	}
+
+	dt := got.GetDiscThrown()
+	if dt == nil {
+		t.Fatal("expected DiscThrown event")
+	}
+	if dt.PlayerSlot != 5 {
+		t.Errorf("PlayerSlot = %d, want 5", dt.PlayerSlot)
+	}
+	if dt.GetThrowDetails() != nil {
+		t.Error("expected nil ThrowDetails when v1 has no ThrowDetails")
+	}
+}
+
 func TestMapEvent_Nil(t *testing.T) {
 	if got := mapEvent(nil); got != nil {
 		t.Errorf("mapEvent(nil) = %v, want nil", got)

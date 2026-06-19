@@ -3,6 +3,7 @@ package events
 import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // DiscPossessionSensor detects disc possession changes
@@ -165,15 +166,8 @@ func findPossessorSlot(session *enginev1.SessionResponse) int32 {
 	return -1
 }
 
-// lastThrowEqual compares two LastThrowInfo objects for equality
+// lastThrowEqual compares two LastThrowInfo objects for equality using
+// proto.Equal to ensure all 13 fields are compared.
 func lastThrowEqual(a, b *enginev1.LastThrowInfo) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.GetArmSpeed() == b.GetArmSpeed() &&
-		a.GetTotalSpeed() == b.GetTotalSpeed() &&
-		a.GetRotPerSec() == b.GetRotPerSec()
+	return proto.Equal(a, b)
 }

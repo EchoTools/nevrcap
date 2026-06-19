@@ -288,9 +288,19 @@ func (ed *AsyncDetector) detectEvents(dst []*telemetry.LobbySessionEvent) []*tel
 	}
 
 	for _, s := range ed.sensors {
-		event := s.AddFrame(ed.lastFrame())
-		if event != nil {
+		// First call processes the frame; subsequent calls drain any
+		// pending events the sensor queued (e.g. multiple joins in one
+		// frame). Sensors check their pending queue before inspecting the
+		// frame, so passing nil on drain calls is safe and avoids
+		// re-processing.
+		frame := ed.lastFrame()
+		for {
+			event := s.AddFrame(frame)
+			if event == nil {
+				break
+			}
 			dst = append(dst, event)
+			frame = nil
 		}
 	}
 
