@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -16,6 +17,11 @@ const (
 
 	// ExtNevrcap is the legacy file extension, still accepted as input.
 	ExtNevrcap = ".nevrcap"
+
+	// MaxMessageSize is the upper bound on a single varint-delimited protobuf
+	// message. Prevents corrupted files from triggering multi-gigabyte allocations.
+	// 256 MB is generous for any realistic telemetry frame.
+	MaxMessageSize = 256 * 1024 * 1024
 )
 
 // IsValidExtension reports whether ext (including the leading dot) is a
@@ -116,6 +122,7 @@ func (z *LegacyReader) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (boo
 		return false, err
 	}
 
+	proto.Reset(frame)
 	err = proto.Unmarshal(data, frame)
 	if err != nil {
 		return false, err
@@ -143,6 +150,10 @@ func (z *LegacyReader) readDelimitedMessage() ([]byte, error) {
 		if shift >= 64 {
 			return nil, io.ErrUnexpectedEOF
 		}
+	}
+
+	if length > MaxMessageSize {
+		return nil, fmt.Errorf("message size %d exceeds maximum %d", length, MaxMessageSize)
 	}
 
 	// Read message data

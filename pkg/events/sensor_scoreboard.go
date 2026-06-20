@@ -3,6 +3,7 @@ package events
 import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // ScoreboardSensor detects scoreboard changes
@@ -68,6 +69,15 @@ func (s *ScoreboardSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *ScoreboardSensor) Reset() {
+	s.prevBluePoints = 0
+	s.prevOrangePoints = 0
+	s.prevBlueRoundScore = 0
+	s.prevOrangeRoundScore = 0
+	s.initialized = false
+}
+
 // GoalScoredSensor detects when a goal is scored using LastScore data
 type GoalScoredSensor struct {
 	prevLastScore *enginev1.LastScore
@@ -92,11 +102,11 @@ func (s *GoalScoredSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	// Detect new goal by comparing with previous
 	if s.prevLastScore == nil || !lastScoreEqual(s.prevLastScore, lastScore) {
-		s.prevLastScore = lastScore
+		s.prevLastScore = proto.Clone(lastScore).(*enginev1.LastScore)
 		return &telemetry.LobbySessionEvent{
 			Event: &telemetry.LobbySessionEvent_GoalScored{
 				GoalScored: &telemetry.GoalScored{
-					ScoreDetails: lastScore,
+					ScoreDetails: proto.Clone(lastScore).(*enginev1.LastScore),
 				},
 			},
 		}
@@ -105,16 +115,13 @@ func (s *GoalScoredSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
-// lastScoreEqual compares two LastScore objects for equality
+// Reset clears internal state for a new session.
+func (s *GoalScoredSensor) Reset() {
+	s.prevLastScore = nil
+}
+
+// lastScoreEqual compares two LastScore objects for equality using
+// proto.Equal to ensure all 7 fields are compared.
 func lastScoreEqual(a, b *enginev1.LastScore) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.GetPersonScored() == b.GetPersonScored() &&
-		a.GetDiscSpeed() == b.GetDiscSpeed() &&
-		a.GetDistanceThrown() == b.GetDistanceThrown() &&
-		a.GetPointAmount() == b.GetPointAmount()
+	return proto.Equal(a, b)
 }

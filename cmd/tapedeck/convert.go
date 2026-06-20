@@ -43,7 +43,7 @@ Output files are written alongside the input with .tape extension unless
 			}
 
 			if len(files) == 0 {
-				println(cmd.ErrOrStderr(), "no matching files found")
+				printf(cmd.OutOrStdout(), "no matching files found\n")
 				return nil
 			}
 
@@ -264,7 +264,7 @@ func collectInputFiles(args []string, recursive bool, globPattern string) ([]str
 
 func isConvertibleFile(path string) bool {
 	ext := filepath.Ext(path)
-	return ext == ".echoreplay" || ext == ".nevrcap"
+	return ext == ".echoreplay" || ext == ".nevrcap" || ext == ".tape"
 }
 
 func matchesGlob(path, pattern string) bool {

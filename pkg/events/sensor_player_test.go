@@ -65,6 +65,62 @@ func TestPlayerJoinSensor_DetectsNewPlayer(t *testing.T) {
 	}
 }
 
+func TestPlayerJoinSensor_MultipleJoins(t *testing.T) {
+	sensor := NewPlayerJoinSensor()
+
+	// First frame: no players
+	frame1 := &telemetry.LobbySessionStateFrame{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{{}},
+		},
+	}
+	event := sensor.AddFrame(frame1)
+	if event != nil {
+		t.Fatalf("expected no event on first frame, got %v", event)
+	}
+
+	// Second frame: three players join simultaneously
+	frame2 := createFrameWithPlayers(
+		createPlayer(1, "Alice", 0),
+		createPlayer(2, "Bob", 1),
+		createPlayer(3, "Carol", 2),
+	)
+
+	// Collect all events by draining the sensor (same pattern the
+	// detector loop uses: first call with the frame, subsequent
+	// calls with nil to drain pending events).
+	var events []*telemetry.LobbySessionEvent
+	f := frame2
+	for {
+		event = sensor.AddFrame(f)
+		if event == nil {
+			break
+		}
+		events = append(events, event)
+		f = nil // drain mode
+	}
+
+	if len(events) != 3 {
+		t.Fatalf("expected 3 PlayerJoined events, got %d", len(events))
+	}
+
+	// Collect the names we got (map iteration order is non-deterministic).
+	names := make(map[string]bool)
+	for _, e := range events {
+		joined := e.GetPlayerJoined()
+		if joined == nil {
+			t.Fatalf("expected PlayerJoined, got %T", e.Event)
+		}
+		names[joined.Player.GetDisplayName()] = true
+	}
+
+	for _, want := range []string{"Alice", "Bob", "Carol"} {
+		if !names[want] {
+			t.Errorf("missing PlayerJoined event for %s", want)
+		}
+	}
+}
+
 func TestPlayerJoinSensor_NilFrame(t *testing.T) {
 	sensor := NewPlayerJoinSensor()
 	event := sensor.AddFrame(nil)
@@ -249,7 +305,7 @@ func TestEmoteSensor_NoEventWhenAlreadyPlaying(t *testing.T) {
 
 func TestDeterminePlayerRole_Spectator(t *testing.T) {
 	player := &enginev1.TeamMember{JerseyNumber: -1}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 0)
 	if role != telemetry.Role_ROLE_SPECTATOR {
 		t.Errorf("expected SPECTATOR, got %v", role)
 	}
@@ -257,7 +313,7 @@ func TestDeterminePlayerRole_Spectator(t *testing.T) {
 
 func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
 	player := &enginev1.TeamMember{SlotNumber: 1, JerseyNumber: 0}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 0)
 	if role != telemetry.Role_ROLE_BLUE_TEAM {
 		t.Errorf("expected BLUE_TEAM, got %v", role)
 	}
@@ -265,14 +321,14 @@ func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
 
 func TestDeterminePlayerRole_OrangeTeam(t *testing.T) {
 	player := &enginev1.TeamMember{SlotNumber: 5, JerseyNumber: 1}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 1)
 	if role != telemetry.Role_ROLE_ORANGE_TEAM {
 		t.Errorf("expected ORANGE_TEAM, got %v", role)
 	}
 }
 
 func TestDeterminePlayerRole_NilPlayer(t *testing.T) {
-	role := determinePlayerRole(nil)
+	role := determinePlayerRole(nil, 0)
 	if role != telemetry.Role_ROLE_UNSPECIFIED {
 		t.Errorf("expected UNSPECIFIED, got %v", role)
 	}
@@ -301,11 +357,17 @@ func TestExtractPlayersMap(t *testing.T) {
 		t.Errorf("expected 3 players, got %d", len(players))
 	}
 
-	if players[1].GetDisplayName() != "Player1" {
+	if players[1].player.GetDisplayName() != "Player1" {
 		t.Errorf("expected Player1 at slot 1")
 	}
+	if players[1].teamIdx != 0 {
+		t.Errorf("expected Player1 to be on team 0 (blue), got %d", players[1].teamIdx)
+	}
 
-	if players[5].GetDisplayName() != "Player3" {
+	if players[5].player.GetDisplayName() != "Player3" {
 		t.Errorf("expected Player3 at slot 5")
+	}
+	if players[5].teamIdx != 1 {
+		t.Errorf("expected Player3 to be on team 1 (orange), got %d", players[5].teamIdx)
 	}
 }

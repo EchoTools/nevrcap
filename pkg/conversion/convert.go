@@ -136,7 +136,20 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	}
 
 	v2Header := MapHeaderFromSession(v1Header, firstFrame.GetSession())
-	baseTime := v1Header.GetCreatedAt().AsTime()
+
+	// A nil protobuf timestamp's AsTime() returns Unix epoch (1970-01-01),
+	// not Go's zero time (year 0001), so IsZero() would never trigger.
+	// Check the protobuf field directly instead.
+	createdAt := v1Header.GetCreatedAt()
+	var baseTime time.Time
+	if createdAt == nil || createdAt.GetSeconds() == 0 {
+		// Header has no creation timestamp; fall back to the first frame's
+		// timestamp to avoid uint32 wrap in offset calculations.
+		baseTime = firstFrame.GetTimestamp().AsTime()
+	} else {
+		baseTime = createdAt.AsTime()
+	}
+	mapper := &FrameMapper{BaseTime: baseTime}
 
 	writer, err := codec.NewWriter(outputPath)
 	if err != nil {
@@ -169,7 +182,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	}
 
 	// Process first frame.
-	if err := processAndWriteFrame(processor, writer, firstFrame, baseTime, result); err != nil {
+	if err := processAndWriteFrame(processor, writer, firstFrame, mapper, result); err != nil {
 		closeWriter()
 		return nil, err
 	}
@@ -185,7 +198,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 			return nil, fmt.Errorf("read frame: %w", err)
 		}
 
-		if err := processAndWriteFrame(processor, writer, frame, baseTime, result); err != nil {
+		if err := processAndWriteFrame(processor, writer, frame, mapper, result); err != nil {
 			closeWriter()
 			return nil, err
 		}
@@ -209,7 +222,7 @@ func processAndWriteFrame(
 	processor *processing.Processor,
 	writer *codec.Writer,
 	v1Frame *telemetryv1.LobbySessionStateFrame,
-	baseTime time.Time,
+	mapper *FrameMapper,
 	result *ConvertResult,
 ) error {
 	// Run event detection on the v1 frame.
@@ -218,8 +231,8 @@ func processAndWriteFrame(
 	// Drain any detected events and attach them to the frame.
 	drainEvents(processor, v1Frame)
 
-	// Map v1 frame to v2.
-	v2Frame := MapFrame(v1Frame, baseTime)
+	// Map v1 frame to v2 using the stateful mapper (tracks round number).
+	v2Frame := mapper.MapFrame(v1Frame)
 
 	// Count events on the mapped frame.
 	if ea := v2Frame.GetEchoArena(); ea != nil {

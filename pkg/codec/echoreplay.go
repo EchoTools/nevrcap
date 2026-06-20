@@ -14,6 +14,7 @@ import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -58,6 +59,16 @@ type EchoReplay struct {
 	scratchBuf []byte
 	// Flag to track if Finalize has been called
 	finalized bool
+
+	// skippedFrames counts lines that failed to parse and were skipped.
+	skippedFrames uint32
+	// eof is set when ReadFrame encounters io.EOF.
+	eof bool
+}
+
+// SkippedFrames returns the number of frames skipped due to parse errors.
+func (e *EchoReplay) SkippedFrames() uint32 {
+	return e.skippedFrames
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -173,8 +184,9 @@ func (e *EchoReplay) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 		return ErrCodecNotConfiguredForWriting
 	}
 
-	// Use the optimized writeReplayFrame method
-	e.WriteReplayFrame(e.frameBuffer, frame)
+	if n := e.WriteReplayFrame(e.frameBuffer, frame); n == 0 {
+		return fmt.Errorf("failed to marshal frame")
+	}
 	return nil
 }
 
@@ -184,8 +196,10 @@ func (e *EchoReplay) WriteFrameBatch(frames []*telemetry.LobbySessionStateFrame)
 		return ErrCodecNotConfiguredForWriting
 	}
 
-	for _, frame := range frames {
-		e.WriteReplayFrame(e.frameBuffer, frame)
+	for i, frame := range frames {
+		if n := e.WriteReplayFrame(e.frameBuffer, frame); n == 0 {
+			return fmt.Errorf("failed to marshal frame at index %d", i)
+		}
 	}
 	return nil
 }
@@ -211,6 +225,10 @@ func (e *EchoReplay) GetBufferSize() int {
 
 // WriteReplayFrame writes a frame using optimized buffer operations (same approach as writer_replay_file.go)
 func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbySessionStateFrame) int {
+	if frame == nil || frame.Timestamp == nil {
+		return 0
+	}
+
 	startLen := dst.Len()
 
 	// 1. Timestamp
@@ -295,6 +313,12 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 			numEnd++
 		}
 
+		// Skip empty strings (zero digits between quotes)
+		if numEnd == numStart {
+			offset = numEnd
+			continue
+		}
+
 		// Verify the number ends with a quote
 		if numEnd >= len(result) || result[numEnd] != '"' {
 			offset = numEnd
@@ -326,6 +350,14 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 	return result
 }
 
+func isEscaped(data []byte, i int) bool {
+	backslashes := 0
+	for j := i - 1; j >= 0 && data[j] == '\\'; j-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
+}
+
 // FixExponentNotation converts scientific notation floats to decimal notation
 // This ensures JSON output uses decimal format (e.g., 0.000001 instead of 1e-6)
 // while preserving full precision and not converting to strings
@@ -336,7 +368,7 @@ func FixExponentNotation(data []byte) []byte {
 
 	for i < len(data) {
 		// Handle string boundaries - don't process content inside JSON strings
-		if data[i] == '"' && (i == 0 || data[i-1] != '\\') {
+		if data[i] == '"' && !isEscaped(data, i) {
 			inString = !inString
 			result = append(result, data[i])
 			i++
@@ -426,8 +458,12 @@ func (e *EchoReplay) Finalize() error {
 	}
 	e.finalized = true
 
-	// Create the main replay file in the zip - use the filename
+	// Create the main replay file in the zip - strip extension to match
+	// what the reader's initScanner expects when looking up by base name
 	baseFilename := filepath.Base(e.filename)
+	if ext := filepath.Ext(baseFilename); ext != "" {
+		baseFilename = baseFilename[:len(baseFilename)-len(ext)]
+	}
 	replayFile, err := e.zipWriter.Create(baseFilename)
 	if err != nil {
 		return err
@@ -456,6 +492,7 @@ func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 
 		frame, err := e.parseFrameLine(line)
 		if err != nil {
+			e.skippedFrames++
 			continue // Skip invalid lines
 		}
 
@@ -468,12 +505,13 @@ func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 		return nil, fmt.Errorf("scanner error: %w", err)
 	}
 
+	e.eof = true
 	return nil, io.EOF
 }
 
 // HasNext checks if there are more frames to read
 func (e *EchoReplay) HasNext() bool {
-	return e.scanner != nil && e.scanner.Err() == nil
+	return e.scanner != nil && !e.eof && e.scanner.Err() == nil
 }
 
 // parseFrameLine parses a single line into a frame
@@ -614,6 +652,7 @@ func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool,
 		}
 
 		if err := e.parseFrameLineTo(line, frame); err != nil {
+			e.skippedFrames++
 			continue // Skip invalid lines
 		}
 
@@ -631,6 +670,15 @@ func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool,
 
 // parseFrameLineTo parses a single line into the provided frame object
 func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySessionStateFrame) error {
+	// Reset sub-messages before unmarshaling to prevent protojson merge behavior
+	// from accumulating repeated fields across calls.
+	if frame.Session != nil {
+		proto.Reset(frame.Session)
+	}
+	if frame.PlayerBones != nil {
+		proto.Reset(frame.PlayerBones)
+	}
+
 	// Find tab positions to avoid bytes.Split allocation
 	firstTab := bytes.IndexByte(line, '\t')
 	if firstTab == -1 {

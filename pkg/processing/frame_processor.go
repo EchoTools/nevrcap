@@ -53,18 +53,20 @@ func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData [
 	}
 
 	// Parse user bones data (if provided)
+	var playerBones *enginev1.PlayerBonesResponse
 	if len(userBonesData) > 0 {
 		if err := fp.unmarshaler.Unmarshal(userBonesData, bonesResponse); err != nil {
 			return nil, err
 		}
+		playerBones = bonesResponse
 	}
 
-	// Create the frame
+	// Create the frame — only set PlayerBones when data was present and parsed.
 	frame := &telemetry.LobbySessionStateFrame{
 		FrameIndex:  fp.frameIndex,
 		Timestamp:   timestamppb.New(timestamp),
 		Session:     sessionResponse,
-		PlayerBones: bonesResponse,
+		PlayerBones: playerBones,
 	}
 
 	// Send frame to event detector for async processing

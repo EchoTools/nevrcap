@@ -7,112 +7,165 @@ import (
 
 // PlayerJoinSensor detects when players join the session
 type PlayerJoinSensor struct {
-	previousPlayers map[int32]*enginev1.TeamMember // keyed by slot number
+	previousPlayers map[int32]playerInfo // keyed by slot number
+	pendingEvents   []*telemetry.LobbySessionEvent
 }
 
 // NewPlayerJoinSensor creates a new PlayerJoinSensor
 func NewPlayerJoinSensor() *PlayerJoinSensor {
 	return &PlayerJoinSensor{
-		previousPlayers: make(map[int32]*enginev1.TeamMember),
+		previousPlayers: make(map[int32]playerInfo),
 	}
 }
 
-// AddFrame processes a frame and returns a PlayerJoined event if detected
+// AddFrame processes a frame and returns a PlayerJoined event if detected.
+// Must be called repeatedly with the same frame until nil is returned to
+// drain all events when multiple players join in a single frame.
 func (s *PlayerJoinSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
+	// Drain pending events before processing a new frame.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	if frame == nil || frame.GetSession() == nil {
 		return nil
 	}
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Find new players (in current but not in previous)
-	for slot, player := range currentPlayers {
+	// Find all new players (in current but not in previous).
+	for slot, info := range currentPlayers {
 		if _, existed := s.previousPlayers[slot]; !existed {
-			// Update state before returning
-			s.previousPlayers = currentPlayers
-			return &telemetry.LobbySessionEvent{
+			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_PlayerJoined{
 					PlayerJoined: &telemetry.PlayerJoined{
-						Player: player,
-						Role:   determinePlayerRole(player),
+						Player: info.player,
+						Role:   determinePlayerRole(info.player, info.teamIdx),
 					},
 				},
-			}
+			})
 		}
 	}
 
 	s.previousPlayers = currentPlayers
+
+	// Return first pending event if any were generated.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *PlayerJoinSensor) Reset() {
+	s.previousPlayers = make(map[int32]playerInfo)
+	s.pendingEvents = nil
 }
 
 // PlayerLeaveSensor detects when players leave the session
 type PlayerLeaveSensor struct {
-	previousPlayers map[int32]*enginev1.TeamMember
+	previousPlayers map[int32]playerInfo
+	pendingEvents   []*telemetry.LobbySessionEvent
 }
 
 // NewPlayerLeaveSensor creates a new PlayerLeaveSensor
 func NewPlayerLeaveSensor() *PlayerLeaveSensor {
 	return &PlayerLeaveSensor{
-		previousPlayers: make(map[int32]*enginev1.TeamMember),
+		previousPlayers: make(map[int32]playerInfo),
 	}
 }
 
-// AddFrame processes a frame and returns a PlayerLeft event if detected
+// AddFrame processes a frame and returns a PlayerLeft event if detected.
+// Must be called repeatedly with the same frame until nil is returned to
+// drain all events when multiple players leave in a single frame.
 func (s *PlayerLeaveSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
+	// Drain pending events before processing a new frame.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	if frame == nil || frame.GetSession() == nil {
 		return nil
 	}
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Find missing players (in previous but not in current)
-	for slot, player := range s.previousPlayers {
+	// Find all missing players (in previous but not in current).
+	for slot, info := range s.previousPlayers {
 		if _, exists := currentPlayers[slot]; !exists {
-			// Update state before returning
-			s.previousPlayers = currentPlayers
-			return &telemetry.LobbySessionEvent{
+			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_PlayerLeft{
 					PlayerLeft: &telemetry.PlayerLeft{
 						PlayerSlot:  slot,
-						DisplayName: player.GetDisplayName(),
+						DisplayName: info.player.GetDisplayName(),
 					},
 				},
-			}
+			})
 		}
 	}
 
 	s.previousPlayers = currentPlayers
+
+	// Return first pending event if any were generated.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *PlayerLeaveSensor) Reset() {
+	s.previousPlayers = make(map[int32]playerInfo)
+	s.pendingEvents = nil
 }
 
 // PlayerTeamSwitchSensor detects when players switch teams
 type PlayerTeamSwitchSensor struct {
-	previousPlayers map[int32]*enginev1.TeamMember
+	previousPlayers map[int32]playerInfo
+	pendingEvents   []*telemetry.LobbySessionEvent
 }
 
 // NewPlayerTeamSwitchSensor creates a new PlayerTeamSwitchSensor
 func NewPlayerTeamSwitchSensor() *PlayerTeamSwitchSensor {
 	return &PlayerTeamSwitchSensor{
-		previousPlayers: make(map[int32]*enginev1.TeamMember),
+		previousPlayers: make(map[int32]playerInfo),
 	}
 }
 
-// AddFrame processes a frame and returns a PlayerSwitchedTeam event if detected
+// AddFrame processes a frame and returns a PlayerSwitchedTeam event if detected.
+// Must be called repeatedly with the same frame until nil is returned to
+// drain all events when multiple players switch teams in a single frame.
 func (s *PlayerTeamSwitchSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
+	// Drain pending events before processing a new frame.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	if frame == nil || frame.GetSession() == nil {
 		return nil
 	}
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Check for team switches (same slot, different team)
-	for slot, currentPlayer := range currentPlayers {
-		if prevPlayer, existed := s.previousPlayers[slot]; existed {
-			prevRole := determinePlayerRole(prevPlayer)
-			currRole := determinePlayerRole(currentPlayer)
+	// Check for team switches (same slot, different team).
+	for slot, currInfo := range currentPlayers {
+		if prevInfo, existed := s.previousPlayers[slot]; existed {
+			prevRole := determinePlayerRole(prevInfo.player, prevInfo.teamIdx)
+			currRole := determinePlayerRole(currInfo.player, currInfo.teamIdx)
 			if prevRole != currRole {
-				s.previousPlayers = currentPlayers
-				return &telemetry.LobbySessionEvent{
+				s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 					Event: &telemetry.LobbySessionEvent_PlayerSwitchedTeam{
 						PlayerSwitchedTeam: &telemetry.PlayerSwitchedTeam{
 							PlayerSlot: slot,
@@ -120,18 +173,33 @@ func (s *PlayerTeamSwitchSensor) AddFrame(frame *telemetry.LobbySessionStateFram
 							PrevRole:   prevRole,
 						},
 					},
-				}
+				})
 			}
 		}
 	}
 
 	s.previousPlayers = currentPlayers
+
+	// Return first pending event if any were generated.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *PlayerTeamSwitchSensor) Reset() {
+	s.previousPlayers = make(map[int32]playerInfo)
+	s.pendingEvents = nil
 }
 
 // EmoteSensor detects when players play emotes
 type EmoteSensor struct {
 	previousEmoteStates map[int32]bool // keyed by slot number
+	pendingEvents       []*telemetry.LobbySessionEvent
 }
 
 // NewEmoteSensor creates a new EmoteSensor
@@ -141,68 +209,103 @@ func NewEmoteSensor() *EmoteSensor {
 	}
 }
 
-// AddFrame processes a frame and returns an EmotePlayed event if detected
+// AddFrame processes a frame and returns an EmotePlayed event if detected.
+// Must be called repeatedly with the same frame until nil is returned to
+// drain all events when multiple emotes start in a single frame.
 func (s *EmoteSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemetry.LobbySessionEvent {
+	// Drain pending events before processing a new frame.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	if frame == nil || frame.GetSession() == nil {
 		return nil
 	}
 
+	// Build a set of current slots to clean up stale entries after.
+	currentSlots := make(map[int32]struct{})
+
 	for _, team := range frame.GetSession().GetTeams() {
 		for _, player := range team.GetPlayers() {
 			slot := player.GetSlotNumber()
+			currentSlots[slot] = struct{}{}
 			isPlaying := player.GetIsEmotePlaying()
 			wasPlaying := s.previousEmoteStates[slot]
 
-			// Detect transition from not playing to playing
+			// Detect transition from not playing to playing.
 			if isPlaying && !wasPlaying {
-				s.previousEmoteStates[slot] = isPlaying
-				return &telemetry.LobbySessionEvent{
+				s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 					Event: &telemetry.LobbySessionEvent_EmotePlayed{
 						EmotePlayed: &telemetry.EmotePlayed{
 							PlayerSlot: slot,
 							Emote:      telemetry.EmotePlayed_EMOTE_TYPE_PRIMARY,
 						},
 					},
-				}
+				})
 			}
 			s.previousEmoteStates[slot] = isPlaying
 		}
 	}
 
+	// Remove stale entries for players who are no longer present.
+	for slot := range s.previousEmoteStates {
+		if _, exists := currentSlots[slot]; !exists {
+			delete(s.previousEmoteStates, slot)
+		}
+	}
+
+	// Return first pending event if any were generated.
+	if len(s.pendingEvents) > 0 {
+		event := s.pendingEvents[0]
+		s.pendingEvents = s.pendingEvents[1:]
+		return event
+	}
+
 	return nil
 }
 
-// extractPlayersMap extracts all players from a session into a map keyed by slot
-func extractPlayersMap(session *enginev1.SessionResponse) map[int32]*enginev1.TeamMember {
-	players := make(map[int32]*enginev1.TeamMember)
-	for _, team := range session.GetTeams() {
+// Reset clears internal state for a new session.
+func (s *EmoteSensor) Reset() {
+	s.previousEmoteStates = make(map[int32]bool)
+	s.pendingEvents = nil
+}
+
+// playerInfo holds a team member and the index of the team it belongs to.
+type playerInfo struct {
+	player  *enginev1.TeamMember
+	teamIdx int // 0 = blue, 1 = orange
+}
+
+// extractPlayersMap extracts all players from a session into a map keyed by slot,
+// preserving which team array each player belongs to.
+func extractPlayersMap(session *enginev1.SessionResponse) map[int32]playerInfo {
+	players := make(map[int32]playerInfo)
+	for teamIdx, team := range session.GetTeams() {
 		for _, player := range team.GetPlayers() {
-			players[player.GetSlotNumber()] = player
+			players[player.GetSlotNumber()] = playerInfo{
+				player:  player,
+				teamIdx: teamIdx,
+			}
 		}
 	}
 	return players
 }
 
-// determinePlayerRole determines a player's role based on their jersey number and slot
-func determinePlayerRole(player *enginev1.TeamMember) telemetry.Role {
+// determinePlayerRole determines a player's role from the team index.
+// teamIdx 0 = blue, 1 = orange; spectators are detected by jersey number -1.
+func determinePlayerRole(player *enginev1.TeamMember, teamIdx int) telemetry.Role {
 	if player == nil {
 		return telemetry.Role_ROLE_UNSPECIFIED
 	}
 
-	jerseyNumber := player.GetJerseyNumber()
-
 	// Spectators have jersey number -1
-	if jerseyNumber == -1 {
+	if player.GetJerseyNumber() == -1 {
 		return telemetry.Role_ROLE_SPECTATOR
 	}
 
-	// Blue team: jersey 0-4, Orange team: jersey 5-9 (or similar pattern)
-	// In Echo Arena, blue team players have even slot offsets, orange team have odd
-	// Actually, teams are determined by which team array they're in, but we use jersey as heuristic
-	slot := player.GetSlotNumber()
-
-	// Players 0-3 are typically blue, 4-7 are typically orange
-	if slot < 4 {
+	if teamIdx == 0 {
 		return telemetry.Role_ROLE_BLUE_TEAM
 	}
 	return telemetry.Role_ROLE_ORANGE_TEAM

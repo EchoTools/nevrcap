@@ -5,13 +5,14 @@ import (
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
-// playerStatSnapshot holds the stat values for a player
+// playerStatSnapshot holds the stat values for a player.
+// Note: catches are not tracked here because catch events are disc-level
+// (DiscCaught), not stat-level. The disc sensor handles those.
 type playerStatSnapshot struct {
 	goals         int32
 	saves         int32
 	stuns         int32
 	passes        int32
-	catches       int32
 	steals        int32
 	blocks        int32
 	interceptions int32
@@ -29,7 +30,6 @@ func snapshotFromStats(stats *enginev1.PlayerStats) playerStatSnapshot {
 		saves:         stats.GetSaves(),
 		stuns:         stats.GetStuns(),
 		passes:        stats.GetPasses(),
-		catches:       stats.GetCatches(),
 		steals:        stats.GetSteals(),
 		blocks:        stats.GetBlocks(),
 		interceptions: stats.GetInterceptions(),
@@ -75,10 +75,14 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	// Find current possessor before processing stats
 	currentPossessorSlot := findPossessorSlotFromSession(frame.GetSession())
 
+	// Build a set of currently-present slots so we can prune departed players.
+	currentSlots := make(map[int32]struct{})
+
 	// Collect all stat changes
 	for _, team := range frame.GetSession().GetTeams() {
 		for _, player := range team.GetPlayers() {
 			slot := player.GetSlotNumber()
+			currentSlots[slot] = struct{}{}
 			current := snapshotFromStats(player.GetStats())
 			prev, existed := s.prevStats[slot]
 
@@ -91,13 +95,18 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 		}
 	}
 
+	// Remove stale entries for players who are no longer present.
+	for slot := range s.prevStats {
+		if _, exists := currentSlots[slot]; !exists {
+			delete(s.prevStats, slot)
+		}
+	}
+
 	// Update previous possessor for next frame
-	if s.initialized {
-		s.prevPossessorSlot = currentPossessorSlot
-	} else {
-		s.prevPossessorSlot = currentPossessorSlot
+	if !s.initialized {
 		s.initialized = true
 	}
+	s.prevPossessorSlot = currentPossessorSlot
 
 	// Return first pending event if any were generated
 	if len(s.pendingEvents) > 0 {
@@ -107,6 +116,14 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	}
 
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *StatEventSensor) Reset() {
+	s.prevStats = make(map[int32]playerStatSnapshot)
+	s.pendingEvents = nil
+	s.prevPossessorSlot = -1
+	s.initialized = false
 }
 
 // findPossessorSlotFromSession finds the slot of the player who has possession, returns -1 if none
@@ -125,17 +142,24 @@ func findPossessorSlotFromSession(session *enginev1.SessionResponse) int32 {
 func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatSnapshot, prevPossessorSlot int32) {
 	// Goals
 	if current.goals > prev.goals {
+		goalCount := current.goals - prev.goals
 		pointsScored := current.points - prev.points
 		if pointsScored <= 0 {
-			pointsScored = 2 // Default to 2 points if we can't determine
+			pointsScored = 2 * goalCount // Default to 2 points per goal
 		}
-		for i := int32(0); i < current.goals-prev.goals; i++ {
+		pointsPerGoal := pointsScored / goalCount
+		remainder := pointsScored % goalCount
+		for i := int32(0); i < goalCount; i++ {
+			pts := pointsPerGoal
+			if i == 0 {
+				pts += remainder // first goal gets the remainder
+			}
 			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_PlayerGoal{
 					PlayerGoal: &telemetry.PlayerGoal{
 						PlayerSlot: slot,
-						TotalGoals: current.goals,
-						Points:     pointsScored,
+						TotalGoals: prev.goals + i + 1,
+						Points:     pts,
 					},
 				},
 			})
@@ -149,7 +173,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerSave{
 					PlayerSave: &telemetry.PlayerSave{
 						PlayerSlot: slot,
-						TotalSaves: current.saves,
+						TotalSaves: prev.saves + i + 1,
 					},
 				},
 			})
@@ -163,7 +187,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerStun{
 					PlayerStun: &telemetry.PlayerStun{
 						PlayerSlot: slot,
-						TotalStuns: current.stuns,
+						TotalStuns: prev.stuns + i + 1,
 					},
 				},
 			})
@@ -177,7 +201,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerPass{
 					PlayerPass: &telemetry.PlayerPass{
 						PlayerSlot:  slot,
-						TotalPasses: current.passes,
+						TotalPasses: prev.passes + i + 1,
 					},
 				},
 			})
@@ -191,7 +215,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerSteal{
 					PlayerSteal: &telemetry.PlayerSteal{
 						PlayerSlot:       slot,
-						TotalSteals:      current.steals,
+						TotalSteals:      prev.steals + i + 1,
 						VictimPlayerSlot: prevPossessorSlot,
 					},
 				},
@@ -206,7 +230,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerBlock{
 					PlayerBlock: &telemetry.PlayerBlock{
 						PlayerSlot:  slot,
-						TotalBlocks: current.blocks,
+						TotalBlocks: prev.blocks + i + 1,
 					},
 				},
 			})
@@ -220,7 +244,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerInterception{
 					PlayerInterception: &telemetry.PlayerInterception{
 						PlayerSlot:         slot,
-						TotalInterceptions: current.interceptions,
+						TotalInterceptions: prev.interceptions + i + 1,
 					},
 				},
 			})
@@ -234,7 +258,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerAssist{
 					PlayerAssist: &telemetry.PlayerAssist{
 						PlayerSlot:   slot,
-						TotalAssists: current.assists,
+						TotalAssists: prev.assists + i + 1,
 					},
 				},
 			})
@@ -248,7 +272,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 				Event: &telemetry.LobbySessionEvent_PlayerShotTaken{
 					PlayerShotTaken: &telemetry.PlayerShotTaken{
 						PlayerSlot: slot,
-						TotalShots: current.shotsTaken,
+						TotalShots: prev.shotsTaken + i + 1,
 					},
 				},
 			})

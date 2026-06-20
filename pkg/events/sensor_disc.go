@@ -3,6 +3,7 @@ package events
 import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // DiscPossessionSensor detects disc possession changes
@@ -48,6 +49,12 @@ func (s *DiscPossessionSensor) AddFrame(frame *telemetry.LobbySessionStateFrame)
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *DiscPossessionSensor) Reset() {
+	s.prevPossessorSlot = -1
+	s.initialized = false
+}
+
 // DiscThrownSensor detects when the disc is thrown using LastThrowInfo
 type DiscThrownSensor struct {
 	prevLastThrow *enginev1.LastThrowInfo
@@ -84,12 +91,12 @@ func (s *DiscThrownSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	// Detect new throw by comparing with previous
 	if s.prevLastThrow == nil || !lastThrowEqual(s.prevLastThrow, lastThrow) {
+		// Use the pre-throw possessor. Don't fall back to currentPossessor
+		// because after a throw, possession has already changed to the
+		// catcher or been released.
 		throwerSlot := s.prevPossessor
-		if throwerSlot == -1 {
-			throwerSlot = currentPossessor
-		}
 
-		s.prevLastThrow = lastThrow
+		s.prevLastThrow = proto.Clone(lastThrow).(*enginev1.LastThrowInfo)
 		s.prevPossessor = currentPossessor
 
 		return &telemetry.LobbySessionEvent{
@@ -104,6 +111,12 @@ func (s *DiscThrownSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	s.prevPossessor = currentPossessor
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *DiscThrownSensor) Reset() {
+	s.prevLastThrow = nil
+	s.prevPossessor = -1
 }
 
 // DiscCaughtSensor detects when a player catches the disc
@@ -136,21 +149,24 @@ func (s *DiscCaughtSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	// A catch occurs when possession changes from no one (-1) to someone,
 	// or from one player to another (not the same player)
 	if currentSlot != -1 && s.prevPossessorSlot != currentSlot {
-		// Only emit catch if there was a transition (disc was free or with someone else)
-		if s.prevPossessorSlot == -1 || s.prevPossessorSlot != currentSlot {
-			s.prevPossessorSlot = currentSlot
-			return &telemetry.LobbySessionEvent{
-				Event: &telemetry.LobbySessionEvent_DiscCaught{
-					DiscCaught: &telemetry.DiscCaught{
-						PlayerSlot: currentSlot,
-					},
+		s.prevPossessorSlot = currentSlot
+		return &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_DiscCaught{
+				DiscCaught: &telemetry.DiscCaught{
+					PlayerSlot: currentSlot,
 				},
-			}
+			},
 		}
 	}
 
 	s.prevPossessorSlot = currentSlot
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *DiscCaughtSensor) Reset() {
+	s.prevPossessorSlot = -1
+	s.initialized = false
 }
 
 // findPossessorSlot finds the slot of the player who has possession, returns -1 if none
@@ -165,15 +181,8 @@ func findPossessorSlot(session *enginev1.SessionResponse) int32 {
 	return -1
 }
 
-// lastThrowEqual compares two LastThrowInfo objects for equality
+// lastThrowEqual compares two LastThrowInfo objects for equality using
+// proto.Equal to ensure all 13 fields are compared.
 func lastThrowEqual(a, b *enginev1.LastThrowInfo) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return a.GetArmSpeed() == b.GetArmSpeed() &&
-		a.GetTotalSpeed() == b.GetTotalSpeed() &&
-		a.GetRotPerSec() == b.GetRotPerSec()
+	return proto.Equal(a, b)
 }

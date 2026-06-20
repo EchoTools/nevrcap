@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/echotools/tape/pkg/codec"
 )
@@ -40,11 +41,13 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 			return fmt.Errorf("failed to read frame: %w", err)
 		}
 
-		// Write in legacy echoreplay format (timestamp + session JSON)
-		if frame.Session != nil {
-			if err := echoWriter.WriteFrame(frame); err != nil {
-				return fmt.Errorf("failed to write frame to echoreplay: %w", err)
-			}
+		// Write in legacy echoreplay format (timestamp + session JSON).
+		// Frames without a Session but with PlayerBones still carry useful data.
+		if frame.Session == nil && frame.PlayerBones != nil {
+			slog.Warn("frame has PlayerBones but no Session", "nevrcap", nevrcapPath)
+		}
+		if err := echoWriter.WriteFrame(frame); err != nil {
+			return fmt.Errorf("failed to write frame to echoreplay: %w", err)
 		}
 	}
 
@@ -53,9 +56,12 @@ func ConvertNevrcapToEchoReplay(nevrcapPath, echoReplayPath string) error {
 		return fmt.Errorf("failed to finalize echoreplay file: %w", err)
 	}
 
-	fmt.Printf("Successfully converted %s to %s\n", nevrcapPath, echoReplayPath)
+	slog.Info("converted nevrcap to echoreplay",
+		"input", nevrcapPath,
+		"output", echoReplayPath,
+	)
 	if header.Metadata != nil {
-		fmt.Printf("Source metadata: %v\n", header.Metadata)
+		slog.Info("source metadata", "metadata", header.Metadata)
 	}
 
 	return nil

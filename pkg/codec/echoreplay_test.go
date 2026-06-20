@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"os"
 	"testing"
+
+	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
 // TestEchoReplayCodec tests the EchoReplay codec
@@ -156,6 +158,77 @@ func TestFixProtojsonUint64Encoding(t *testing.T) {
 				t.Errorf("FixProtojsonUint64Encoding() = %q, want %q", string(result), tt.expected)
 			}
 		})
+	}
+}
+
+// TestReadFrameTo_NoMergeCorruption verifies that ReadFrameTo produces clean frames
+// when reusing the same buffer. Frame 1 has teams and player bones; frame 2 has
+// neither. The second read must not contain any data from the first.
+func TestReadFrameTo_NoMergeCorruption(t *testing.T) {
+	tmpFile := t.TempDir() + "/merge_test.echoreplay"
+
+	f, err := os.Create(tmpFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	w, err := zw.Create("merge_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Frame 1: session with teams and player bones
+	w.Write([]byte("2023/01/01 12:00:00.000\t" +
+		`{"sessionid":"session-1","game_status":"playing","teams":[{"team":"BLUE"},{"team":"ORANGE"}]}` +
+		"\t " +
+		`{"user_bones":[{"bone_count":19}]}` + "\n"))
+	// Frame 2: different session, no teams, no player bones
+	w.Write([]byte("2023/01/01 12:00:01.000\t" +
+		`{"sessionid":"session-2","game_status":"lobby"}` + "\n"))
+
+	zw.Close()
+	f.Close()
+
+	reader, err := NewEchoReplayReader(tmpFile)
+	if err != nil {
+		t.Fatalf("Failed to create reader: %v", err)
+	}
+	defer reader.Close()
+
+	buf := &telemetry.LobbySessionStateFrame{}
+
+	// Read frame 1
+	ok, err := reader.ReadFrameTo(buf)
+	if err != nil || !ok {
+		t.Fatalf("ReadFrameTo frame 1: ok=%v err=%v", ok, err)
+	}
+	if buf.GetSession().GetSessionId() != "session-1" {
+		t.Fatalf("Frame 1 session ID: got %q, want %q", buf.GetSession().GetSessionId(), "session-1")
+	}
+	if len(buf.GetSession().GetTeams()) != 2 {
+		t.Fatalf("Frame 1 teams: got %d, want 2", len(buf.GetSession().GetTeams()))
+	}
+	if buf.GetPlayerBones() == nil {
+		t.Fatal("Frame 1 player bones: got nil, want non-nil")
+	}
+
+	// Read frame 2 into the same buffer
+	ok, err = reader.ReadFrameTo(buf)
+	if err != nil || !ok {
+		t.Fatalf("ReadFrameTo frame 2: ok=%v err=%v", ok, err)
+	}
+	if buf.GetSession().GetSessionId() != "session-2" {
+		t.Errorf("Frame 2 session ID: got %q, want %q", buf.GetSession().GetSessionId(), "session-2")
+	}
+	if buf.GetSession().GetGameStatus() != "lobby" {
+		t.Errorf("Frame 2 game status: got %q, want %q", buf.GetSession().GetGameStatus(), "lobby")
+	}
+	// Verify no data bleed from frame 1
+	if len(buf.GetSession().GetTeams()) != 0 {
+		t.Errorf("Frame 2 teams: got %d, want 0 (frame 1 data bled through)", len(buf.GetSession().GetTeams()))
+	}
+	if buf.GetPlayerBones() != nil {
+		t.Errorf("Frame 2 player bones: got non-nil, want nil (frame 1 data bled through)")
 	}
 }
 

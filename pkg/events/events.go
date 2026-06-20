@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
@@ -24,23 +25,32 @@ const DefaultFrameBufferCapacity = 10
 // Option configures the AsyncDetector
 type Option func(*AsyncDetector)
 
-// WithInputChannelSize sets the size of the input channel
+// WithInputChannelSize sets the size of the input channel (minimum 1).
 func WithInputChannelSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.inputChan = make(chan *telemetry.LobbySessionStateFrame, size)
 	}
 }
 
-// WithEventsChannelSize sets the size of the events channel
+// WithEventsChannelSize sets the size of the events channel (minimum 1).
 func WithEventsChannelSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.eventsChan = make(chan []*telemetry.LobbySessionEvent, size)
 	}
 }
 
-// WithFrameBufferSize sets the size of the frame buffer
+// WithFrameBufferSize sets the size of the frame buffer (minimum 1).
 func WithFrameBufferSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.frameBuffer = make([]*telemetry.LobbySessionStateFrame, size)
 	}
 }
@@ -59,10 +69,8 @@ func WithSynchronousProcessing() Option {
 	}
 }
 
-// AsyncDetector detects post_match events
+// AsyncDetector detects events from frame streams
 type AsyncDetector struct {
-	previousGameStatusFrame *telemetry.LobbySessionStateFrame
-
 	// Ring buffer for frames
 	frameBuffer []*telemetry.LobbySessionStateFrame
 	writeIndex  int // Current write position
@@ -83,6 +91,20 @@ type AsyncDetector struct {
 	eventBuffer []*telemetry.LobbySessionEvent
 
 	synchronous bool
+
+	// Drop counters for monitoring channel back-pressure.
+	droppedFrames uint64
+	droppedEvents uint64
+}
+
+// DroppedFrames returns the number of frames dropped due to a full input channel.
+func (ed *AsyncDetector) DroppedFrames() uint64 {
+	return atomic.LoadUint64(&ed.droppedFrames)
+}
+
+// DroppedEvents returns the number of event batches dropped due to a full events channel.
+func (ed *AsyncDetector) DroppedEvents() uint64 {
+	return atomic.LoadUint64(&ed.droppedEvents)
 }
 
 var _ Detector = (*AsyncDetector)(nil)
@@ -104,7 +126,9 @@ func New(opts ...Option) *AsyncDetector {
 		opt(ed)
 	}
 
-	ed.Start()
+	if !ed.synchronous {
+		ed.Start()
+	}
 	return ed
 }
 
@@ -118,16 +142,35 @@ func (ed *AsyncDetector) Start() {
 func (ed *AsyncDetector) Stop() {
 	ed.stopOnce.Do(func() {
 		ed.cancel()
-		ed.wg.Wait()
+		if !ed.synchronous {
+			ed.wg.Wait()
+		}
 		close(ed.eventsChan)
 	})
 }
 
 // Reset clears the event detector state
 func (ed *AsyncDetector) Reset() {
+	if ed.synchronous {
+		ed.resetSync()
+		return
+	}
 	select {
 	case ed.resetChan <- struct{}{}:
 	case <-ed.ctx.Done():
+	}
+}
+
+func (ed *AsyncDetector) resetSync() {
+	ed.writeIndex = 0
+	ed.frameCount = 0
+	for i := range ed.frameBuffer {
+		ed.frameBuffer[i] = nil
+	}
+	for _, s := range ed.sensors {
+		if r, ok := s.(Resettable); ok {
+			r.Reset()
+		}
 	}
 }
 
@@ -144,7 +187,8 @@ func (ed *AsyncDetector) ProcessFrame(frame *telemetry.LobbySessionStateFrame) {
 	case <-ed.ctx.Done():
 		// Detector is stopping, ignore frame
 	default:
-		// Channel full, drop frame (could also block or log)
+		// Channel full, drop frame
+		atomic.AddUint64(&ed.droppedFrames, 1)
 	}
 }
 
@@ -175,6 +219,7 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		default:
 			// Channel is full, drop events rather than blocking.
 			// This maintains the synchronous processing guarantee.
+			atomic.AddUint64(&ed.droppedEvents, 1)
 		}
 	}
 }
@@ -193,9 +238,13 @@ func (ed *AsyncDetector) processLoop() {
 		case <-ed.resetChan:
 			ed.writeIndex = 0
 			ed.frameCount = 0
-			ed.previousGameStatusFrame = nil
 			for i := range ed.frameBuffer {
 				ed.frameBuffer[i] = nil
+			}
+			for _, s := range ed.sensors {
+				if r, ok := s.(Resettable); ok {
+					r.Reset()
+				}
 			}
 
 		case frame := <-ed.inputChan:
@@ -219,6 +268,10 @@ func (ed *AsyncDetector) processLoop() {
 					// Context cancelled, drain inputChan and exit
 					ed.drainInputChan()
 					return
+				default:
+					// Channel full — drop events rather than blocking the frame
+					// processing pipeline. Matches the sync path's behavior.
+					atomic.AddUint64(&ed.droppedEvents, 1)
 				}
 			}
 
@@ -288,16 +341,20 @@ func (ed *AsyncDetector) detectEvents(dst []*telemetry.LobbySessionEvent) []*tel
 	}
 
 	for _, s := range ed.sensors {
-		event := s.AddFrame(ed.lastFrame())
-		if event != nil {
+		// First call processes the frame; subsequent calls drain any
+		// pending events the sensor queued (e.g. multiple joins in one
+		// frame). Sensors check their pending queue before inspecting the
+		// frame, so passing nil on drain calls is safe and avoids
+		// re-processing.
+		frame := ed.lastFrame()
+		for {
+			event := s.AddFrame(frame)
+			if event == nil {
+				break
+			}
 			dst = append(dst, event)
+			frame = nil
 		}
-	}
-
-	for _, fn := range [...]detectionFunction{
-		ed.detectPostMatchEvent,
-	} {
-		dst = fn(ed.lastFrameIndex(), dst)
 	}
 
 	return dst
