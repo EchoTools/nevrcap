@@ -5,13 +5,14 @@ import (
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
-// playerStatSnapshot holds the stat values for a player
+// playerStatSnapshot holds the stat values for a player.
+// Note: catches are not tracked here because catch events are disc-level
+// (DiscCaught), not stat-level. The disc sensor handles those.
 type playerStatSnapshot struct {
 	goals         int32
 	saves         int32
 	stuns         int32
 	passes        int32
-	catches       int32
 	steals        int32
 	blocks        int32
 	interceptions int32
@@ -29,7 +30,6 @@ func snapshotFromStats(stats *enginev1.PlayerStats) playerStatSnapshot {
 		saves:         stats.GetSaves(),
 		stuns:         stats.GetStuns(),
 		passes:        stats.GetPasses(),
-		catches:       stats.GetCatches(),
 		steals:        stats.GetSteals(),
 		blocks:        stats.GetBlocks(),
 		interceptions: stats.GetInterceptions(),
@@ -75,10 +75,14 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	// Find current possessor before processing stats
 	currentPossessorSlot := findPossessorSlotFromSession(frame.GetSession())
 
+	// Build a set of currently-present slots so we can prune departed players.
+	currentSlots := make(map[int32]struct{})
+
 	// Collect all stat changes
 	for _, team := range frame.GetSession().GetTeams() {
 		for _, player := range team.GetPlayers() {
 			slot := player.GetSlotNumber()
+			currentSlots[slot] = struct{}{}
 			current := snapshotFromStats(player.GetStats())
 			prev, existed := s.prevStats[slot]
 
@@ -88,6 +92,13 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 			}
 
 			s.prevStats[slot] = current
+		}
+	}
+
+	// Remove stale entries for players who are no longer present.
+	for slot := range s.prevStats {
+		if _, exists := currentSlots[slot]; !exists {
+			delete(s.prevStats, slot)
 		}
 	}
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/echotools/tape/pkg/codec"
@@ -136,11 +137,17 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 
 	v2Header := MapHeaderFromSession(v1Header, firstFrame.GetSession())
 
-	baseTime := v1Header.GetCreatedAt().AsTime()
-	if baseTime.IsZero() {
+	// A nil protobuf timestamp's AsTime() returns Unix epoch (1970-01-01),
+	// not Go's zero time (year 0001), so IsZero() would never trigger.
+	// Check the protobuf field directly instead.
+	createdAt := v1Header.GetCreatedAt()
+	var baseTime time.Time
+	if createdAt == nil || createdAt.GetSeconds() == 0 {
 		// Header has no creation timestamp; fall back to the first frame's
 		// timestamp to avoid uint32 wrap in offset calculations.
 		baseTime = firstFrame.GetTimestamp().AsTime()
+	} else {
+		baseTime = createdAt.AsTime()
 	}
 	mapper := &FrameMapper{BaseTime: baseTime}
 

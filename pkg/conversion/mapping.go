@@ -37,9 +37,11 @@ var matchTypeMap = map[string]capturepb.MatchType{
 
 // pauseStateMap maps v1 PauseState.paused_state strings to v2 PauseState enum.
 var pauseStateMap = map[string]capturepb.PauseState{
-	"":                 capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"unpaused":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"paused":           capturepb.PauseState_PAUSE_STATE_PAUSED,
+	"":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"unpaused": capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"paused":   capturepb.PauseState_PAUSE_STATE_PAUSED,
+	// Intentional data narrowing: v2 proto has no PAUSE_STATE_REQUESTED;
+	// "paused_requested" is treated as PAUSED.
 	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED,
 	"unpausing":        capturepb.PauseState_PAUSE_STATE_UNPAUSING,
 	"autopause_replay": capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY,
@@ -188,7 +190,13 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	frameTime := v1f.GetTimestamp().AsTime()
-	offsetMs := uint32(frameTime.Sub(baseTime).Milliseconds()) //nolint:gosec // duration fits uint32 for game sessions
+	// Clamp to zero if frame predates baseTime — prevents uint32 wrap from
+	// a negative Sub() result.
+	diffMs := frameTime.Sub(baseTime).Milliseconds()
+	if diffMs < 0 {
+		diffMs = 0
+	}
+	offsetMs := uint32(diffMs) //nolint:gosec // duration fits uint32 for game sessions
 
 	frame := &capturepb.Frame{
 		FrameIndex:        v1f.GetFrameIndex(),

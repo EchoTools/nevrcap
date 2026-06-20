@@ -25,23 +25,32 @@ const DefaultFrameBufferCapacity = 10
 // Option configures the AsyncDetector
 type Option func(*AsyncDetector)
 
-// WithInputChannelSize sets the size of the input channel
+// WithInputChannelSize sets the size of the input channel (minimum 1).
 func WithInputChannelSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.inputChan = make(chan *telemetry.LobbySessionStateFrame, size)
 	}
 }
 
-// WithEventsChannelSize sets the size of the events channel
+// WithEventsChannelSize sets the size of the events channel (minimum 1).
 func WithEventsChannelSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.eventsChan = make(chan []*telemetry.LobbySessionEvent, size)
 	}
 }
 
-// WithFrameBufferSize sets the size of the frame buffer
+// WithFrameBufferSize sets the size of the frame buffer (minimum 1).
 func WithFrameBufferSize(size int) Option {
 	return func(ed *AsyncDetector) {
+		if size < 1 {
+			size = 1
+		}
 		ed.frameBuffer = make([]*telemetry.LobbySessionStateFrame, size)
 	}
 }
@@ -259,6 +268,10 @@ func (ed *AsyncDetector) processLoop() {
 					// Context cancelled, drain inputChan and exit
 					ed.drainInputChan()
 					return
+				default:
+					// Channel full — drop events rather than blocking the frame
+					// processing pipeline. Matches the sync path's behavior.
+					atomic.AddUint64(&ed.droppedEvents, 1)
 				}
 			}
 

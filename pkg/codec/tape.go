@@ -2,6 +2,7 @@ package codec
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -349,6 +350,10 @@ func (r *Reader) readEnvelope() (*capturepb.Envelope, error) {
 		if shift >= 64 {
 			return nil, io.ErrUnexpectedEOF
 		}
+	}
+
+	if length > MaxMessageSize {
+		return nil, fmt.Errorf("envelope size %d exceeds maximum %d", length, MaxMessageSize)
 	}
 
 	// Read message data.

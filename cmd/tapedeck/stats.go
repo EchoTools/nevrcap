@@ -112,12 +112,16 @@ func runStats(cmd *cobra.Command, filePath, format string) error {
 		tsMs := frame.GetTimestampOffsetMs()
 
 		// Accumulate possession time from disc holder.
-		holder := ea.GetDiscHolderSlot()
+		// HasDiscHolderSlot distinguishes "slot 0 holds disc" from "no holder."
 		if prevHolder >= 0 && tsMs > prevTimestampMs {
 			ps := ensurePlayer(prevHolder)
 			ps.PossessionMs += tsMs - prevTimestampMs
 		}
-		prevHolder = holder
+		if ea.HasDiscHolderSlot() {
+			prevHolder = ea.GetDiscHolderSlot()
+		} else {
+			prevHolder = -1
+		}
 		prevTimestampMs = tsMs
 
 		// Process events.
@@ -230,10 +234,14 @@ func roleToTeam(r capturepb.Role) string {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	if maxLen <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen-1] + "~"
+	return string(runes[:maxLen-1]) + "~"
 }
 
 func formatPossession(ms uint32) string {

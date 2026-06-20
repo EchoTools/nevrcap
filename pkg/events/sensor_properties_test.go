@@ -325,48 +325,94 @@ func TestProperty_EventCountsMatchStatDeltas(t *testing.T) {
 			}
 		}
 
-		// Compute stat deltas from first to last frame appearance of each slot.
-		firstStats := make(map[int32]playerStatSnapshot)
-		lastStats := make(map[int32]playerStatSnapshot)
+		// Compute stat deltas per continuous stay. When a player departs and
+		// rejoins, the stat sensor clears its baseline (Bug 18 fix), so we
+		// must sum deltas across each separate stay rather than using a
+		// single first-to-last delta.
+		expectedCounts := make(map[int32]*statCounts)
+		present := make(map[int32]bool)                 // tracks who's currently in-frame
+		stayStart := make(map[int32]playerStatSnapshot) // baseline for current stay
+		lastSeen := make(map[int32]playerStatSnapshot)  // most recent snapshot
+
 		for _, frame := range seq.Frames {
+			currentSlots := make(map[int32]bool)
 			for _, team := range frame.GetSession().GetTeams() {
 				for _, p := range team.GetPlayers() {
 					slot := p.GetSlotNumber()
+					currentSlots[slot] = true
 					snap := snapshotFromStats(p.GetStats())
-					if _, ok := firstStats[slot]; !ok {
-						firstStats[slot] = snap
+
+					if !present[slot] {
+						// Player just joined (or first frame): record baseline.
+						stayStart[slot] = snap
+						present[slot] = true
 					}
-					lastStats[slot] = snap
+					lastSeen[slot] = snap
+				}
+			}
+
+			// When a player departs, finalize the delta for this stay and
+			// add it to the cumulative expected counts.
+			for slot := range present {
+				if !currentSlots[slot] {
+					base := stayStart[slot]
+					last := lastSeen[slot]
+					ensureStatCounts(expectedCounts, slot)
+					ec := expectedCounts[slot]
+					ec.goals += last.goals - base.goals
+					ec.saves += last.saves - base.saves
+					ec.steals += last.steals - base.steals
+					ec.stuns += last.stuns - base.stuns
+					ec.assists += last.assists - base.assists
+					ec.blocks += last.blocks - base.blocks
+					ec.shots += last.shotsTaken - base.shotsTaken
+
+					delete(present, slot)
+					delete(stayStart, slot)
+					delete(lastSeen, slot)
 				}
 			}
 		}
 
-		for slot, last := range lastStats {
-			first := firstStats[slot]
+		// Finalize any still-present players.
+		for slot := range present {
+			base := stayStart[slot]
+			last := lastSeen[slot]
+			ensureStatCounts(expectedCounts, slot)
+			ec := expectedCounts[slot]
+			ec.goals += last.goals - base.goals
+			ec.saves += last.saves - base.saves
+			ec.steals += last.steals - base.steals
+			ec.stuns += last.stuns - base.stuns
+			ec.assists += last.assists - base.assists
+			ec.blocks += last.blocks - base.blocks
+			ec.shots += last.shotsTaken - base.shotsTaken
+		}
+
+		for slot, expected := range expectedCounts {
 			ec := eventCounts[slot]
 			if ec == nil {
 				ec = &statCounts{}
 			}
-			delta := func(a, b int32) int32 { return b - a }
-			if delta(first.goals, last.goals) != ec.goals {
+			if expected.goals != ec.goals {
 				return false
 			}
-			if delta(first.saves, last.saves) != ec.saves {
+			if expected.saves != ec.saves {
 				return false
 			}
-			if delta(first.steals, last.steals) != ec.steals {
+			if expected.steals != ec.steals {
 				return false
 			}
-			if delta(first.stuns, last.stuns) != ec.stuns {
+			if expected.stuns != ec.stuns {
 				return false
 			}
-			if delta(first.assists, last.assists) != ec.assists {
+			if expected.assists != ec.assists {
 				return false
 			}
-			if delta(first.blocks, last.blocks) != ec.blocks {
+			if expected.blocks != ec.blocks {
 				return false
 			}
-			if delta(first.shotsTaken, last.shotsTaken) != ec.shots {
+			if expected.shots != ec.shots {
 				return false
 			}
 		}

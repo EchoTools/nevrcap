@@ -62,6 +62,8 @@ type EchoReplay struct {
 
 	// skippedFrames counts lines that failed to parse and were skipped.
 	skippedFrames uint32
+	// eof is set when ReadFrame encounters io.EOF.
+	eof bool
 }
 
 // SkippedFrames returns the number of frames skipped due to parse errors.
@@ -223,6 +225,10 @@ func (e *EchoReplay) GetBufferSize() int {
 
 // WriteReplayFrame writes a frame using optimized buffer operations (same approach as writer_replay_file.go)
 func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbySessionStateFrame) int {
+	if frame == nil || frame.Timestamp == nil {
+		return 0
+	}
+
 	startLen := dst.Len()
 
 	// 1. Timestamp
@@ -485,12 +491,13 @@ func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 		return nil, fmt.Errorf("scanner error: %w", err)
 	}
 
+	e.eof = true
 	return nil, io.EOF
 }
 
 // HasNext checks if there are more frames to read
 func (e *EchoReplay) HasNext() bool {
-	return e.scanner != nil && e.scanner.Err() == nil
+	return e.scanner != nil && !e.eof && e.scanner.Err() == nil
 }
 
 // parseFrameLine parses a single line into a frame
