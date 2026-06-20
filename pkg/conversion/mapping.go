@@ -35,6 +35,16 @@ var matchTypeMap = map[string]capturepb.MatchType{
 	"Echo_Arena_FFA":        capturepb.MatchType_MATCH_TYPE_FFA,
 }
 
+// pauseStateMap maps v1 PauseState.paused_state strings to v2 PauseState enum.
+var pauseStateMap = map[string]capturepb.PauseState{
+	"":                 capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"unpaused":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"paused":           capturepb.PauseState_PAUSE_STATE_PAUSED,
+	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED,
+	"unpausing":        capturepb.PauseState_PAUSE_STATE_UNPAUSING,
+	"autopause_replay": capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY,
+}
+
 // teamStringToRole maps v1 team name strings to v2 Role enum.
 var teamStringToRoleMap = map[string]capturepb.Role{
 	"blue":   capturepb.Role_ROLE_BLUE_TEAM,
@@ -141,9 +151,33 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 	return header
 }
 
+// FrameMapper holds state that persists across frames during conversion.
+type FrameMapper struct {
+	BaseTime    time.Time
+	RoundNumber int32
+}
+
+// MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
+// mapper's accumulated state. It updates RoundNumber when a RoundStarted
+// event is present on the frame.
+func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capturepb.Frame {
+	// Scan events for RoundStarted to update round number.
+	for _, evt := range v1f.GetEvents() {
+		if rs, ok := evt.GetEvent().(*telemetryv1.LobbySessionEvent_RoundStarted); ok {
+			m.RoundNumber = rs.RoundStarted.GetRoundNumber()
+		}
+	}
+
+	return mapFrame(v1f, m.BaseTime, m.RoundNumber)
+}
+
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame.
 // baseTime is the capture creation time, used to compute timestamp_offset_ms.
 func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capturepb.Frame {
+	return mapFrame(v1f, baseTime, 0)
+}
+
+func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32) *capturepb.Frame {
 	if v1f == nil {
 		return nil
 	}
@@ -166,6 +200,13 @@ func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capt
 		GameClock:    float32(session.GetGameClock()),
 		BluePoints:   session.GetBluePoints(),
 		OrangePoints: session.GetOrangePoints(),
+	}
+
+	// Map pause state.
+	if pause := session.GetPause(); pause != nil {
+		if ps, ok := pauseStateMap[pause.GetPausedState()]; ok {
+			ea.PauseState = ps
+		}
 	}
 
 	// Map disc.
@@ -198,6 +239,9 @@ func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capt
 
 	// Map events from v1.
 	ea.Events = mapEvents(v1f.GetEvents())
+
+	// Set round number from conversion state.
+	ea.RoundNumber = roundNumber
 
 	frame.Payload = &capturepb.Frame_EchoArena{EchoArena: ea}
 	return frame

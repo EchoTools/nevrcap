@@ -19,11 +19,12 @@ const (
 type RoundStartSensor struct {
 	prevGameStatus string
 	roundNumber    int32
+	firstFrame     bool
 }
 
 // NewRoundStartSensor creates a new RoundStartSensor
 func NewRoundStartSensor() *RoundStartSensor {
-	return &RoundStartSensor{}
+	return &RoundStartSensor{firstFrame: true}
 }
 
 // AddFrame processes a frame and returns a RoundStarted event if detected
@@ -34,15 +35,18 @@ func (s *RoundStartSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	currentStatus := frame.GetSession().GetGameStatus()
 
-	// Detect transition to round_start or playing from a non-playing state
-	if (currentStatus == GameStatusRoundStart || currentStatus == GameStatusPlaying) &&
-		s.prevGameStatus != GameStatusPlaying && s.prevGameStatus != GameStatusRoundStart &&
-		s.prevGameStatus != "" {
+	// Detect transition to round_start or playing from a non-playing state.
+	// On the first frame, treat an already-playing status as a round start
+	// (recording started mid-match).
+	isRoundActive := currentStatus == GameStatusRoundStart || currentStatus == GameStatusPlaying
+	isTransition := s.prevGameStatus != GameStatusPlaying && s.prevGameStatus != GameStatusRoundStart
 
+	if isRoundActive && (s.firstFrame || isTransition) {
 		// Calculate round number from round scores
 		session := frame.GetSession()
 		s.roundNumber = session.GetBlueRoundScore() + session.GetOrangeRoundScore() + 1
 
+		s.firstFrame = false
 		s.prevGameStatus = currentStatus
 		return &telemetry.LobbySessionEvent{
 			Event: &telemetry.LobbySessionEvent_RoundStarted{
@@ -53,6 +57,7 @@ func (s *RoundStartSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 		}
 	}
 
+	s.firstFrame = false
 	s.prevGameStatus = currentStatus
 	return nil
 }
@@ -61,6 +66,7 @@ func (s *RoundStartSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 func (s *RoundStartSensor) Reset() {
 	s.prevGameStatus = ""
 	s.roundNumber = 0
+	s.firstFrame = true
 }
 
 // PauseSensor detects pause/unpause events
@@ -89,10 +95,9 @@ func (s *PauseSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 
 	// Detect transitions
 	if currentState != s.prevPauseState {
-		defer func() { s.prevPauseState = currentState }()
-
 		// Transition to paused state
 		if isPausedState(currentState) && !isPausedState(s.prevPauseState) {
+			s.prevPauseState = currentState
 			return &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_RoundPaused{
 					RoundPaused: &telemetry.RoundPaused{
@@ -104,6 +109,7 @@ func (s *PauseSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 
 		// Transition from paused to unpaused
 		if !isPausedState(currentState) && isPausedState(s.prevPauseState) {
+			s.prevPauseState = currentState
 			return &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_RoundUnpaused{
 					RoundUnpaused: &telemetry.RoundUnpaused{

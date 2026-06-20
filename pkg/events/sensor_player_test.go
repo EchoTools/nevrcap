@@ -305,7 +305,7 @@ func TestEmoteSensor_NoEventWhenAlreadyPlaying(t *testing.T) {
 
 func TestDeterminePlayerRole_Spectator(t *testing.T) {
 	player := &enginev1.TeamMember{JerseyNumber: -1}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 0)
 	if role != telemetry.Role_ROLE_SPECTATOR {
 		t.Errorf("expected SPECTATOR, got %v", role)
 	}
@@ -313,7 +313,7 @@ func TestDeterminePlayerRole_Spectator(t *testing.T) {
 
 func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
 	player := &enginev1.TeamMember{SlotNumber: 1, JerseyNumber: 0}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 0)
 	if role != telemetry.Role_ROLE_BLUE_TEAM {
 		t.Errorf("expected BLUE_TEAM, got %v", role)
 	}
@@ -321,14 +321,14 @@ func TestDeterminePlayerRole_BlueTeam(t *testing.T) {
 
 func TestDeterminePlayerRole_OrangeTeam(t *testing.T) {
 	player := &enginev1.TeamMember{SlotNumber: 5, JerseyNumber: 1}
-	role := determinePlayerRole(player)
+	role := determinePlayerRole(player, 1)
 	if role != telemetry.Role_ROLE_ORANGE_TEAM {
 		t.Errorf("expected ORANGE_TEAM, got %v", role)
 	}
 }
 
 func TestDeterminePlayerRole_NilPlayer(t *testing.T) {
-	role := determinePlayerRole(nil)
+	role := determinePlayerRole(nil, 0)
 	if role != telemetry.Role_ROLE_UNSPECIFIED {
 		t.Errorf("expected UNSPECIFIED, got %v", role)
 	}
@@ -357,11 +357,17 @@ func TestExtractPlayersMap(t *testing.T) {
 		t.Errorf("expected 3 players, got %d", len(players))
 	}
 
-	if players[1].GetDisplayName() != "Player1" {
+	if players[1].player.GetDisplayName() != "Player1" {
 		t.Errorf("expected Player1 at slot 1")
 	}
+	if players[1].teamIdx != 0 {
+		t.Errorf("expected Player1 to be on team 0 (blue), got %d", players[1].teamIdx)
+	}
 
-	if players[5].GetDisplayName() != "Player3" {
+	if players[5].player.GetDisplayName() != "Player3" {
 		t.Errorf("expected Player3 at slot 5")
+	}
+	if players[5].teamIdx != 1 {
+		t.Errorf("expected Player3 to be on team 1 (orange), got %d", players[5].teamIdx)
 	}
 }

@@ -104,7 +104,9 @@ func New(opts ...Option) *AsyncDetector {
 		opt(ed)
 	}
 
-	ed.Start()
+	if !ed.synchronous {
+		ed.Start()
+	}
 	return ed
 }
 
@@ -118,16 +120,36 @@ func (ed *AsyncDetector) Start() {
 func (ed *AsyncDetector) Stop() {
 	ed.stopOnce.Do(func() {
 		ed.cancel()
-		ed.wg.Wait()
+		if !ed.synchronous {
+			ed.wg.Wait()
+		}
 		close(ed.eventsChan)
 	})
 }
 
 // Reset clears the event detector state
 func (ed *AsyncDetector) Reset() {
+	if ed.synchronous {
+		ed.resetSync()
+		return
+	}
 	select {
 	case ed.resetChan <- struct{}{}:
 	case <-ed.ctx.Done():
+	}
+}
+
+func (ed *AsyncDetector) resetSync() {
+	ed.writeIndex = 0
+	ed.frameCount = 0
+	ed.previousGameStatusFrame = nil
+	for i := range ed.frameBuffer {
+		ed.frameBuffer[i] = nil
+	}
+	for _, s := range ed.sensors {
+		if r, ok := s.(Resettable); ok {
+			r.Reset()
+		}
 	}
 }
 
