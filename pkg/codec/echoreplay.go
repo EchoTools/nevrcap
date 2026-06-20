@@ -313,6 +313,12 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 			numEnd++
 		}
 
+		// Skip empty strings (zero digits between quotes)
+		if numEnd == numStart {
+			offset = numEnd
+			continue
+		}
+
 		// Verify the number ends with a quote
 		if numEnd >= len(result) || result[numEnd] != '"' {
 			offset = numEnd
@@ -344,6 +350,14 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 	return result
 }
 
+func isEscaped(data []byte, i int) bool {
+	backslashes := 0
+	for j := i - 1; j >= 0 && data[j] == '\\'; j-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
+}
+
 // FixExponentNotation converts scientific notation floats to decimal notation
 // This ensures JSON output uses decimal format (e.g., 0.000001 instead of 1e-6)
 // while preserving full precision and not converting to strings
@@ -354,7 +368,7 @@ func FixExponentNotation(data []byte) []byte {
 
 	for i < len(data) {
 		// Handle string boundaries - don't process content inside JSON strings
-		if data[i] == '"' && (i == 0 || data[i-1] != '\\') {
+		if data[i] == '"' && !isEscaped(data, i) {
 			inString = !inString
 			result = append(result, data[i])
 			i++
