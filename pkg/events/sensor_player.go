@@ -61,6 +61,12 @@ func (s *PlayerJoinSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *PlayerJoinSensor) Reset() {
+	s.previousPlayers = make(map[int32]*enginev1.TeamMember)
+	s.pendingEvents = nil
+}
+
 // PlayerLeaveSensor detects when players leave the session
 type PlayerLeaveSensor struct {
 	previousPlayers map[int32]*enginev1.TeamMember
@@ -115,6 +121,12 @@ func (s *PlayerLeaveSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *t
 	}
 
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *PlayerLeaveSensor) Reset() {
+	s.previousPlayers = make(map[int32]*enginev1.TeamMember)
+	s.pendingEvents = nil
 }
 
 // PlayerTeamSwitchSensor detects when players switch teams
@@ -178,6 +190,12 @@ func (s *PlayerTeamSwitchSensor) AddFrame(frame *telemetry.LobbySessionStateFram
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *PlayerTeamSwitchSensor) Reset() {
+	s.previousPlayers = make(map[int32]*enginev1.TeamMember)
+	s.pendingEvents = nil
+}
+
 // EmoteSensor detects when players play emotes
 type EmoteSensor struct {
 	previousEmoteStates map[int32]bool // keyed by slot number
@@ -235,6 +253,12 @@ func (s *EmoteSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 	}
 
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *EmoteSensor) Reset() {
+	s.previousEmoteStates = make(map[int32]bool)
+	s.pendingEvents = nil
 }
 
 // extractPlayersMap extracts all players from a session into a map keyed by slot

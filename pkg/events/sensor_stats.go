@@ -92,12 +92,10 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	}
 
 	// Update previous possessor for next frame
-	if s.initialized {
-		s.prevPossessorSlot = currentPossessorSlot
-	} else {
-		s.prevPossessorSlot = currentPossessorSlot
+	if !s.initialized {
 		s.initialized = true
 	}
+	s.prevPossessorSlot = currentPossessorSlot
 
 	// Return first pending event if any were generated
 	if len(s.pendingEvents) > 0 {
@@ -107,6 +105,14 @@ func (s *StatEventSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *tel
 	}
 
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *StatEventSensor) Reset() {
+	s.prevStats = make(map[int32]playerStatSnapshot)
+	s.pendingEvents = nil
+	s.prevPossessorSlot = -1
+	s.initialized = false
 }
 
 // findPossessorSlotFromSession finds the slot of the player who has possession, returns -1 if none
@@ -125,17 +131,24 @@ func findPossessorSlotFromSession(session *enginev1.SessionResponse) int32 {
 func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatSnapshot, prevPossessorSlot int32) {
 	// Goals
 	if current.goals > prev.goals {
+		goalCount := current.goals - prev.goals
 		pointsScored := current.points - prev.points
 		if pointsScored <= 0 {
-			pointsScored = 2 // Default to 2 points if we can't determine
+			pointsScored = 2 * goalCount // Default to 2 points per goal
 		}
-		for i := int32(0); i < current.goals-prev.goals; i++ {
+		pointsPerGoal := pointsScored / goalCount
+		remainder := pointsScored % goalCount
+		for i := int32(0); i < goalCount; i++ {
+			pts := pointsPerGoal
+			if i == 0 {
+				pts += remainder // first goal gets the remainder
+			}
 			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
 				Event: &telemetry.LobbySessionEvent_PlayerGoal{
 					PlayerGoal: &telemetry.PlayerGoal{
 						PlayerSlot: slot,
-						TotalGoals: current.goals,
-						Points:     pointsScored,
+						TotalGoals: prev.goals + i + 1,
+						Points:     pts,
 					},
 				},
 			})

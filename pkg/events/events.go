@@ -197,6 +197,11 @@ func (ed *AsyncDetector) processLoop() {
 			for i := range ed.frameBuffer {
 				ed.frameBuffer[i] = nil
 			}
+			for _, s := range ed.sensors {
+				if r, ok := s.(Resettable); ok {
+					r.Reset()
+				}
+			}
 
 		case frame := <-ed.inputChan:
 			// Add frame to buffer

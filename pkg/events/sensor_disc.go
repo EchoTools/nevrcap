@@ -49,6 +49,12 @@ func (s *DiscPossessionSensor) AddFrame(frame *telemetry.LobbySessionStateFrame)
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *DiscPossessionSensor) Reset() {
+	s.prevPossessorSlot = -1
+	s.initialized = false
+}
+
 // DiscThrownSensor detects when the disc is thrown using LastThrowInfo
 type DiscThrownSensor struct {
 	prevLastThrow *enginev1.LastThrowInfo
@@ -107,6 +113,12 @@ func (s *DiscThrownSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *DiscThrownSensor) Reset() {
+	s.prevLastThrow = nil
+	s.prevPossessor = -1
+}
+
 // DiscCaughtSensor detects when a player catches the disc
 type DiscCaughtSensor struct {
 	prevPossessorSlot int32
@@ -152,6 +164,12 @@ func (s *DiscCaughtSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	s.prevPossessorSlot = currentSlot
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *DiscCaughtSensor) Reset() {
+	s.prevPossessorSlot = -1
+	s.initialized = false
 }
 
 // findPossessorSlot finds the slot of the player who has possession, returns -1 if none

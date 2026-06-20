@@ -69,6 +69,15 @@ func (s *ScoreboardSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	return nil
 }
 
+// Reset clears internal state for a new session.
+func (s *ScoreboardSensor) Reset() {
+	s.prevBluePoints = 0
+	s.prevOrangePoints = 0
+	s.prevBlueRoundScore = 0
+	s.prevOrangeRoundScore = 0
+	s.initialized = false
+}
+
 // GoalScoredSensor detects when a goal is scored using LastScore data
 type GoalScoredSensor struct {
 	prevLastScore *enginev1.LastScore
@@ -93,17 +102,22 @@ func (s *GoalScoredSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	// Detect new goal by comparing with previous
 	if s.prevLastScore == nil || !lastScoreEqual(s.prevLastScore, lastScore) {
-		s.prevLastScore = lastScore
+		s.prevLastScore = proto.Clone(lastScore).(*enginev1.LastScore)
 		return &telemetry.LobbySessionEvent{
 			Event: &telemetry.LobbySessionEvent_GoalScored{
 				GoalScored: &telemetry.GoalScored{
-					ScoreDetails: lastScore,
+					ScoreDetails: proto.Clone(lastScore).(*enginev1.LastScore),
 				},
 			},
 		}
 	}
 
 	return nil
+}
+
+// Reset clears internal state for a new session.
+func (s *GoalScoredSensor) Reset() {
+	s.prevLastScore = nil
 }
 
 // lastScoreEqual compares two LastScore objects for equality using
