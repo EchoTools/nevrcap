@@ -89,6 +89,14 @@ func (s *PauseSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 
 	pause := frame.GetSession().GetPause()
 	if pause == nil {
+		if isPausedState(s.prevPauseState) {
+			s.prevPauseState = ""
+			return &telemetry.LobbySessionEvent{
+				Event: &telemetry.LobbySessionEvent_RoundUnpaused{
+					RoundUnpaused: &telemetry.RoundUnpaused{},
+				},
+			}
+		}
 		s.prevPauseState = ""
 		return nil
 	}

@@ -39,7 +39,7 @@ with updated duration and indexes.`,
 
 	cmd.Flags().Uint32Var(&startMs, "start", 0, "start time in milliseconds (inclusive)")
 	cmd.Flags().Uint32Var(&endMs, "end", 0, "end time in milliseconds (inclusive, 0 = no limit)")
-	cmd.Flags().StringVarP(&output, "o", "o", "", "output file path")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path")
 
 	return cmd
 }
