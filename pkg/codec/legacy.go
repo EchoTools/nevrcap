@@ -116,6 +116,7 @@ func (z *LegacyReader) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (boo
 		return false, err
 	}
 
+	proto.Reset(frame)
 	err = proto.Unmarshal(data, frame)
 	if err != nil {
 		return false, err

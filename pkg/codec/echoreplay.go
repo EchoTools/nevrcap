@@ -14,6 +14,7 @@ import (
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -173,8 +174,9 @@ func (e *EchoReplay) WriteFrame(frame *telemetry.LobbySessionStateFrame) error {
 		return ErrCodecNotConfiguredForWriting
 	}
 
-	// Use the optimized writeReplayFrame method
-	e.WriteReplayFrame(e.frameBuffer, frame)
+	if n := e.WriteReplayFrame(e.frameBuffer, frame); n == 0 {
+		return fmt.Errorf("failed to marshal frame")
+	}
 	return nil
 }
 
@@ -184,8 +186,10 @@ func (e *EchoReplay) WriteFrameBatch(frames []*telemetry.LobbySessionStateFrame)
 		return ErrCodecNotConfiguredForWriting
 	}
 
-	for _, frame := range frames {
-		e.WriteReplayFrame(e.frameBuffer, frame)
+	for i, frame := range frames {
+		if n := e.WriteReplayFrame(e.frameBuffer, frame); n == 0 {
+			return fmt.Errorf("failed to marshal frame at index %d", i)
+		}
 	}
 	return nil
 }
@@ -631,6 +635,15 @@ func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool,
 
 // parseFrameLineTo parses a single line into the provided frame object
 func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySessionStateFrame) error {
+	// Reset sub-messages before unmarshaling to prevent protojson merge behavior
+	// from accumulating repeated fields across calls.
+	if frame.Session != nil {
+		proto.Reset(frame.Session)
+	}
+	if frame.PlayerBones != nil {
+		proto.Reset(frame.PlayerBones)
+	}
+
 	// Find tab positions to avoid bytes.Split allocation
 	firstTab := bytes.IndexByte(line, '\t')
 	if firstTab == -1 {
