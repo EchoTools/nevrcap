@@ -14,6 +14,7 @@ func main() {
 	root.AddCommand(newConvertCommand())
 	root.AddCommand(newShowCommand())
 	root.AddCommand(newReplayCommand())
+	root.AddCommand(newVerifyCommand())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
