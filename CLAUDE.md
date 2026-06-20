@@ -15,11 +15,13 @@ go vet ./...               # static analysis
 gofmt -l .                 # check formatting
 ```
 
-The `tapedeck` CLI lives in `cmd/tapedeck/` (convert, show, replay commands).
+The `tapedeck` CLI lives in `cmd/tapedeck/` (convert, show, replay, verify, stats, diff, trim commands).
+
+Build runner: `just` (see justfile). `just` runs fmt, vet, lint, test by default.
 
 ## Architecture
 
-### `pkg/codecs`
+### `pkg/codec`
 
 Three codec implementations for telemetry frame serialization:
 
@@ -34,15 +36,15 @@ Three codec implementations for telemetry frame serialization:
 
 ### v1 vs v2 tape format
 
-| Property | v1 (TapeV1) | v2 (TapeV2) |
-|----------|-------------|-------------|
-| Envelope | Raw protobuf messages | `telemetry.v2.Envelope` oneof |
-| Header | `TelemetryHeader` | `CaptureHeader` with metadata map |
-| Frames | `LobbySessionStateFrame` | `Frame` with game-agnostic timing + oneof payload |
-| Footer | None | `CaptureFooter` with frame count, duration, keyframe/event indexes |
-| Spatial types | `repeated double` (64-bit) | `spatial.v1` float32 + bytes for bones |
-| Extension | `.tape` / `.nevrcap` | `.tape` |
-| Random access | No | Footer enables efficient scanning (true seeking needs Zstd seekable frames) |
+| Property      | v1 (TapeV1)                | v2 (TapeV2)                                                                 |
+| ------------- | -------------------------- | --------------------------------------------------------------------------- |
+| Envelope      | Raw protobuf messages      | `telemetry.v2.Envelope` oneof                                               |
+| Header        | `TelemetryHeader`          | `CaptureHeader` with metadata map                                           |
+| Frames        | `LobbySessionStateFrame`   | `Frame` with game-agnostic timing + oneof payload                           |
+| Footer        | None                       | `CaptureFooter` with frame count, duration, keyframe/event indexes          |
+| Spatial types | `repeated double` (64-bit) | `spatial.v1` float32 + bytes for bones                                      |
+| Extension     | `.tape` / `.nevrcap`       | `.tape`                                                                     |
+| Random access | No                         | Footer enables efficient scanning (true seeking needs Zstd seekable frames) |
 
 ### `pkg/conversion`
 
@@ -64,8 +66,7 @@ JSON frame data, runs event detection, and produces enriched protobuf frames.
 ## Conventions
 
 - **Round-trip fidelity**: `decode(encode(x)) == x` for the tape format.
-  Any codec change must preserve this property. Round-trip tests exist in
-  `pkg/codecs/codec_roundtrip_test.go`.
+  Any codec change must preserve this property.
 - **File extensions**: `.tape` is canonical. `.nevrcap` is accepted as legacy input.
 - **EchoReplay compatibility**: The echoreplay writer applies `FixProtojsonUint64Encoding`
   and `FixExponentNotation` to match the original game engine output exactly.
