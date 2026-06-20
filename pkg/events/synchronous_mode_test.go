@@ -16,6 +16,7 @@ func TestSynchronousMode_BlockingBug(t *testing.T) {
 	detector := New(
 		WithSynchronousProcessing(),
 		WithEventsChannelSize(0), // No buffer - immediate blocking if sending to channel
+		WithSensors(NewMatchEndSensor()),
 	)
 	defer detector.Stop()
 
@@ -49,7 +50,7 @@ func TestSynchronousMode_BlockingBug(t *testing.T) {
 // TestSynchronousMode_ImmediateProcessing validates that synchronous mode
 // processes frames immediately in the caller's goroutine without delay.
 func TestSynchronousMode_ImmediateProcessing(t *testing.T) {
-	detector := New(WithSynchronousProcessing())
+	detector := New(WithSynchronousProcessing(), WithSensors(NewMatchEndSensor()))
 	defer detector.Stop()
 
 	// Start a consumer
@@ -102,7 +103,7 @@ func TestSynchronousMode_NoBackgroundGoroutine(t *testing.T) {
 // TestAsyncMode_UsesBackgroundGoroutine validates that async mode still works
 // as expected with background processing.
 func TestAsyncMode_UsesBackgroundGoroutine(t *testing.T) {
-	detector := New() // Default is async mode
+	detector := New(WithSensors(NewMatchEndSensor())) // Default is async mode
 	defer detector.Stop()
 
 	eventReceived := make(chan struct{})
@@ -134,6 +135,7 @@ func TestSynchronousMode_MultipleEventsWithConsumer(t *testing.T) {
 	detector := New(
 		WithSynchronousProcessing(),
 		WithEventsChannelSize(10), // Adequate buffer to hold events
+		WithSensors(NewRoundEndSensor(), NewMatchEndSensor()),
 	)
 	defer detector.Stop()
 
@@ -184,18 +186,24 @@ func TestSynchronousMode_DropsEventsWhenChannelFull(t *testing.T) {
 	detector := New(
 		WithSynchronousProcessing(),
 		WithEventsChannelSize(1), // Small buffer
+		WithSensors(NewMatchEndSensor()),
 	)
 	defer detector.Stop()
 
-	// Process multiple frames rapidly without a consumer
-	// This should NOT block, even though events will be dropped
+	// Process multiple frames rapidly without a consumer.
+	// Alternate between playing and post_match to generate multiple transitions.
+	// This should NOT block, even though events will be dropped.
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 5; i++ {
+		for i := 0; i < 10; i++ {
+			status := "playing"
+			if i%2 == 1 {
+				status = GameStatusPostMatch
+			}
 			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
 				Session: &enginev1.SessionResponse{
-					GameStatus: GameStatusPostMatch,
+					GameStatus: status,
 				},
 			})
 		}
@@ -224,7 +232,7 @@ drainLoop:
 	}
 
 	// We should have received at least 1 event (the buffer held one)
-	// but not all 5 (some were dropped due to non-blocking send)
+	// but not all 5 transitions (some were dropped due to non-blocking send)
 	if receivedCount == 0 {
 		t.Fatal("Expected at least 1 event to be buffered")
 	}

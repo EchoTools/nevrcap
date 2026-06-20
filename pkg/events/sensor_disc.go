@@ -91,12 +91,12 @@ func (s *DiscThrownSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	// Detect new throw by comparing with previous
 	if s.prevLastThrow == nil || !lastThrowEqual(s.prevLastThrow, lastThrow) {
+		// Use the pre-throw possessor. Don't fall back to currentPossessor
+		// because after a throw, possession has already changed to the
+		// catcher or been released.
 		throwerSlot := s.prevPossessor
-		if throwerSlot == -1 {
-			throwerSlot = currentPossessor
-		}
 
-		s.prevLastThrow = lastThrow
+		s.prevLastThrow = proto.Clone(lastThrow).(*enginev1.LastThrowInfo)
 		s.prevPossessor = currentPossessor
 
 		return &telemetry.LobbySessionEvent{
@@ -149,16 +149,13 @@ func (s *DiscCaughtSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	// A catch occurs when possession changes from no one (-1) to someone,
 	// or from one player to another (not the same player)
 	if currentSlot != -1 && s.prevPossessorSlot != currentSlot {
-		// Only emit catch if there was a transition (disc was free or with someone else)
-		if s.prevPossessorSlot == -1 || s.prevPossessorSlot != currentSlot {
-			s.prevPossessorSlot = currentSlot
-			return &telemetry.LobbySessionEvent{
-				Event: &telemetry.LobbySessionEvent_DiscCaught{
-					DiscCaught: &telemetry.DiscCaught{
-						PlayerSlot: currentSlot,
-					},
+		s.prevPossessorSlot = currentSlot
+		return &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_DiscCaught{
+				DiscCaught: &telemetry.DiscCaught{
+					PlayerSlot: currentSlot,
 				},
-			}
+			},
 		}
 	}
 

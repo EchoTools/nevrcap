@@ -3,6 +3,7 @@ package events
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
@@ -59,10 +60,8 @@ func WithSynchronousProcessing() Option {
 	}
 }
 
-// AsyncDetector detects post_match events
+// AsyncDetector detects events from frame streams
 type AsyncDetector struct {
-	previousGameStatusFrame *telemetry.LobbySessionStateFrame
-
 	// Ring buffer for frames
 	frameBuffer []*telemetry.LobbySessionStateFrame
 	writeIndex  int // Current write position
@@ -83,6 +82,20 @@ type AsyncDetector struct {
 	eventBuffer []*telemetry.LobbySessionEvent
 
 	synchronous bool
+
+	// Drop counters for monitoring channel back-pressure.
+	droppedFrames uint64
+	droppedEvents uint64
+}
+
+// DroppedFrames returns the number of frames dropped due to a full input channel.
+func (ed *AsyncDetector) DroppedFrames() uint64 {
+	return atomic.LoadUint64(&ed.droppedFrames)
+}
+
+// DroppedEvents returns the number of event batches dropped due to a full events channel.
+func (ed *AsyncDetector) DroppedEvents() uint64 {
+	return atomic.LoadUint64(&ed.droppedEvents)
 }
 
 var _ Detector = (*AsyncDetector)(nil)
@@ -142,7 +155,6 @@ func (ed *AsyncDetector) Reset() {
 func (ed *AsyncDetector) resetSync() {
 	ed.writeIndex = 0
 	ed.frameCount = 0
-	ed.previousGameStatusFrame = nil
 	for i := range ed.frameBuffer {
 		ed.frameBuffer[i] = nil
 	}
@@ -166,7 +178,8 @@ func (ed *AsyncDetector) ProcessFrame(frame *telemetry.LobbySessionStateFrame) {
 	case <-ed.ctx.Done():
 		// Detector is stopping, ignore frame
 	default:
-		// Channel full, drop frame (could also block or log)
+		// Channel full, drop frame
+		atomic.AddUint64(&ed.droppedFrames, 1)
 	}
 }
 
@@ -197,6 +210,7 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		default:
 			// Channel is full, drop events rather than blocking.
 			// This maintains the synchronous processing guarantee.
+			atomic.AddUint64(&ed.droppedEvents, 1)
 		}
 	}
 }
@@ -215,7 +229,6 @@ func (ed *AsyncDetector) processLoop() {
 		case <-ed.resetChan:
 			ed.writeIndex = 0
 			ed.frameCount = 0
-			ed.previousGameStatusFrame = nil
 			for i := range ed.frameBuffer {
 				ed.frameBuffer[i] = nil
 			}
@@ -329,12 +342,6 @@ func (ed *AsyncDetector) detectEvents(dst []*telemetry.LobbySessionEvent) []*tel
 			dst = append(dst, event)
 			frame = nil
 		}
-	}
-
-	for _, fn := range [...]detectionFunction{
-		ed.detectPostMatchEvent,
-	} {
-		dst = fn(ed.lastFrameIndex(), dst)
 	}
 
 	return dst

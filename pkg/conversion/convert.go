@@ -135,7 +135,14 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	}
 
 	v2Header := MapHeaderFromSession(v1Header, firstFrame.GetSession())
-	mapper := &FrameMapper{BaseTime: v1Header.GetCreatedAt().AsTime()}
+
+	baseTime := v1Header.GetCreatedAt().AsTime()
+	if baseTime.IsZero() {
+		// Header has no creation timestamp; fall back to the first frame's
+		// timestamp to avoid uint32 wrap in offset calculations.
+		baseTime = firstFrame.GetTimestamp().AsTime()
+	}
+	mapper := &FrameMapper{BaseTime: baseTime}
 
 	writer, err := codec.NewWriter(outputPath)
 	if err != nil {

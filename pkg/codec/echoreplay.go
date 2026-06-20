@@ -59,6 +59,14 @@ type EchoReplay struct {
 	scratchBuf []byte
 	// Flag to track if Finalize has been called
 	finalized bool
+
+	// skippedFrames counts lines that failed to parse and were skipped.
+	skippedFrames uint32
+}
+
+// SkippedFrames returns the number of frames skipped due to parse errors.
+func (e *EchoReplay) SkippedFrames() uint32 {
+	return e.skippedFrames
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -430,8 +438,12 @@ func (e *EchoReplay) Finalize() error {
 	}
 	e.finalized = true
 
-	// Create the main replay file in the zip - use the filename
+	// Create the main replay file in the zip - strip extension to match
+	// what the reader's initScanner expects when looking up by base name
 	baseFilename := filepath.Base(e.filename)
+	if ext := filepath.Ext(baseFilename); ext != "" {
+		baseFilename = baseFilename[:len(baseFilename)-len(ext)]
+	}
 	replayFile, err := e.zipWriter.Create(baseFilename)
 	if err != nil {
 		return err
@@ -460,6 +472,7 @@ func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 
 		frame, err := e.parseFrameLine(line)
 		if err != nil {
+			e.skippedFrames++
 			continue // Skip invalid lines
 		}
 
@@ -618,6 +631,7 @@ func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool,
 		}
 
 		if err := e.parseFrameLineTo(line, frame); err != nil {
+			e.skippedFrames++
 			continue // Skip invalid lines
 		}
 

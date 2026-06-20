@@ -13,6 +13,8 @@ const (
 	GameStatusScore      = "score"
 	GameStatusPaused     = "paused"
 	GameStatusUnpausing  = "unpausing"
+	GameStatusPostMatch  = "post_match"
+	GameStatusRoundOver  = "round_over"
 )
 
 // RoundStartSensor detects when a round starts

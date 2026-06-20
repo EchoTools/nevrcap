@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"sort"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
@@ -111,9 +112,16 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 
 // Close writes the footer, closes the zstd encoder, and closes the file.
 func (w *Writer) Close() error {
-	// Build event index entries.
+	// Build event index entries in deterministic order.
+	types := make([]capturepb.EventType, 0, len(w.eventIndex))
+	for t := range w.eventIndex {
+		types = append(types, t)
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
+
 	var eventEntries []*capturepb.EventIndexEntry
-	for eventType, frameIndices := range w.eventIndex {
+	for _, eventType := range types {
+		frameIndices := w.eventIndex[eventType]
 		eventEntries = append(eventEntries, &capturepb.EventIndexEntry{
 			EventType:    eventType,
 			FrameIndices: frameIndices,

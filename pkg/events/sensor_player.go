@@ -224,9 +224,13 @@ func (s *EmoteSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 		return nil
 	}
 
+	// Build a set of current slots to clean up stale entries after.
+	currentSlots := make(map[int32]struct{})
+
 	for _, team := range frame.GetSession().GetTeams() {
 		for _, player := range team.GetPlayers() {
 			slot := player.GetSlotNumber()
+			currentSlots[slot] = struct{}{}
 			isPlaying := player.GetIsEmotePlaying()
 			wasPlaying := s.previousEmoteStates[slot]
 
@@ -242,6 +246,13 @@ func (s *EmoteSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *telemet
 				})
 			}
 			s.previousEmoteStates[slot] = isPlaying
+		}
+	}
+
+	// Remove stale entries for players who are no longer present.
+	for slot := range s.previousEmoteStates {
+		if _, exists := currentSlots[slot]; !exists {
+			delete(s.previousEmoteStates, slot)
 		}
 	}
 

@@ -157,6 +157,11 @@ type FrameMapper struct {
 	RoundNumber int32
 }
 
+// Reset clears the mapper's accumulated state for a new conversion session.
+func (m *FrameMapper) Reset() {
+	m.RoundNumber = 0
+}
+
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
 // mapper's accumulated state. It updates RoundNumber when a RoundStarted
 // event is present on the frame.
