@@ -527,9 +527,11 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 		return nil, fmt.Errorf("invalid timestamp format: %s", string(parts[0]))
 	}
 
-	// Parse session data
+	// Parse session data. The Spark-format recorder emits the
+	// *_team_restart_request fields as JSON booleans, which protojson rejects
+	// for their int32 proto type; coerce them to numbers first.
 	sessionResponse := &enginev1.SessionResponse{}
-	if err := e.unmarshaler.Unmarshal(parts[1], sessionResponse); err != nil {
+	if err := e.unmarshaler.Unmarshal(FixBooleanInt32Fields(parts[1]), sessionResponse); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
@@ -713,11 +715,13 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		}
 	}
 
-	// Parse session data
+	// Parse session data. The Spark-format recorder emits the
+	// *_team_restart_request fields as JSON booleans, which protojson rejects
+	// for their int32 proto type; coerce them to numbers first.
 	if frame.Session == nil {
 		frame.Session = &enginev1.SessionResponse{}
 	}
-	if err := e.unmarshaler.Unmarshal(sessionBytes, frame.Session); err != nil {
+	if err := e.unmarshaler.Unmarshal(FixBooleanInt32Fields(sessionBytes), frame.Session); err != nil {
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
