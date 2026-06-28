@@ -7,12 +7,52 @@ write or change.
 
 ---
 
-## Why this matters
+## What `tape` is (read this — it's how you make good calls, not just blind edits)
 
-`tape` is the keystone format. Logos reads tapes. nevr-runtime writes them.
-An active cheater investigation depends on the tape being an *honest* record
-of a match. If the conversion silently drops fields, every consumer
-downstream inherits a lie. The format has to be faithful.
+`tape` is a **high-performance telemetry codec library + CLI (`tapedeck`) for
+Echo VR session data**. Module `github.com/echotools/tape`. It is a **core
+dependency of `nevr-agent`, `nevr-anticheat`, and `nevr-profiler`.** The
+anticheat is the live cheater investigation — if the capture isn't a faithful
+record of the match, the anticheat is reasoning over a lie. Faithfulness is
+the product.
+
+**The three formats it speaks:**
+
+- **EchoReplay** (`.echoreplay`) — the *legacy* on-disk format produced by the
+  game engine: a ZIP wrapping line-oriented `timestamp\tsessionJSON[\tbonesJSON]`.
+  The `sessionJSON` is a **`SessionResponse`** — the game's `/session` API
+  payload, the per-frame source of truth (teams, players, disc, scores, clock,
+  possession, …). This is the *input* most data-loss bugs touch.
+- **TapeV1** — zstd-compressed, length-delimited `telemetry.v1` protobuf:
+  a `TelemetryHeader` + sequential `LobbySessionStateFrame`. Spatial as 64-bit
+  `repeated double`. Extensions `.tape` / `.nevrcap` (legacy).
+- **TapeV2** (current) — zstd-compressed, length-delimited
+  `telemetry.v2.Envelope` oneof: `CaptureHeader` + `Frame` (game-agnostic
+  timing + oneof payload) + `CaptureFooter` (frame count, duration,
+  keyframe/event seek indexes). Spatial as `spatial.v1` **float32** (~73.5%
+  smaller). This is where the "no v2 counterpart" bugs live.
+
+**The packages:**
+- `pkg/codec` — readers/writers for the three formats above.
+- `pkg/conversion` — maps between them; `mapping.go` turns a `SessionResponse`
+  into proto frames, running event detection so the output is enriched.
+- `pkg/events` — sensors walk sequential frames and emit `LobbySessionEvent`
+  (player joins, goals, gamestate). The drain loop in BUG-1 is here.
+- `pkg/processing` — the 600 Hz frame processor.
+
+**Invariants you must NOT break while fixing data loss:**
+1. **Round-trip fidelity:** `decode(encode(x)) == x` for the tape format. Any
+   codec/mapping change must preserve it — there are golden tests; keep them green.
+2. **Byte-level EchoReplay compatibility:** the echoreplay writer applies
+   `FixProtojsonUint64Encoding` and `FixExponentNotation` to match the engine's
+   output exactly. **Third-party parsers depend on these bytes.** Do not perturb them.
+3. **Performance:** this is a hot path (built for up to 600 Hz). No per-frame
+   allocations you can avoid, no needless copies. Faithful *and* fast.
+
+**The v2 proto is NOT in this repo.** It's generated from `nevr-proto`
+(`buf.build/echotools/nevr-api`) and vendored as read-only Go types under
+`buf.build/gen/go/...`. You **cannot** add a v2 field here. That is the hard
+wall behind the schema-gap fork below.
 
 ## The prime directive: VERIFY before you FIX. Trust nothing.
 
