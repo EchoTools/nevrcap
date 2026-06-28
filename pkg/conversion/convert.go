@@ -249,6 +249,14 @@ func processAndWriteFrame(
 
 // drainEvents pulls all pending events from the processor channel and
 // appends them to the v1 frame's event list (before mapping to v2).
+//
+// It runs after every DetectEvents call (see processAndWriteFrame), so the
+// events channel is emptied once per frame and never holds more than the single
+// batch that frame produced. The channel buffers 10 batches (pkg/events/events.go:117),
+// so its depth never approaches capacity and the synchronous detector's
+// full-channel drop branch (pkg/events/events.go:219-223) is unreachable during
+// conversion: no events are lost. (Verified by
+// TestSyncDetector_ConversionPatternNoEventLoss.)
 func drainEvents(processor *processing.Processor, frame *telemetryv1.LobbySessionStateFrame) {
 	for {
 		select {
