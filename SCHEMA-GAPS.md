@@ -78,6 +78,21 @@ Source: `engine.v1 SessionResponse` (`engine_http.pb.go:1898-1974`). Drop site:
 Note: `LastThrow` (field 20) and `LastScore` (field 31) on `SessionResponse` are
 not lost — their data flows through `DiscThrown` / `GoalScored` events.
 
+Note: `BlueRoundScore` (field 11), `OrangeRoundScore` (field 17), and
+`GameClockDisplay` (field 3) **partially** survive via the v2
+`ScoreboardUpdated` event, parallel to the `LastThrow`/`LastScore` note above.
+The `ScoreboardSensor` reads all three off the session
+(`pkg/events/sensor_scoreboard.go:32-34`) and emits them
+(`pkg/events/sensor_scoreboard.go:59-63`); `mapEvent` carries them into the v2
+`ScoreboardUpdated` (`pkg/conversion/mapping.go:582-589`). This is **not**
+per-frame preservation: the event fires only when a points/round-score value
+*changes* (`pkg/events/sensor_scoreboard.go:46-49`), so only score-change
+snapshots are kept. `BlueRoundScore`/`OrangeRoundScore` changes are therefore
+captured, but the per-frame value of each field on `EchoArenaFrame` is still
+lost. `GameClockDisplay` survives least of all — it merely rides along on the
+score-change event, so it is sampled only at the instants a score changes, not
+on any clock tick. The table rows above stand for the per-frame loss.
+
 ## BUG-6 — Team-level fields with no home
 
 Source: `engine.v1 Team` (`engine_http.pb.go` — `TeamName` field 2,
