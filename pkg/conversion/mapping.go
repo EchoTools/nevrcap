@@ -150,7 +150,47 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 	eaHeader.TournamentMatch = session.GetTournamentMatch()
 	eaHeader.TotalRoundCount = session.GetTotalRoundCount()
 
+	if roster := buildInitialRoster(session.GetTeams()); len(roster) > 0 {
+		eaHeader.InitialRoster = roster
+	}
+
 	return header
+}
+
+// buildInitialRoster builds the v2 initial roster from the session's teams.
+// Team order is preserved (team 0 = blue, team 1 = orange); any other team
+// index, or a jersey number of -1, marks a spectator.
+func buildInitialRoster(teams []*enginev1.Team) []*capturepb.PlayerInfo {
+	var roster []*capturepb.PlayerInfo
+	for teamIdx, team := range teams {
+		for _, m := range team.GetPlayers() {
+			roster = append(roster, &capturepb.PlayerInfo{
+				Slot:          m.GetSlotNumber(),
+				AccountNumber: m.GetAccountNumber(),
+				DisplayName:   m.GetDisplayName(),
+				Role:          rosterRole(teamIdx, m.GetJerseyNumber()),
+				JerseyNumber:  m.GetJerseyNumber(),
+				Level:         m.GetLevel(),
+			})
+		}
+	}
+	return roster
+}
+
+// rosterRole maps a team index and jersey number to a v2 Role. A jersey number
+// of -1 marks a spectator regardless of team slot.
+func rosterRole(teamIdx int, jersey int32) capturepb.Role {
+	if jersey == -1 {
+		return capturepb.Role_ROLE_SPECTATOR
+	}
+	switch teamIdx {
+	case 0:
+		return capturepb.Role_ROLE_BLUE_TEAM
+	case 1:
+		return capturepb.Role_ROLE_ORANGE_TEAM
+	default:
+		return capturepb.Role_ROLE_SPECTATOR
+	}
 }
 
 // FrameMapper holds state that persists across frames during conversion.

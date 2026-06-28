@@ -102,10 +102,11 @@ func TestGoalScored_DisplayNamesDropped(t *testing.T) {
 	}
 }
 
-// BUG-3: InitialRoster is always nil after MapHeaderFromSession.
-// EchoArenaHeader has an InitialRoster field for recording the initial set of
-// players, but MapHeaderFromSession never populates it.
-func TestMapHeaderFromSession_InitialRosterNil(t *testing.T) {
+// BUG-4: InitialRoster must be populated by MapHeaderFromSession from the
+// session's teams. EchoArenaHeader.InitialRoster is the v2 home for the initial
+// player set (wire-up); tapedeck stats already consumes it. Team index 0 is
+// blue, 1 is orange; jersey number -1 marks a spectator.
+func TestMapHeaderFromSession_InitialRosterPopulated(t *testing.T) {
 	now := time.Now().UTC()
 	v1h := &telemetryv1.TelemetryHeader{
 		CaptureId: "test",
@@ -123,14 +124,22 @@ func TestMapHeaderFromSession_InitialRosterNil(t *testing.T) {
 			{
 				TeamName: "BLUE",
 				Players: []*enginev1.TeamMember{
-					{SlotNumber: 0, DisplayName: "P1", AccountNumber: 1001},
-					{SlotNumber: 1, DisplayName: "P2", AccountNumber: 1002},
+					{SlotNumber: 0, DisplayName: "P1", AccountNumber: 1001, JerseyNumber: 10, Level: 20},
+					{SlotNumber: 1, DisplayName: "P2", AccountNumber: 1002, JerseyNumber: 11, Level: 21},
 				},
 			},
 			{
 				TeamName: "ORANGE",
 				Players: []*enginev1.TeamMember{
-					{SlotNumber: 5, DisplayName: "P3", AccountNumber: 2001},
+					{SlotNumber: 5, DisplayName: "P3", AccountNumber: 2001, JerseyNumber: 5, Level: 30},
+				},
+			},
+			{
+				// Third team slot (index >= 2) and jersey -1 both mark spectators.
+				TeamName: "SPECTATORS",
+				Players: []*enginev1.TeamMember{
+					{SlotNumber: 10, DisplayName: "Spec1", AccountNumber: 3001, JerseyNumber: 0, Level: 1},
+					{SlotNumber: 11, DisplayName: "Spec2", AccountNumber: 3002, JerseyNumber: -1, Level: 2},
 				},
 			},
 		},
@@ -146,12 +155,51 @@ func TestMapHeaderFromSession_InitialRosterNil(t *testing.T) {
 		t.Fatal("expected EchoArenaHeader")
 	}
 
-	// InitialRoster is not populated by MapHeaderFromSession.
-	if len(ea.GetInitialRoster()) != 0 {
-		t.Errorf("InitialRoster has %d entries, want 0 (not populated)", len(ea.GetInitialRoster()))
+	// InitialRoster is populated from the teams, preserving team then player order.
+	roster := ea.GetInitialRoster()
+	if len(roster) != 5 {
+		t.Fatalf("InitialRoster has %d entries, want 5", len(roster))
 	}
 
-	// Session metadata IS populated.
+	want := []struct {
+		name   string
+		acct   uint64
+		role   capturepb.Role
+		slot   int32
+		jersey int32
+		level  int32
+	}{
+		{"P1", 1001, capturepb.Role_ROLE_BLUE_TEAM, 0, 10, 20},
+		{"P2", 1002, capturepb.Role_ROLE_BLUE_TEAM, 1, 11, 21},
+		{"P3", 2001, capturepb.Role_ROLE_ORANGE_TEAM, 5, 5, 30},
+		// Team index 2 → spectator (default branch).
+		{"Spec1", 3001, capturepb.Role_ROLE_SPECTATOR, 10, 0, 1},
+		// Jersey -1 → spectator regardless of team slot.
+		{"Spec2", 3002, capturepb.Role_ROLE_SPECTATOR, 11, -1, 2},
+	}
+	for i, w := range want {
+		pi := roster[i]
+		if pi.GetSlot() != w.slot {
+			t.Errorf("roster[%d].Slot = %d, want %d", i, pi.GetSlot(), w.slot)
+		}
+		if pi.GetDisplayName() != w.name {
+			t.Errorf("roster[%d].DisplayName = %q, want %q", i, pi.GetDisplayName(), w.name)
+		}
+		if pi.GetAccountNumber() != w.acct {
+			t.Errorf("roster[%d].AccountNumber = %d, want %d", i, pi.GetAccountNumber(), w.acct)
+		}
+		if pi.GetRole() != w.role {
+			t.Errorf("roster[%d].Role = %v, want %v", i, pi.GetRole(), w.role)
+		}
+		if pi.GetJerseyNumber() != w.jersey {
+			t.Errorf("roster[%d].JerseyNumber = %d, want %d", i, pi.GetJerseyNumber(), w.jersey)
+		}
+		if pi.GetLevel() != w.level {
+			t.Errorf("roster[%d].Level = %d, want %d", i, pi.GetLevel(), w.level)
+		}
+	}
+
+	// Session metadata IS still populated.
 	if ea.SessionId != "sess-1" {
 		t.Errorf("SessionId = %q, want %q", ea.SessionId, "sess-1")
 	}
