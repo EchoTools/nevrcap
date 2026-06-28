@@ -45,9 +45,6 @@ Thumbs.db
 /*.echoreplay
 /benchmark_*
 
-# Generated golden tape (TestGoldenConvert self-generates it; not committed
-# because conversion event order is non-deterministic — see testdata/README.md)
-/testdata/*.golden
 /test_*
 
 # Generated files (uncomment if you want to exclude generated protobuf files)
