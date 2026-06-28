@@ -1,6 +1,8 @@
 package events
 
 import (
+	"slices"
+
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
@@ -35,18 +37,29 @@ func (s *PlayerJoinSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Find all new players (in current but not in previous).
-	for slot, info := range currentPlayers {
+	// Collect newly-present slots, then emit in ascending slot order. Go map
+	// iteration order is randomized, so iterating currentPlayers directly would
+	// serialize simultaneous joins in a random order and make the tape bytes
+	// non-deterministic. Slot is the player's stable identity, so sorting by it
+	// gives a deterministic, meaningful order. newSlots stays nil on the common
+	// no-join frame, so the hot path adds no allocation or sort.
+	var newSlots []int32
+	for slot := range currentPlayers {
 		if _, existed := s.previousPlayers[slot]; !existed {
-			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
-				Event: &telemetry.LobbySessionEvent_PlayerJoined{
-					PlayerJoined: &telemetry.PlayerJoined{
-						Player: info.player,
-						Role:   determinePlayerRole(info.player, info.teamIdx),
-					},
-				},
-			})
+			newSlots = append(newSlots, slot)
 		}
+	}
+	slices.Sort(newSlots)
+	for _, slot := range newSlots {
+		info := currentPlayers[slot]
+		s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_PlayerJoined{
+				PlayerJoined: &telemetry.PlayerJoined{
+					Player: info.player,
+					Role:   determinePlayerRole(info.player, info.teamIdx),
+				},
+			},
+		})
 	}
 
 	s.previousPlayers = currentPlayers
@@ -97,18 +110,27 @@ func (s *PlayerLeaveSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *t
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Find all missing players (in previous but not in current).
-	for slot, info := range s.previousPlayers {
+	// Collect departed slots, then emit in ascending slot order so that
+	// simultaneous leaves serialize deterministically (Go map iteration order is
+	// randomized). leftSlots stays nil on the common no-leave frame, so the hot
+	// path adds no allocation or sort.
+	var leftSlots []int32
+	for slot := range s.previousPlayers {
 		if _, exists := currentPlayers[slot]; !exists {
-			s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
-				Event: &telemetry.LobbySessionEvent_PlayerLeft{
-					PlayerLeft: &telemetry.PlayerLeft{
-						PlayerSlot:  slot,
-						DisplayName: info.player.GetDisplayName(),
-					},
-				},
-			})
+			leftSlots = append(leftSlots, slot)
 		}
+	}
+	slices.Sort(leftSlots)
+	for _, slot := range leftSlots {
+		info := s.previousPlayers[slot]
+		s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_PlayerLeft{
+				PlayerLeft: &telemetry.PlayerLeft{
+					PlayerSlot:  slot,
+					DisplayName: info.player.GetDisplayName(),
+				},
+			},
+		})
 	}
 
 	s.previousPlayers = currentPlayers
@@ -159,23 +181,34 @@ func (s *PlayerTeamSwitchSensor) AddFrame(frame *telemetry.LobbySessionStateFram
 
 	currentPlayers := extractPlayersMap(frame.GetSession())
 
-	// Check for team switches (same slot, different team).
+	// Collect slots whose role changed, then emit in ascending slot order so
+	// that simultaneous switches serialize deterministically (Go map iteration
+	// order is randomized). switchedSlots stays nil on the common no-switch
+	// frame, so the hot path adds no allocation or sort. Roles are recomputed in
+	// the emit loop, which runs only for slots that actually switched.
+	var switchedSlots []int32
 	for slot, currInfo := range currentPlayers {
 		if prevInfo, existed := s.previousPlayers[slot]; existed {
 			prevRole := determinePlayerRole(prevInfo.player, prevInfo.teamIdx)
 			currRole := determinePlayerRole(currInfo.player, currInfo.teamIdx)
 			if prevRole != currRole {
-				s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
-					Event: &telemetry.LobbySessionEvent_PlayerSwitchedTeam{
-						PlayerSwitchedTeam: &telemetry.PlayerSwitchedTeam{
-							PlayerSlot: slot,
-							NewRole:    currRole,
-							PrevRole:   prevRole,
-						},
-					},
-				})
+				switchedSlots = append(switchedSlots, slot)
 			}
 		}
+	}
+	slices.Sort(switchedSlots)
+	for _, slot := range switchedSlots {
+		prevInfo := s.previousPlayers[slot]
+		currInfo := currentPlayers[slot]
+		s.pendingEvents = append(s.pendingEvents, &telemetry.LobbySessionEvent{
+			Event: &telemetry.LobbySessionEvent_PlayerSwitchedTeam{
+				PlayerSwitchedTeam: &telemetry.PlayerSwitchedTeam{
+					PlayerSlot: slot,
+					NewRole:    determinePlayerRole(currInfo.player, currInfo.teamIdx),
+					PrevRole:   determinePlayerRole(prevInfo.player, prevInfo.teamIdx),
+				},
+			},
+		})
 	}
 
 	s.previousPlayers = currentPlayers
