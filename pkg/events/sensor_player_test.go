@@ -334,6 +334,16 @@ func TestDeterminePlayerRole_NilPlayer(t *testing.T) {
 	}
 }
 
+// A player on a third team slot (index >= 2) with a real jersey number is a
+// spectator, not orange — matching the v2 InitialRoster resolution.
+func TestDeterminePlayerRole_SpectatorTeamIndex(t *testing.T) {
+	player := &enginev1.TeamMember{SlotNumber: 7, JerseyNumber: 3}
+	role := determinePlayerRole(player, 2)
+	if role != telemetry.Role_ROLE_SPECTATOR {
+		t.Errorf("expected SPECTATOR, got %v", role)
+	}
+}
+
 func TestExtractPlayersMap(t *testing.T) {
 	session := &enginev1.SessionResponse{
 		Teams: []*enginev1.Team{

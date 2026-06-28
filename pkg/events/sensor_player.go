@@ -293,20 +293,21 @@ func extractPlayersMap(session *enginev1.SessionResponse) map[int32]playerInfo {
 	return players
 }
 
-// determinePlayerRole determines a player's role from the team index.
-// teamIdx 0 = blue, 1 = orange; spectators are detected by jersey number -1.
+// determinePlayerRole determines a player's v1 role from their team index and
+// jersey number. It delegates the team/jersey resolution to the shared
+// ClassifyRole source of truth so the PlayerJoined role can never diverge from
+// the v2 InitialRoster role resolved in pkg/conversion. A nil player has no role.
 func determinePlayerRole(player *enginev1.TeamMember, teamIdx int) telemetry.Role {
 	if player == nil {
 		return telemetry.Role_ROLE_UNSPECIFIED
 	}
 
-	// Spectators have jersey number -1
-	if player.GetJerseyNumber() == -1 {
+	switch ClassifyRole(teamIdx, player.GetJerseyNumber()) {
+	case RoleClassBlue:
+		return telemetry.Role_ROLE_BLUE_TEAM
+	case RoleClassOrange:
+		return telemetry.Role_ROLE_ORANGE_TEAM
+	default:
 		return telemetry.Role_ROLE_SPECTATOR
 	}
-
-	if teamIdx == 0 {
-		return telemetry.Role_ROLE_BLUE_TEAM
-	}
-	return telemetry.Role_ROLE_ORANGE_TEAM
 }

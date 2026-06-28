@@ -9,6 +9,8 @@ import (
 	spatialv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/spatial/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+
+	"github.com/echotools/tape/pkg/events"
 )
 
 // gameStatusMap maps v1 string game_status to v2 GameStatus enum.
@@ -177,16 +179,15 @@ func buildInitialRoster(teams []*enginev1.Team) []*capturepb.PlayerInfo {
 	return roster
 }
 
-// rosterRole maps a team index and jersey number to a v2 Role. A jersey number
-// of -1 marks a spectator regardless of team slot.
+// rosterRole maps a team index and jersey number to a v2 Role using the shared
+// events.ClassifyRole source of truth, so the InitialRoster role can never
+// diverge from the PlayerJoined role resolved in pkg/events. A jersey number of
+// -1, or any team index other than blue (0) or orange (1), marks a spectator.
 func rosterRole(teamIdx int, jersey int32) capturepb.Role {
-	if jersey == -1 {
-		return capturepb.Role_ROLE_SPECTATOR
-	}
-	switch teamIdx {
-	case 0:
+	switch events.ClassifyRole(teamIdx, jersey) {
+	case events.RoleClassBlue:
 		return capturepb.Role_ROLE_BLUE_TEAM
-	case 1:
+	case events.RoleClassOrange:
 		return capturepb.Role_ROLE_ORANGE_TEAM
 	default:
 		return capturepb.Role_ROLE_SPECTATOR
