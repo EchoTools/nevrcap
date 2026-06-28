@@ -192,10 +192,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	frameTime := v1f.GetTimestamp().AsTime()
 	// Clamp to zero if frame predates baseTime — prevents uint32 wrap from
 	// a negative Sub() result.
-	diffMs := frameTime.Sub(baseTime).Milliseconds()
-	if diffMs < 0 {
-		diffMs = 0
-	}
+	diffMs := max(frameTime.Sub(baseTime).Milliseconds(), 0)
 	offsetMs := uint32(diffMs) //nolint:gosec // duration fits uint32 for game sessions
 
 	frame := &capturepb.Frame{

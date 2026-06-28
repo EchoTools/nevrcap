@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
+	"slices"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
@@ -118,7 +118,7 @@ func (w *Writer) Close() error {
 	for t := range w.eventIndex {
 		types = append(types, t)
 	}
-	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
+	slices.Sort(types)
 
 	var eventEntries []*capturepb.EventIndexEntry
 	for _, eventType := range types {

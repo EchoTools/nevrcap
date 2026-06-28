@@ -65,14 +65,8 @@ func TestEchoReplayNoExponentNotation(t *testing.T) {
 			prevChar := content[idx-1]
 			if prevChar >= '0' && prevChar <= '9' {
 				// Found e-notation in a number
-				start := idx - 20
-				if start < 0 {
-					start = 0
-				}
-				end := idx + 20
-				if end > len(content) {
-					end = len(content)
-				}
+				start := max(idx-20, 0)
+				end := min(idx+20, len(content))
 				t.Errorf("Found e-notation pattern '%s' in echoreplay file! Context: ...%s...", pattern, content[start:end])
 			}
 		}

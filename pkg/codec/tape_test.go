@@ -27,7 +27,7 @@ func TestTapeRoundTrip(t *testing.T) {
 
 	const frameCount = 250
 	frames := make([]*capturepb.Frame, frameCount)
-	for i := uint32(0); i < frameCount; i++ {
+	for i := range uint32(frameCount) {
 		frames[i] = &capturepb.Frame{
 			FrameIndex:        i,
 			TimestampOffsetMs: i * 16, // ~60 Hz
@@ -214,7 +214,7 @@ func TestTapeCustomKeyframeInterval(t *testing.T) {
 		t.Fatalf("WriteHeader: %v", err)
 	}
 
-	for i := uint32(0); i < 25; i++ {
+	for i := range uint32(25) {
 		if err := w.WriteFrame(&capturepb.Frame{
 			FrameIndex:        i,
 			TimestampOffsetMs: i * 16,

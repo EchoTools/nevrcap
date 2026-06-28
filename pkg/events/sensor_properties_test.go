@@ -24,10 +24,7 @@ func (frameSequence) Generate(rand *rand.Rand, size int) reflect.Value {
 
 // generateFrameSequence builds a plausible match timeline.
 func generateFrameSequence(rng *rand.Rand, size int) frameSequence {
-	numFrames := 5 + rng.Intn(max(1, size*3))
-	if numFrames > 200 {
-		numFrames = 200
-	}
+	numFrames := min(5+rng.Intn(max(1, size*3)), 200)
 	numPlayers := 2 + rng.Intn(7) // 2..8
 
 	// Build a stable roster.

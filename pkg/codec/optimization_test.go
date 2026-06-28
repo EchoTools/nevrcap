@@ -19,7 +19,7 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 
 	// Write a few frames
 	frameCount := 5
-	for i := 0; i < frameCount; i++ {
+	for i := range frameCount {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
@@ -55,7 +55,7 @@ func TestEchoReplay_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	// Let's check all of them but be aware of scanner init.
 
 	// Actually, let's just verify correctness first, then allocations.
-	for i := 0; i < frameCount; i++ {
+	for i := range frameCount {
 		ok, err := reader.ReadFrameTo(frame)
 		if err != nil {
 			t.Fatalf("ReadFrameTo failed at index %d: %v", i, err)
@@ -90,7 +90,7 @@ func TestEchoReplay_ReadTo_BufferReuse(t *testing.T) {
 	}
 
 	totalFrames := 10
-	for i := 0; i < totalFrames; i++ {
+	for range totalFrames {
 		frame := &telemetry.LobbySessionStateFrame{
 			Timestamp: timestamppb.New(time.Now()),
 			Session:   &enginev1.SessionResponse{SessionId: "test"},
@@ -144,7 +144,7 @@ func TestLegacyReader_ReadFrameTo_ZeroAlloc(t *testing.T) {
 	frameCount := 5
 	header := &telemetry.TelemetryHeader{CaptureId: "zero-alloc-test"}
 	frames := make([]*telemetry.LobbySessionStateFrame, frameCount)
-	for i := 0; i < frameCount; i++ {
+	for i := range frameCount {
 		frames[i] = &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Timestamp:  timestamppb.New(time.Now()),
@@ -166,7 +166,7 @@ func TestLegacyReader_ReadFrameTo_ZeroAlloc(t *testing.T) {
 
 	frame := &telemetry.LobbySessionStateFrame{}
 
-	for i := 0; i < frameCount; i++ {
+	for i := range frameCount {
 		ok, err := reader.ReadFrameTo(frame)
 		if err != nil {
 			t.Fatalf("ReadFrameTo failed at index %d: %v", i, err)

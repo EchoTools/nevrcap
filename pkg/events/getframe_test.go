@@ -199,7 +199,7 @@ func TestAsyncDetector_getFrame_SequentialAccess(t *testing.T) {
 	}
 
 	// Add frames
-	for i := 0; i < framesToAdd; i++ {
+	for i := range framesToAdd {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 		}
@@ -212,7 +212,7 @@ func TestAsyncDetector_getFrame_SequentialAccess(t *testing.T) {
 
 	// Access all frames sequentially
 	expected := []uint32{6, 5, 4, 3, 2} // Most recent to oldest
-	for i := 0; i < len(expected); i++ {
+	for i := range expected {
 		frame := ed.getFrame(i)
 		if frame == nil {
 			t.Errorf("getFrame(%d) = nil, want frame with ID %d", i, expected[i])

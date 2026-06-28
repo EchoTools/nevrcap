@@ -16,7 +16,7 @@ func TestInputChannelDraining(t *testing.T) {
 	detector := New(WithInputChannelSize(5))
 
 	// Fill the input channel with frames
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &enginev1.SessionResponse{
@@ -58,9 +58,7 @@ func TestEventsChanRaceCondition(t *testing.T) {
 	stopChan := make(chan struct{})
 
 	// Goroutine to continuously send frames that will generate events
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		i := 0
 		for {
 			select {
@@ -80,7 +78,7 @@ func TestEventsChanRaceCondition(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	// Let frames accumulate
 	time.Sleep(50 * time.Millisecond)
@@ -107,7 +105,7 @@ func TestStopWhileProcessingFrames(t *testing.T) {
 	stopProducer := make(chan struct{})
 
 	// Start multiple producers
-	for p := 0; p < 3; p++ {
+	for p := range 3 {
 		wg.Add(1)
 		go func(producerID int) {
 			defer wg.Done()
@@ -134,14 +132,12 @@ func TestStopWhileProcessingFrames(t *testing.T) {
 	}
 
 	// Start a consumer that's intentionally slow
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for range detector.EventsChan() {
 			// Slow consumer - this makes events back up
 			time.Sleep(5 * time.Millisecond)
 		}
-	}()
+	})
 
 	// Let the system run under load
 	time.Sleep(100 * time.Millisecond)
@@ -166,7 +162,7 @@ func TestMultipleStopCalls(t *testing.T) {
 	detector := New()
 
 	// Process some frames
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		frame := &telemetry.LobbySessionStateFrame{
 			FrameIndex: uint32(i),
 			Session: &enginev1.SessionResponse{

@@ -147,7 +147,7 @@ func TestAsyncDetector_AddFrameToBufferWraps(t *testing.T) {
 
 	totalFrames := DefaultFrameBufferCapacity + 3
 	frames := make([]*telemetry.LobbySessionStateFrame, totalFrames)
-	for i := 0; i < totalFrames; i++ {
+	for i := range totalFrames {
 		frame := &telemetry.LobbySessionStateFrame{FrameIndex: uint32(i)}
 		frames[i] = frame
 		detector.addFrameToBuffer(frame)

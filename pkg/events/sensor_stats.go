@@ -149,7 +149,7 @@ func (s *StatEventSensor) checkStatChanges(slot int32, prev, current playerStatS
 		}
 		pointsPerGoal := pointsScored / goalCount
 		remainder := pointsScored % goalCount
-		for i := int32(0); i < goalCount; i++ {
+		for i := range goalCount {
 			pts := pointsPerGoal
 			if i == 0 {
 				pts += remainder // first goal gets the remainder

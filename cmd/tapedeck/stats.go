@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"strings"
 	"text/tabwriter"
 
@@ -177,7 +177,7 @@ func runStats(cmd *cobra.Command, filePath, format string) error {
 	for slot := range players {
 		slots = append(slots, slot)
 	}
-	sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+	slices.Sort(slots)
 
 	ordered := make([]*playerStats, 0, len(slots))
 	for _, slot := range slots {

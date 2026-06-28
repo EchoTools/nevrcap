@@ -113,10 +113,7 @@ func runDiff(cmd *cobra.Command, path1, path2 string, maxDiffs int) error {
 	}
 
 	// Frame-by-frame comparison.
-	minFrames := len(frames1)
-	if len(frames2) < minFrames {
-		minFrames = len(frames2)
-	}
+	minFrames := min(len(frames2), len(frames1))
 
 	diffsFound := 0
 	for i := range minFrames {

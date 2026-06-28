@@ -64,7 +64,7 @@ func BenchmarkAsyncDetector_ProcessFrame_FullBuffer(b *testing.B) {
 	}()
 
 	// Fill the buffer to capacity
-	for i := 0; i < DefaultFrameBufferCapacity; i++ {
+	for i := range DefaultFrameBufferCapacity {
 		frame := createPostMatchTestFrame("playing", int32(i%3), int32(i%2))
 		detector.ProcessFrame(frame)
 	}
@@ -81,7 +81,7 @@ func BenchmarkAsyncDetector_ProcessFrame_FullBuffer(b *testing.B) {
 func BenchmarkAsyncDetector_ProcessFrame_Sequence(b *testing.B) {
 	// Pre-create all frames before timing
 	frames := make([]*telemetry.LobbySessionStateFrame, 100)
-	for j := 0; j < 100; j++ {
+	for j := range 100 {
 		var status string
 		switch {
 		case j < 10:

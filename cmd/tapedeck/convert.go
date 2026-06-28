@@ -100,14 +100,12 @@ Output files are written alongside the input with .tape extension unless
 			// Start workers.
 			var wg sync.WaitGroup
 			for range workers {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					for item := range work {
 						res, convErr := convertOne(item.input, item.output, overwrite)
 						results <- workResult{item: item, result: res, err: convErr}
 					}
-				}()
+				})
 			}
 
 			// Enqueue work.

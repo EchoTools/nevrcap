@@ -28,7 +28,7 @@ func TestSynchronousMode_BlockingBug(t *testing.T) {
 	go func() {
 		// Process frames that generate events in synchronous mode
 		// First frame will send to channel, second frame will block waiting for consumer
-		for i := 0; i < 2; i++ {
+		for i := range 2 {
 			detector.ProcessFrame(&telemetry.LobbySessionStateFrame{
 				FrameIndex: uint32(i),
 				Session: &enginev1.SessionResponse{
@@ -195,7 +195,7 @@ func TestSynchronousMode_DropsEventsWhenChannelFull(t *testing.T) {
 	// This should NOT block, even though events will be dropped.
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			status := "playing"
 			if i%2 == 1 {
 				status = GameStatusPostMatch

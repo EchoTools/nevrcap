@@ -18,9 +18,7 @@ func TestAsyncDetector_ConcurrentReset(t *testing.T) {
 	done := make(chan struct{})
 
 	// Goroutine 1: Pump frames
-	wgProducers.Add(1)
-	go func() {
-		defer wgProducers.Done()
+	wgProducers.Go(func() {
 		i := 0
 		for {
 			select {
@@ -41,27 +39,23 @@ func TestAsyncDetector_ConcurrentReset(t *testing.T) {
 				}
 			}
 		}
-	}()
+	})
 
 	// Goroutine 2: Reset periodically
-	wgProducers.Add(1)
-	go func() {
-		defer wgProducers.Done()
-		for i := 0; i < 10; i++ {
+	wgProducers.Go(func() {
+		for range 10 {
 			time.Sleep(10 * time.Millisecond)
 			detector.Reset()
 		}
 		close(done)
-	}()
+	})
 
 	// Goroutine 3: Consume events
-	wgConsumer.Add(1)
-	go func() {
-		defer wgConsumer.Done()
+	wgConsumer.Go(func() {
 		for range detector.EventsChan() {
 			// Consume until closed
 		}
-	}()
+	})
 
 	// Wait for producers to finish
 	wgProducers.Wait()

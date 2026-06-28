@@ -1,6 +1,6 @@
 module github.com/echotools/tape
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/klauspost/compress v1.18.6
