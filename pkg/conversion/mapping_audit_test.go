@@ -442,9 +442,9 @@ func TestMapFrame_DiscWithPartialOrientation(t *testing.T) {
 	}
 }
 
-// BUG-9: PlayerJoined mapping drops JerseyNumber and Level from the team member.
-// v2 PlayerJoined has JerseyNumber and Level fields, but the mapper in mapEvent
-// never sets them from the v1 TeamMember.
+// BUG-8: PlayerJoined mapping must wire JerseyNumber and Level from the team member.
+// v2 PlayerJoined has JerseyNumber and Level fields and the v1 TeamMember carries
+// both, so mapEvent must copy them through (wire-up, not schema gap).
 func TestPlayerJoined_JerseyNumberAndLevelDropped(t *testing.T) {
 	v1evt := &telemetryv1.LobbySessionEvent{
 		Event: &telemetryv1.LobbySessionEvent_PlayerJoined{
@@ -485,12 +485,12 @@ func TestPlayerJoined_JerseyNumberAndLevelDropped(t *testing.T) {
 		t.Errorf("Role = %v, want BLUE_TEAM", pj.Role)
 	}
 
-	// JerseyNumber and Level are NOT mapped — they stay at zero values.
-	if pj.JerseyNumber != 0 {
-		t.Errorf("JerseyNumber = %d, want 0 (not mapped from TeamMember)", pj.JerseyNumber)
+	// JerseyNumber and Level are wired through from the v1 TeamMember.
+	if pj.JerseyNumber != 7 {
+		t.Errorf("JerseyNumber = %d, want 7 (wired from TeamMember)", pj.JerseyNumber)
 	}
-	if pj.Level != 0 {
-		t.Errorf("Level = %d, want 0 (not mapped from TeamMember)", pj.Level)
+	if pj.Level != 42 {
+		t.Errorf("Level = %d, want 42 (wired from TeamMember)", pj.Level)
 	}
 }
 

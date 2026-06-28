@@ -556,6 +556,8 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			pj.Slot = tm.GetSlotNumber()
 			pj.AccountNumber = uint64(tm.GetAccountNumber())
 			pj.DisplayName = tm.GetDisplayName()
+			pj.JerseyNumber = tm.GetJerseyNumber()
+			pj.Level = tm.GetLevel()
 		}
 		evt.Event = &capturepb.EchoEvent_PlayerJoined{
 			PlayerJoined: pj,
