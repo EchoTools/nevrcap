@@ -53,11 +53,11 @@ untested or un-BAC'd. Work this under the project's orientation; orient first.
   packet-loss. Identity is 100% recoverable from events (`TestRosterRebuildAudit`).
 - **`possession[]` resolved: do NOT add** — proven redundant with
   `has_possession`/`disc_holder_slot` (`TestPossessionProbe`).
-- **Proto superset cut** on `nevr-proto` branch `feat/v2-superset-fields`
-  (buf build + lint clean), placed by variability: per-frame shoulder +
-  packet-loss on `PlayerState`; `LoadoutChanged`/`GrabChanged` events; combat
-  `PayloadState` sub-message; `session_ip` in header. Awaits Andrew's review +
-  merge (merge publishes to BSR).
+- **Proto superset** on `nevr-proto` main (`da61c1c`), placed by variability:
+  per-frame `packet_loss_ratio` on `PlayerState`, capture-client shoulder input
+  on `EchoArenaFrame` (alongside `vr_root`); `LoadoutChanged`/`GrabChanged`
+  events; combat `PayloadState` sub-message; `session_ip` in header. Publishing
+  to BSR via CI.
 - **Still to do:** wire `MapFrame` to populate the new fields; build the
   **v2→echoreplay reconstructor** (required for true round-trip — does not exist
   yet); round-trip BAC test; fix GH #18 (silent event loss); GH #34 Session layer.

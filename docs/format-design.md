@@ -105,8 +105,9 @@ from events:
 
 Placed by §2's rule — nothing constant or rare gets propagated per-frame:
 
-- **Per-frame** (`PlayerState`, free on the wire when 0): `left/right_shoulder_pressed`,
-  `left/right_shoulder_pressed_2` (analog), `packet_loss_ratio`.
+- **Per-frame:** `packet_loss_ratio` on `PlayerState`; the capture client's analog
+  shoulder input (`left/right_shoulder_pressed` + alternate) on `EchoArenaFrame`
+  alongside `vr_root` — it's the recording client's own input, not per-player.
 - **Events** (rare changes; seed at frame 0, reconstruct via Session):
   `LoadoutChanged{weapon,ordnance,tac_mod}`, `GrabChanged{left_holding,right_holding}`.
 - **Combat-only sub-message** (absent in arena): `EchoArenaFrame.payload`
