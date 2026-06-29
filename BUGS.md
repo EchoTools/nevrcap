@@ -62,10 +62,31 @@ untested or un-BAC'd. Work this under the project's orientation; orient first.
   packet-loss, payload, session_ip copy exactly from v1 — proven by
   `TestSupersetFieldsPopulate` (756 shoulder + 72 packet-loss frames on the
   sample; 6992 + 17177 on alienq). Golden regenerated; deterministic ×10.
-- **Still to do:** `LoadoutChanged`/`GrabChanged` event-sensors (new
-  change-detection sensors — TDD, like join/leave); the **v2→echoreplay
-  reconstructor** (required for true round-trip — does not exist yet);
-  round-trip BAC test; fix GH #18 (silent event loss); GH #34 Session layer.
+- **`LoadoutChanged`/`GrabChanged` WIRED + tested** (tape `0fa72dc`): delta
+  events, replay rebuilds per-frame loadout/grab exactly (`TestLoadoutGrabReconstruct`).
+- **Session layer (#34) + v2→echoreplay reconstructor + round-trip BAC DONE**
+  (tape `d6afe7c`): `session.go` (`RosterAt`/`LoadoutAt`/`GrabAt`/`ScoreAt`),
+  `reconstruct.go`, `TestRoundTripBAC`. echoreplay→v2→echoreplay round-trips the
+  **recoverable lane EXACT on every non-spatial field, within float32 tolerance
+  on spatial** (sample: 0 mismatches, max mag 5e-6, max orient 2.35e-3). This is
+  the cheat-investigation lane (kinematics + identity + loadout + grab + disc +
+  scores) — faithful.
+
+**Still OPEN — to make v2 a TRUE lossless superset (the BAC names these as
+not-round-tripping; Andrew's call on which matter):**
+- `rules_changed_by` / `rules_changed_at` — no v2 home.
+- per-frame `last_throw` and `last_score` (incl. scorer/assist **names** — v2
+  `GoalScored` is slot-only) — v2 only carries throws/goals as events.
+- per-frame `game_clock_display` + `blue/orange_round_score` — only event-sampled
+  (`ScoreboardUpdated`); **BUG: the score sensor seeds frame 0 silently (no
+  event)**, so any pre-first-change value is unrecoverable. Fix: emit a seed.
+- `team_name` (string) — roster stores `Role` enum only.
+- **per-frame `jersey_number`/`level`** — alienq proves they VARY per-frame
+  (slot 10: 1/50 for 18865 frames, 0/0 for 3); v2 stores only a join snapshot.
+  Refutes `SCHEMA-GAPS` BUG-7's constant assumption.
+- `pause` sub-state (`paused_state` narrowing, `unpaused_team`, timers).
+- per-frame `team.stats` / `player.stats`; empty-team structural case.
+- still: fix GH #18 (silent event loss); then v1 deprecation + v1→v2 importer.
 
 ---
 
