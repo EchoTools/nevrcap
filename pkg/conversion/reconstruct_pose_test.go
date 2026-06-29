@@ -65,7 +65,7 @@ func TestPoseRoundTripFloat32(t *testing.T) {
 			t.Errorf("pos[%d] = %v, want %v", i, gotPos[i], pos[i])
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if math.Abs(gotFwd[i]-tc.fwd[i]) > tol {
 			t.Errorf("fwd[%d] = %v, want %v", i, gotFwd[i], tc.fwd[i])
 		}

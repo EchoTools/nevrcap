@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"testing"
 
@@ -137,7 +138,7 @@ func teammateSets(s *enginev1.SessionResponse) map[int32][]int32 {
 		for _, m := range team.GetPlayers() {
 			slots = append(slots, m.GetSlotNumber())
 		}
-		sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+		slices.Sort(slots)
 		for _, m := range team.GetPlayers() {
 			out[m.GetSlotNumber()] = slots
 		}
