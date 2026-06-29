@@ -5,6 +5,13 @@ Core dependency of nevr-agent, nevr-anticheat, and nevr-profiler.
 
 Module: `github.com/echotools/tape`
 
+**Before touching the format, the converter, or fidelity questions, read
+[`docs/format-design.md`](docs/format-design.md)** — the authoritative reference
+for what v2 keeps/drops and why, the delta design (constants→header,
+changes→events, per-frame only for per-frame data), round-trip semantics, and
+identity reconstruction. It exists so this is never re-derived from scratch.
+Open work + bugs live in [`BUGS.md`](BUGS.md).
+
 ## Build & Test
 
 ```bash

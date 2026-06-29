@@ -46,6 +46,22 @@ untested or un-BAC'd. Work this under the project's orientation; orient first.
 4. **Tests for every feature.** If a feature lacks a test, it gets one.
 5. **Every feature tied to a BAC.**
 
+**Progress (2026-06-29):**
+- Full design + fidelity reference written: `docs/format-design.md`. Read it first.
+- Characterized exactly what v2 drops on a real recording (`TestFieldLossAudit`):
+  kinematics 100% kept; combat fields 0% in arena; real loss = grab / shoulder /
+  packet-loss. Identity is 100% recoverable from events (`TestRosterRebuildAudit`).
+- **`possession[]` resolved: do NOT add** — proven redundant with
+  `has_possession`/`disc_holder_slot` (`TestPossessionProbe`).
+- **Proto superset cut** on `nevr-proto` branch `feat/v2-superset-fields`
+  (buf build + lint clean), placed by variability: per-frame shoulder +
+  packet-loss on `PlayerState`; `LoadoutChanged`/`GrabChanged` events; combat
+  `PayloadState` sub-message; `session_ip` in header. Awaits Andrew's review +
+  merge (merge publishes to BSR).
+- **Still to do:** wire `MapFrame` to populate the new fields; build the
+  **v2→echoreplay reconstructor** (required for true round-trip — does not exist
+  yet); round-trip BAC test; fix GH #18 (silent event loss); GH #34 Session layer.
+
 ---
 
 ## DONE — FIDELITY-BASELINE: echoreplay round-trip fidelity test (the absolute baseline)
