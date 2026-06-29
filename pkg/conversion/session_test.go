@@ -173,6 +173,40 @@ func TestSessionGrabAt(t *testing.T) {
 	}
 }
 
+// TestSessionLoadoutGrabPersistAcrossLeave proves loadout/grab baselines are NOT
+// cleared on PlayerLeft, mirroring the forward mapper (mapping.go) which keeps
+// prevLoadout/prevGrab across leaves. A slot reused by a player whose value
+// equals the departed player's emits no change event, so the carried-forward
+// value must remain queryable (regression guard for grab "none" loss).
+func TestSessionLoadoutGrabPersistAcrossLeave(t *testing.T) {
+	t.Parallel()
+
+	frames := []*capturepb.Frame{
+		frameWithEvents(
+			joinedEvent(0, 100, "Alice", capturepb.Role_ROLE_BLUE_TEAM, 1, 50),
+			loadoutEvent(0, "a", "b", "c"),
+			grabEvent(0, "none", "none"),
+		),
+		frameWithEvents(leftEvent(0, "Alice")), // slot 0 leaves; baselines persist.
+		frameWithEvents(joinedEvent(0, 200, "Bob", capturepb.Role_ROLE_BLUE_TEAM, 2, 40)),
+	}
+	s := conversion.NewSession(&capturepb.EchoArenaHeader{}, frames)
+
+	if l := s.LoadoutAt(2)[0]; l.Weapon != "a" || l.Ordnance != "b" || l.TacMod != "c" {
+		t.Errorf("LoadoutAt(2)[0] = %+v, want carried-forward a/b/c across leave", l)
+	}
+	if g := s.GrabAt(2)[0]; g.Left != "none" || g.Right != "none" {
+		t.Errorf("GrabAt(2)[0] = %+v, want carried-forward none/none across leave", g)
+	}
+	// Identity is cleared on leave and replaced on the new join.
+	if r := s.RosterAt(2); r[0].GetDisplayName() != "Bob" {
+		t.Errorf("RosterAt(2)[0] = %q, want Bob", r[0].GetDisplayName())
+	}
+	if r := s.RosterAt(1); len(r) != 0 {
+		t.Errorf("RosterAt(1) len = %d, want 0 after Alice left", len(r))
+	}
+}
+
 func TestSessionScoreAt(t *testing.T) {
 	t.Parallel()
 

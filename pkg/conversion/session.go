@@ -166,26 +166,17 @@ func (s *Session) replay() {
 					Level:         pj.GetLevel(),
 				}
 			case *capturepb.EchoEvent_PlayerLeft:
-				slot := e.PlayerLeft.GetPlayerSlot()
+				// Only identity is cleared on leave, mirroring the join/leave
+				// sensors. Loadout/grab baselines are intentionally NOT cleared:
+				// the forward mapper (mapping.go appendLoadoutGrabEvents) keeps
+				// prevLoadout/prevGrab across leaves, so a reused slot whose value
+				// equals the departed player's emits no change event. Clearing
+				// here would drop that carried-forward value (e.g. grab "none").
 				if !rosterDirty {
 					roster = maps.Clone(roster)
 					rosterDirty = true
 				}
-				delete(roster, slot)
-				if _, ok := loadout[slot]; ok {
-					if !loadoutDirty {
-						loadout = maps.Clone(loadout)
-						loadoutDirty = true
-					}
-					delete(loadout, slot)
-				}
-				if _, ok := grab[slot]; ok {
-					if !grabDirty {
-						grab = maps.Clone(grab)
-						grabDirty = true
-					}
-					delete(grab, slot)
-				}
+				delete(roster, e.PlayerLeft.GetPlayerSlot())
 			case *capturepb.EchoEvent_PlayerSwitchedTeam:
 				st := e.PlayerSwitchedTeam
 				if cur, ok := roster[st.GetPlayerSlot()]; ok && cur.GetRole() != st.GetNewRole() {
