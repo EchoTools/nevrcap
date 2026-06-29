@@ -14,7 +14,7 @@ import (
 func TestPossessionProbe(t *testing.T) {
 	path := os.Getenv("TAPE_AUDIT_FILE")
 	if path == "" {
-		path = "/tmp/alienq/rec_2026-06-28_18-37-58.echoreplay"
+		t.Skip("set TAPE_AUDIT_FILE=/path/to.echoreplay to run this audit")
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("no audit file: %v", err)
