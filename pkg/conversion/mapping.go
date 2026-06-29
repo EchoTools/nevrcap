@@ -151,6 +151,9 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 	eaHeader.PrivateMatch = session.GetPrivateMatch()
 	eaHeader.TournamentMatch = session.GetTournamentMatch()
 	eaHeader.TotalRoundCount = session.GetTotalRoundCount()
+	if eaHeader.SessionIp == "" {
+		eaHeader.SessionIp = session.GetSessionIp()
+	}
 
 	if roster := buildInitialRoster(session.GetTeams()); len(roster) > 0 {
 		eaHeader.InitialRoster = roster
@@ -294,6 +297,26 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	// Set round number from conversion state.
 	ea.RoundNumber = roundNumber
 
+	// Capture-client analog shoulder input (session-level, like vr_root; 0 when
+	// not pressed, so free on the wire).
+	ea.LeftShoulderPressed = float32(session.GetLeftShoulderPressed())
+	ea.RightShoulderPressed = float32(session.GetRightShoulderPressed())
+	ea.LeftShoulderPressed_2 = float32(session.GetLeftShoulderPressed2())
+	ea.RightShoulderPressed_2 = float32(session.GetRightShoulderPressed2())
+
+	// Echo Combat payload state — present only in payload matches; nil in arena.
+	if session.GetPayloadMultiplier() != 0 || session.GetPayloadCheckpoint() != 0 ||
+		session.GetPayloadDistance() != 0 || session.GetPayloadDefenders() != 0 ||
+		session.GetPayloadSpeed() != 0 {
+		ea.Payload = &capturepb.PayloadState{
+			Multiplier: float32(session.GetPayloadMultiplier()),
+			Checkpoint: session.GetPayloadCheckpoint(),
+			Distance:   float32(session.GetPayloadDistance()),
+			Defenders:  session.GetPayloadDefenders(),
+			Speed:      float32(session.GetPayloadSpeed()),
+		}
+	}
+
 	frame.Payload = &capturepb.Frame_EchoArena{EchoArena: ea}
 	return frame
 }
@@ -397,6 +420,7 @@ func mapPlayers(teams []*enginev1.Team) []*capturepb.PlayerState {
 				Slot: member.GetSlotNumber(),
 				Ping: uint32(member.GetPing()), //nolint:gosec // ping is non-negative
 			}
+			ps.PacketLossRatio = float32(member.GetPacketLossRatio())
 
 			// Map head pose.
 			if head := member.GetHead(); head != nil {

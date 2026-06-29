@@ -255,9 +255,9 @@ func TestMapFrame_SessionFieldsDropped(t *testing.T) {
 		t.Fatal("expected EchoArenaFrame")
 	}
 
-	// Verify the output only has the fields we expect.
-	// The check: reverse-test — if we serialize and compare, the dropped fields
-	// produce no output at the v2 level.
+	// Payload now MAPS to EchoArenaFrame.payload; session_ip moves to the header
+	// (checked in TestSupersetFieldsPopulate). The fields listed below still have
+	// no per-frame v2 home.
 	expected := &capturepb.EchoArenaFrame{
 		GameStatus:   capturepb.GameStatus_GAME_STATUS_PLAYING,
 		GameClock:    90.0,
@@ -266,29 +266,26 @@ func TestMapFrame_SessionFieldsDropped(t *testing.T) {
 		Players: []*capturepb.PlayerState{
 			{Slot: 0},
 		},
+		Payload: &capturepb.PayloadState{
+			Multiplier: 1.5,
+			Checkpoint: 3,
+			Distance:   50.0,
+			Defenders:  2,
+			Speed:      0.5,
+		},
 	}
 	if !proto.Equal(ea, expected) {
 		t.Errorf("EchoArenaFrame mismatch")
 		t.Logf("got:  %+v", ea)
 		t.Logf("want: %+v", expected)
-
-		// Prove specific session fields don't exist in the output.
-		// These fields from SessionResponse have no counterpart in EchoArenaFrame.
-		t.Log("--- Dropped SessionResponse fields (no v2 EchoArenaFrame field) ---")
-		t.Log("SessionIp: 192.168.1.1 → DROPPED (no SessionIp on EchoArenaFrame)")
-		t.Log("BlueRoundScore: 2 → DROPPED (no BlueRoundScore on EchoArenaFrame)")
-		t.Log("OrangeRoundScore: 1 → DROPPED (no OrangeRoundScore on EchoArenaFrame)")
-		t.Log("GameClockDisplay: '1:30' → DROPPED (no GameClockDisplay on EchoArenaFrame)")
-		t.Log("Possession: [1,2,3] → DROPPED (no Possession on EchoArenaFrame)")
-		t.Log("ErrCode: 0 → DROPPED (no ErrCode on EchoArenaFrame)")
-		t.Log("RulesChangedBy: admin → DROPPED (no RulesChangedBy on EchoArenaFrame)")
-		t.Log("RulesChangedAt: 123456789 → DROPPED (no RulesChangedAt on EchoArenaFrame)")
-		t.Log("PayloadMultiplier: 1.5 → DROPPED (no PayloadMultiplier on EchoArenaFrame)")
-		t.Log("PayloadCheckpoint: 3 → DROPPED (no PayloadCheckpoint on EchoArenaFrame)")
-		t.Log("PayloadDistance: 50.0 → DROPPED (no PayloadDistance on EchoArenaFrame)")
-		t.Log("PayloadDefenders: 2 → DROPPED (no PayloadDefenders on EchoArenaFrame)")
-		t.Log("PayloadSpeed: 0.5 → DROPPED (no PayloadSpeed on EchoArenaFrame)")
 	}
+
+	// Still no per-frame v2 home (intentional): round scores + clock display ride
+	// the ScoreboardUpdated event; Possession is redundant with disc_holder_slot.
+	t.Log("--- Still-dropped SessionResponse fields ---")
+	t.Log("BlueRoundScore=2 OrangeRoundScore=1 GameClockDisplay='1:30' → via ScoreboardUpdated event")
+	t.Log("Possession=[1,2,3] → redundant with disc_holder_slot + possession flag")
+	t.Log("ErrCode / RulesChangedBy / RulesChangedAt → no v2 home yet")
 }
 
 // BUG-5: Team-level fields (TeamName, HasPossession, Stats) are dropped.
