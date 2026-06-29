@@ -3,6 +3,7 @@ package conversion
 import (
 	"encoding/binary"
 	"math"
+	"slices"
 	"time"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
@@ -201,11 +202,19 @@ func rosterRole(teamIdx int, jersey int32) capturepb.Role {
 type FrameMapper struct {
 	BaseTime    time.Time
 	RoundNumber int32
+	// Per-slot previous loadout/grab, for emitting change events.
+	prevLoadout map[int32]loadoutState
+	prevGrab    map[int32]grabState
 }
+
+type loadoutState struct{ weapon, ordnance, tacMod string }
+type grabState struct{ left, right string }
 
 // Reset clears the mapper's accumulated state for a new conversion session.
 func (m *FrameMapper) Reset() {
 	m.RoundNumber = 0
+	m.prevLoadout = nil
+	m.prevGrab = nil
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
@@ -219,7 +228,78 @@ func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capture
 		}
 	}
 
-	return mapFrame(v1f, m.BaseTime, m.RoundNumber)
+	frame := mapFrame(v1f, m.BaseTime, m.RoundNumber)
+	m.appendLoadoutGrabEvents(v1f, frame)
+	return frame
+}
+
+// appendLoadoutGrabEvents detects per-player loadout (weapon/ordnance/tac-mod)
+// and grab (left/right holding) changes since the previous frame and appends
+// LoadoutChanged/GrabChanged events to the frame. Each slot is seeded on first
+// sighting (so frame 0 carries the initial loadout/grab). Events are emitted in
+// ascending slot order for deterministic output. Reconstruct the per-frame
+// value by replaying these via the Session layer.
+func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionStateFrame, frame *capturepb.Frame) {
+	ea := frame.GetEchoArena()
+	if ea == nil {
+		return
+	}
+	if m.prevLoadout == nil {
+		m.prevLoadout = make(map[int32]loadoutState)
+		m.prevGrab = make(map[int32]grabState)
+	}
+
+	type entry struct {
+		tm   *enginev1.TeamMember
+		slot int32
+	}
+	var entries []entry
+	for _, team := range v1f.GetSession().GetTeams() {
+		for _, tm := range team.GetPlayers() {
+			entries = append(entries, entry{tm: tm, slot: tm.GetSlotNumber()})
+		}
+	}
+	slices.SortFunc(entries, func(a, b entry) int {
+		switch {
+		case a.slot < b.slot:
+			return -1
+		case a.slot > b.slot:
+			return 1
+		default:
+			return 0
+		}
+	})
+
+	for _, e := range entries {
+		ld := loadoutState{e.tm.GetWeapon(), e.tm.GetOrdnance(), e.tm.GetTacMod()}
+		if prev, ok := m.prevLoadout[e.slot]; !ok || prev != ld {
+			ea.Events = append(ea.Events, &capturepb.EchoEvent{
+				Event: &capturepb.EchoEvent_LoadoutChanged{
+					LoadoutChanged: &capturepb.LoadoutChanged{
+						PlayerSlot: e.slot,
+						Weapon:     ld.weapon,
+						Ordnance:   ld.ordnance,
+						TacMod:     ld.tacMod,
+					},
+				},
+			})
+			m.prevLoadout[e.slot] = ld
+		}
+
+		gr := grabState{e.tm.GetLeftHoldingOnto(), e.tm.GetRightHoldingOnto()}
+		if prev, ok := m.prevGrab[e.slot]; !ok || prev != gr {
+			ea.Events = append(ea.Events, &capturepb.EchoEvent{
+				Event: &capturepb.EchoEvent_GrabChanged{
+					GrabChanged: &capturepb.GrabChanged{
+						PlayerSlot:   e.slot,
+						LeftHolding:  gr.left,
+						RightHolding: gr.right,
+					},
+				},
+			})
+			m.prevGrab[e.slot] = gr
+		}
+	}
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame.
