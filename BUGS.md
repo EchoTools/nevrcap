@@ -56,11 +56,16 @@ untested or un-BAC'd. Work this under the project's orientation; orient first.
 - **Proto superset** on `nevr-proto` main (`da61c1c`), placed by variability:
   per-frame `packet_loss_ratio` on `PlayerState`, capture-client shoulder input
   on `EchoArenaFrame` (alongside `vr_root`); `LoadoutChanged`/`GrabChanged`
-  events; combat `PayloadState` sub-message; `session_ip` in header. Publishing
-  to BSR via CI.
-- **Still to do:** wire `MapFrame` to populate the new fields; build the
-  **v2→echoreplay reconstructor** (required for true round-trip — does not exist
-  yet); round-trip BAC test; fix GH #18 (silent event loss); GH #34 Session layer.
+  events; combat `PayloadState` sub-message; `session_ip` in header. Published to
+  BSR (`c89ff774a767`); tape pinned to `v1.36.11-20260629074123-c89ff774a767.1`.
+- **Mechanical fields WIRED + tested** (`MapFrame`, tape `f9696e5`): shoulder,
+  packet-loss, payload, session_ip copy exactly from v1 — proven by
+  `TestSupersetFieldsPopulate` (756 shoulder + 72 packet-loss frames on the
+  sample; 6992 + 17177 on alienq). Golden regenerated; deterministic ×10.
+- **Still to do:** `LoadoutChanged`/`GrabChanged` event-sensors (new
+  change-detection sensors — TDD, like join/leave); the **v2→echoreplay
+  reconstructor** (required for true round-trip — does not exist yet);
+  round-trip BAC test; fix GH #18 (silent event loss); GH #34 Session layer.
 
 ---
 
