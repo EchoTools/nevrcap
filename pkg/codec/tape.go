@@ -356,9 +356,10 @@ func (r *Reader) readEnvelope() (*capturepb.Envelope, error) {
 		return nil, fmt.Errorf("envelope size %d exceeds maximum %d", length, MaxMessageSize)
 	}
 
-	// Read message data.
-	data := make([]byte, length)
-	if _, err := io.ReadFull(r.reader, data); err != nil {
+	// Read message data. SEC-002: allocation is bounded by bytes actually
+	// present in the stream, not by the declared length.
+	data, err := readMessageBody(r.reader, length)
+	if err != nil {
 		return nil, err
 	}
 

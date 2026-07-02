@@ -156,10 +156,9 @@ func (z *LegacyReader) readDelimitedMessage() ([]byte, error) {
 		return nil, fmt.Errorf("message size %d exceeds maximum %d", length, MaxMessageSize)
 	}
 
-	// Read message data
-	data := make([]byte, length)
-	_, err := io.ReadFull(z.reader, data)
-	return data, err
+	// Read message data. SEC-002: allocation is bounded by bytes actually
+	// present in the stream, not by the declared length.
+	return readMessageBody(z.reader, length)
 }
 
 // Close closes the decoder and underlying file.
