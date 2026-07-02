@@ -100,9 +100,26 @@ v2-superset work must also satisfy.
 
 ---
 
-## OPEN — SEC-001: decompression bomb — no decode-size / frame-count cap → OOM DoS from a tiny hostile capture
+## FIXED — SEC-001: decompression bomb — no decode-size / frame-count cap → OOM DoS from a tiny hostile capture
 
-**Severity:** HIGH (DoS). Easiest crash to trigger from a crafted file. Status: open.
+**Severity:** HIGH (DoS). Easiest crash to trigger from a crafted file.
+**Status: FIXED** in `545f3b6` (branch `fix/sec-decompression-guards`).
+All capture readers (`Reader`, `LegacyReader`, `EchoReplay`) now enforce
+documented, configurable budgets (`pkg/codec/limits.go`): total decoded bytes
+(default 8 GiB) and frame count (default 10M), overridable/disableable per
+reader via `WithMaxDecodedBytes` / `WithMaxFrameCount` / `WithoutLimits`.
+`zstd.WithDecoderMaxMemory` is set from the budget on both decoder open sites;
+accumulation sites (`OpenSession`, `NewSessionReconstructor`, `ReadFrames`)
+enforce the reader's frame budget again. Past budget: clear error wrapping
+`ErrMaxDecodedBytes` / `ErrMaxFrameCount`.
+Tests: `TestReader_SEC001_FrameCountBudget`, `TestReader_SEC001_DecodedBytesBudget`,
+`TestReader_SEC001_DefaultLimitsApplied`, `TestReader_SEC001_WithoutLimitsOptOut`,
+`TestLegacyReader_SEC001_FrameCountBudget`, `TestLegacyReader_SEC001_DecodedBytesBudget`,
+`TestEchoReplay_SEC001_FrameCountBudget`, `TestEchoReplay_SEC001_DecodedBytesBudget`
+(`pkg/codec/sec001_bomb_test.go`); `TestOpenSession_SEC001_FrameBudget`,
+`TestNewSessionReconstructor_SEC001_FrameBudget`,
+`TestOpenSession_SEC001_DecodedBytesBudget` (`pkg/conversion/sec001_budget_test.go`).
+Fuzz: `FuzzReadEnvelope`, `FuzzReadDelimitedMessage` (`e547216`).
 
 **What:** Both tape decoders wrap the input in a Zstd stream reader with **no**
 memory or decoded-size guard, and the streaming APIs that most callers use
@@ -140,9 +157,19 @@ an error past the budget. Budget should be a documented, non-hardcoded limit.
 
 ---
 
-## OPEN — SEC-002: 256 MB single allocation from a ~5-byte length prefix (allocate-before-verify)
+## FIXED — SEC-002: 256 MB single allocation from a ~5-byte length prefix (allocate-before-verify)
 
-**Severity:** MEDIUM (memory-spike DoS; amplifies SEC-001). Status: open.
+**Severity:** MEDIUM (memory-spike DoS; amplifies SEC-001).
+**Status: FIXED** in `aa9f215` (branch `fix/sec-decompression-guards`).
+Both readers now use shared `readMessageBody` (`pkg/codec/limits.go`): at most
+1 MiB (`maxEagerMessageAlloc`, cited against measured sample message sizes) is
+allocated before any bytes arrive; larger messages grow the buffer only as
+bytes are actually read, so a truncated giant length prefix costs a bounded
+allocation plus a clean error. Measured: 268,445,480 bytes allocated before the
+fix from a 5-byte stream; under the 64 MiB test threshold after.
+Tests: `TestReader_SEC002_TruncatedGiantLengthPrefix`,
+`TestLegacyReader_SEC002_TruncatedGiantLengthPrefix`
+(`pkg/codec/sec002_alloc_test.go`).
 
 **What:** The length-delimited readers allocate the full declared message buffer
 **before** confirming that many bytes are actually available in the stream. The
