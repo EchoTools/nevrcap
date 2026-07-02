@@ -97,3 +97,76 @@ Reads the real sample, writes it back, reads again, asserts every
 `SessionResponse` field identical across all frames. Proves the v1/echoreplay
 lane is lossless. PASS: 1023 frames, 0 mismatches. This is the baseline BAC the
 v2-superset work must also satisfy.
+
+---
+
+## OPEN — SEC-001: decompression bomb — no decode-size / frame-count cap → OOM DoS from a tiny hostile capture
+
+**Severity:** HIGH (DoS). Easiest crash to trigger from a crafted file. Status: open.
+
+**What:** Both tape decoders wrap the input in a Zstd stream reader with **no**
+memory or decoded-size guard, and the streaming APIs that most callers use
+accumulate every frame into an unbounded slice. A few-KB, highly-compressible
+`.tape`/`.nevrcap` (a repeated tiny valid envelope compresses ~1000:1) or a
+high-ratio `.echoreplay` zip member decompresses to gigabytes of frames, and the
+consumer heaps them until the process is OOM-killed. The only size guard present
+(`MaxMessageSize`, 256 MB) bounds a **single** message; it does not bound the
+**total** decompressed output or the **number** of frames.
+
+**Where / evidence:**
+- Decoders opened with no limit options:
+  - `pkg/codec/tape.go:264` — `decoder, err := zstd.NewReader(file)`
+  - `pkg/codec/legacy.go:70` — `decoder, err := zstd.NewReader(src)`
+  (no `zstd.WithDecoderMaxMemory` / `WithDecoderMaxWindow` / decoded-size cap.)
+- Unbounded frame accumulation on the read side:
+  - `pkg/conversion/session.go:81` — `OpenSession`: `for { frame, err := r.ReadFrame(); ...; frames = append(frames, frame) }` (no count/size cap).
+  - `pkg/conversion/reconstruct.go:159` — `NewSessionReconstructor`: identical unbounded `frames = append(...)` loop, then `NewSession` allocates 4 per-frame slices sized `len(frames)` (`session.go:63-66`).
+  - `pkg/codec/echoreplay.go:589` — `EchoReplay.ReadFrames`: `frames = append(frames, frame)` until EOF.
+- No test guards it: `grep -rniE 'bomb|maxdecoded|WithDecoderMax|frame.?limit'` over `pkg`/`cmd` returns nothing.
+
+**Malformed-input scenario:** craft a `.tape` whose uncompressed stream is one
+`CaptureHeader` envelope followed by millions of copies of a minimal valid
+`Frame` envelope (a few bytes each). Zstd crushes the repetition to a few KB on
+disk. Any downstream (nevr-anticheat / nevr-agent / `tapedeck`) that calls
+`OpenSession`, `NewSessionReconstructor`, or `ReadFrames` on it allocates
+gigabytes of `*Frame` and is OOM-killed. Even purely-streaming consumers pay a
+CPU-DoS decoding GB from KB. Same shape via an `.echoreplay` zip whose inner
+member is millions of identical session lines.
+
+**Fix direction:** set `zstd.WithDecoderMaxMemory` and cap total decoded bytes
+on the codec reader; enforce a max frame count / max total-bytes budget in the
+reader (and in `OpenSession`/`NewSessionReconstructor`/`ReadFrames`), returning
+an error past the budget. Budget should be a documented, non-hardcoded limit.
+
+---
+
+## OPEN — SEC-002: 256 MB single allocation from a ~5-byte length prefix (allocate-before-verify)
+
+**Severity:** MEDIUM (memory-spike DoS; amplifies SEC-001). Status: open.
+
+**What:** The length-delimited readers allocate the full declared message buffer
+**before** confirming that many bytes are actually available in the stream. The
+declared length is capped at `MaxMessageSize` (256 MB), but nothing requires the
+stream to contain that much data — a handful of decompressed bytes encoding a
+large varint length forces an immediate 256 MB allocation, after which
+`io.ReadFull` fails on the truncated stream. Chained with SEC-001 an attacker can
+drive repeated 256 MB allocations from a tiny file.
+
+**Where / evidence:**
+- `pkg/codec/tape.go:355-361`:
+  ```go
+  if length > MaxMessageSize { return nil, fmt.Errorf(...) }
+  data := make([]byte, length)          // up to 256 MB, before any read
+  if _, err := io.ReadFull(r.reader, data); err != nil { return nil, err }
+  ```
+- `pkg/codec/legacy.go:155-161`: same pattern (`data := make([]byte, length)` then `io.ReadFull`).
+
+**Malformed-input scenario:** a `.tape` whose decompressed head is a varint
+encoding `0x0FFFFFFF` (~256 MB) followed by EOF. `readEnvelope` allocates 256 MB,
+then errors. Per read it is one large transient allocation; combined with SEC-001
+(a compressible stream of many such max-length prefixes) it becomes sustained
+memory pressure / OOM.
+
+**Fix direction:** cap the eager allocation (e.g. allocate `min(length, sane
+cap)` and grow, or bound `length` against remaining input) so buffer size is
+tied to bytes actually present, not to an attacker's claimed length.
