@@ -47,16 +47,25 @@ type LegacyReader struct {
 	file    *os.File
 	decoder *zstd.Decoder
 	reader  io.Reader
+
+	// limits bounds hostile-input resource use (SEC-001); see Limits.
+	limits Limits
+	// framesRead counts frames returned, checked against limits.MaxFrameCount.
+	framesRead int64
 }
 
-// NewLegacyReader creates a new reader for .tape / .nevrcap files.
-func NewLegacyReader(filename string) (*LegacyReader, error) {
-	return NewLegacyReaderWithProgress(filename, nil)
+// NewLegacyReader creates a new reader for .tape / .nevrcap files. Reads are
+// bounded by DefaultLimits (SEC-001 decompression-bomb guard); pass
+// ReaderOptions to raise or disable the budgets.
+func NewLegacyReader(filename string, opts ...ReaderOption) (*LegacyReader, error) {
+	return NewLegacyReaderWithProgress(filename, nil, opts...)
 }
 
 // NewLegacyReaderWithProgress creates a new reader that also copies
 // compressed bytes to progress (e.g. for a progress bar).
-func NewLegacyReaderWithProgress(filename string, progress io.Writer) (*LegacyReader, error) {
+func NewLegacyReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*LegacyReader, error) {
+	limits := applyReaderOptions(opts)
+
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -67,7 +76,13 @@ func NewLegacyReaderWithProgress(filename string, progress io.Writer) (*LegacyRe
 		src = io.TeeReader(file, progress)
 	}
 
-	decoder, err := zstd.NewReader(src)
+	// SEC-001: cap the decoder's own memory (streaming window) alongside the
+	// total decoded-bytes budget enforced by budgetReader.
+	var zstdOpts []zstd.DOption
+	if limits.MaxDecodedBytes > 0 {
+		zstdOpts = append(zstdOpts, zstd.WithDecoderMaxMemory(uint64(limits.MaxDecodedBytes)))
+	}
+	decoder, err := zstd.NewReader(src, zstdOpts...)
 	if err != nil {
 		file.Close()
 		return nil, err
@@ -76,9 +91,13 @@ func NewLegacyReaderWithProgress(filename string, progress io.Writer) (*LegacyRe
 	return &LegacyReader{
 		file:    file,
 		decoder: decoder,
-		reader:  decoder,
+		reader:  newBudgetReader(decoder, limits.MaxDecodedBytes),
+		limits:  limits,
 	}, nil
 }
+
+// Limits returns the resource budgets in effect for this reader.
+func (z *LegacyReader) Limits() Limits { return z.limits }
 
 // ReadHeader reads the nevrcap header from the file.
 func (z *LegacyReader) ReadHeader() (*telemetry.TelemetryHeader, error) {
@@ -109,6 +128,12 @@ func (z *LegacyReader) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 		return nil, err
 	}
 
+	// SEC-001: bound the number of frames a capture may yield.
+	z.framesRead++
+	if err := z.limits.checkFrameBudget(z.framesRead); err != nil {
+		return nil, fmt.Errorf("legacy tape: %w", err)
+	}
+
 	return frame, nil
 }
 
@@ -126,6 +151,12 @@ func (z *LegacyReader) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (boo
 	err = proto.Unmarshal(data, frame)
 	if err != nil {
 		return false, err
+	}
+
+	// SEC-001: bound the number of frames a capture may yield.
+	z.framesRead++
+	if err := z.limits.checkFrameBudget(z.framesRead); err != nil {
+		return false, fmt.Errorf("legacy tape: %w", err)
 	}
 
 	return true, nil

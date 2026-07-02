@@ -80,6 +80,13 @@ func OpenSession(r *codec.Reader) (*Session, error) {
 
 	var frames []*capturepb.Frame
 	for {
+		// SEC-001 accumulation guard (belt to the reader's braces): never
+		// grow the slice past the reader's frame budget. Raising/disabling
+		// the budget on the reader (codec.WithMaxFrameCount,
+		// codec.WithoutLimits) flows through here.
+		if max := r.Limits().MaxFrameCount; max > 0 && int64(len(frames)) >= max {
+			return nil, fmt.Errorf("conversion.OpenSession: %d frames accumulated: %w (budget %d)", len(frames), codec.ErrMaxFrameCount, max)
+		}
 		frame, err := r.ReadFrame()
 		if err != nil {
 			if err == io.EOF {

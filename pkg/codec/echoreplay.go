@@ -64,6 +64,11 @@ type EchoReplay struct {
 	skippedFrames uint32
 	// eof is set when ReadFrame encounters io.EOF.
 	eof bool
+
+	// limits bounds hostile-input resource use (SEC-001); see Limits.
+	limits Limits
+	// framesRead counts frames returned, checked against limits.MaxFrameCount.
+	framesRead int64
 }
 
 // SkippedFrames returns the number of frames skipped due to parse errors.
@@ -96,12 +101,14 @@ func NewEchoReplayWriter(filename string) (*EchoReplay, error) {
 	}, nil
 }
 
-// NewEchoReplayReader creates a new EchoReplay codec for reading
-func NewEchoReplayReader(filename string) (*EchoReplay, error) {
-	return NewEchoReplayReaderWithProgress(filename, nil)
+// NewEchoReplayReader creates a new EchoReplay codec for reading. Reads are
+// bounded by DefaultLimits (SEC-001 decompression-bomb guard); pass
+// ReaderOptions to raise or disable the budgets.
+func NewEchoReplayReader(filename string, opts ...ReaderOption) (*EchoReplay, error) {
+	return NewEchoReplayReaderWithProgress(filename, nil, opts...)
 }
 
-func NewEchoReplayReaderWithProgress(filename string, progress io.Writer) (*EchoReplay, error) {
+func NewEchoReplayReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*EchoReplay, error) {
 	zipReader, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, err
@@ -111,6 +118,7 @@ func NewEchoReplayReaderWithProgress(filename string, progress io.Writer) (*Echo
 		filename:  filename,
 		zipReader: zipReader,
 		progress:  progress,
+		limits:    applyReaderOptions(opts),
 		unmarshaler: &protojson.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
@@ -166,6 +174,9 @@ func (e *EchoReplay) initScanner() error {
 	if e.progress != nil {
 		src = io.TeeReader(reader, e.progress)
 	}
+
+	// SEC-001: bound total decompressed bytes read from the zip member.
+	src = newBudgetReader(src, e.limits.MaxDecodedBytes)
 
 	e.replayFile = reader
 	e.scanner = bufio.NewScanner(src)
@@ -496,6 +507,12 @@ func (e *EchoReplay) ReadFrame() (*telemetry.LobbySessionStateFrame, error) {
 			continue // Skip invalid lines
 		}
 
+		// SEC-001: bound the number of frames a capture may yield.
+		e.framesRead++
+		if err := e.limits.checkFrameBudget(e.framesRead); err != nil {
+			return nil, fmt.Errorf("echoreplay: %w", err)
+		}
+
 		frame.FrameIndex = e.frameIndex
 		e.frameIndex++
 		return frame, nil
@@ -585,11 +602,19 @@ func (e *EchoReplay) ReadTo(frames []*telemetry.LobbySessionStateFrame) (int, er
 	return count, nil
 }
 
-// ReadFrames reads all frames from the .echoreplay file
+// ReadFrames reads all frames from the .echoreplay file. Accumulation is
+// bounded by the reader's Limits (SEC-001): past budget it returns an error
+// wrapping ErrMaxFrameCount / ErrMaxDecodedBytes instead of heaping frames
+// until OOM.
 func (e *EchoReplay) ReadFrames() ([]*telemetry.LobbySessionStateFrame, error) {
 	var frames []*telemetry.LobbySessionStateFrame
 
 	for {
+		// SEC-001 accumulation guard (belt to the reader's braces): never
+		// grow the slice past the frame budget.
+		if max := e.limits.MaxFrameCount; max > 0 && int64(len(frames)) >= max {
+			return nil, fmt.Errorf("echoreplay: %d frames accumulated: %w (budget %d)", len(frames), ErrMaxFrameCount, max)
+		}
 		frame, err := e.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
@@ -656,6 +681,12 @@ func (e *EchoReplay) ReadFrameTo(frame *telemetry.LobbySessionStateFrame) (bool,
 		if err := e.parseFrameLineTo(line, frame); err != nil {
 			e.skippedFrames++
 			continue // Skip invalid lines
+		}
+
+		// SEC-001: bound the number of frames a capture may yield.
+		e.framesRead++
+		if err := e.limits.checkFrameBudget(e.framesRead); err != nil {
+			return false, fmt.Errorf("echoreplay: %w", err)
 		}
 
 		frame.FrameIndex = e.frameIndex

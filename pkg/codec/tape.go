@@ -250,18 +250,34 @@ type Reader struct {
 	decoder *zstd.Decoder
 	reader  io.Reader
 
+	// limits bounds hostile-input resource use (SEC-001); see Limits.
+	limits Limits
+	// framesRead counts frames returned by ReadFrame, checked against
+	// limits.MaxFrameCount.
+	framesRead int64
+
 	// pendingFooter holds a footer envelope encountered during ReadFrame.
 	pendingFooter *capturepb.CaptureFooter
 }
 
-// NewReader opens a tape file for streaming reads.
-func NewReader(filename string) (*Reader, error) {
+// NewReader opens a tape file for streaming reads. Reads are bounded by
+// DefaultLimits (SEC-001 decompression-bomb guard); pass ReaderOptions to
+// raise or disable the budgets for a legitimately giant capture.
+func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
+	limits := applyReaderOptions(opts)
+
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
 	}
 
-	decoder, err := zstd.NewReader(file)
+	// SEC-001: cap the decoder's own memory (streaming window) alongside the
+	// total decoded-bytes budget enforced by budgetReader.
+	var zstdOpts []zstd.DOption
+	if limits.MaxDecodedBytes > 0 {
+		zstdOpts = append(zstdOpts, zstd.WithDecoderMaxMemory(uint64(limits.MaxDecodedBytes)))
+	}
+	decoder, err := zstd.NewReader(file, zstdOpts...)
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
 	}
@@ -269,9 +285,15 @@ func NewReader(filename string) (*Reader, error) {
 	return &Reader{
 		file:    file,
 		decoder: decoder,
-		reader:  decoder,
+		reader:  newBudgetReader(decoder, limits.MaxDecodedBytes),
+		limits:  limits,
 	}, nil
 }
+
+// Limits returns the resource budgets in effect for this reader. Frame
+// accumulators (e.g. conversion.OpenSession) enforce these too, so raising or
+// disabling a budget on the reader flows through every consumer.
+func (r *Reader) Limits() Limits { return r.limits }
 
 // ReadHeader reads the first envelope, which must be a CaptureHeader.
 func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
@@ -297,6 +319,11 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 
 	frame := env.GetFrame()
 	if frame != nil {
+		// SEC-001: bound the number of frames a capture may yield.
+		r.framesRead++
+		if err := r.limits.checkFrameBudget(r.framesRead); err != nil {
+			return nil, fmt.Errorf("tape: %w", err)
+		}
 		return frame, nil
 	}
 
