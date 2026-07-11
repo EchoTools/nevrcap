@@ -62,6 +62,11 @@ var (
 	// ErrMaxFrameCount is returned when a capture yields more frames than the
 	// configured MaxFrameCount budget (SEC-001: decompression bomb).
 	ErrMaxFrameCount = errors.New("frame count exceeds MaxFrameCount budget; raise with codec.WithMaxFrameCount or disable with codec.WithoutLimits")
+
+	// ErrUnexpectedEnvelope is returned when the frame stream contains a
+	// non-frame, non-footer envelope (e.g. a stray header or an empty envelope)
+	// before the footer — a malformed or truncated-and-concatenated capture.
+	ErrUnexpectedEnvelope = errors.New("unexpected non-frame envelope before footer")
 )
 
 // Limits bounds the resources a reader will spend on a single capture, so a

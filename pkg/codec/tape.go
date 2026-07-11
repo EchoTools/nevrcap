@@ -327,11 +327,13 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 		return frame, nil
 	}
 
-	// Non-frame envelope — save footer if present and signal end of frames.
+	// A footer marks the clean end of frames.
 	if footer := env.GetFooter(); footer != nil {
 		r.pendingFooter = footer
+		return nil, io.EOF
 	}
-	return nil, io.EOF
+	// Anything else here is a malformed stream.
+	return nil, fmt.Errorf("tape: %w", ErrUnexpectedEnvelope)
 }
 
 // ReadFooter returns the capture footer. If ReadFrame already encountered it,
