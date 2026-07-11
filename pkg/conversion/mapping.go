@@ -89,6 +89,9 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 		CaptureId:     v1.GetCaptureId(),
 		CreatedAt:     v1.GetCreatedAt(),
 		FormatVersion: 2,
+		FormatMinor:   1, // this batch ships 2.1.0
+		FormatPatch:   0,
+		FrameEncoding: capturepb.FrameEncoding_FRAME_ENCODING_SPARSE,
 		Metadata:      v1.GetMetadata(),
 	}
 
@@ -663,13 +666,19 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_RoundPaused:
-		evt.Event = &capturepb.EchoEvent_RoundPaused{
-			RoundPaused: &capturepb.RoundPaused{},
+		rp := &capturepb.RoundPaused{}
+		if ps := e.RoundPaused.GetPauseState(); ps != nil {
+			rp.PauseState = pauseStateMap[ps.GetPausedState()]
+			rp.RequestingTeam = teamStringToRole(ps.GetPausedRequestedTeam())
+			rp.PauseTimer = float32(ps.GetPausedTimer())
 		}
+		evt.Event = &capturepb.EchoEvent_RoundPaused{RoundPaused: rp}
 	case *telemetryv1.LobbySessionEvent_RoundUnpaused:
-		evt.Event = &capturepb.EchoEvent_RoundUnpaused{
-			RoundUnpaused: &capturepb.RoundUnpaused{},
+		ru := &capturepb.RoundUnpaused{}
+		if ps := e.RoundUnpaused.GetPauseState(); ps != nil {
+			ru.PauseState = pauseStateMap[ps.GetPausedState()]
 		}
+		evt.Event = &capturepb.EchoEvent_RoundUnpaused{RoundUnpaused: ru}
 	case *telemetryv1.LobbySessionEvent_RoundEnded:
 		evt.Event = &capturepb.EchoEvent_RoundEnded{
 			RoundEnded: &capturepb.RoundEnded{
@@ -776,9 +785,12 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			gs.GoalType = goalTypeStringToEnum(sd.GetGoalType())
 			gs.PointAmount = sd.GetPointAmount()
 			gs.DistanceThrown = float32(sd.GetDistanceThrown())
-			// PersonScored and AssistScored are display names in v1;
-			// ScorerSlot and AssistSlot are slot indices in v2 and cannot
-			// be resolved from names alone, so they remain at zero values.
+			gs.PersonScored = sd.GetPersonScored()
+			gs.AssistScored = sd.GetAssistScored()
+			// ScorerSlot / AssistSlot are slot indices in v2 and cannot be
+			// resolved from v1 display names alone, so they remain zero; the
+			// real scorer slot rides the parallel PlayerGoal event, and the
+			// display names now survive on PersonScored / AssistScored.
 		}
 		evt.Event = &capturepb.EchoEvent_GoalScored{
 			GoalScored: gs,

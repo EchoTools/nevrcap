@@ -1028,3 +1028,45 @@ func TestFloat32SliceToBytes(t *testing.T) {
 		}
 	}
 }
+
+// Item 1 (F): the converter declares SemVer 2.1.0 in the header.
+func TestMapHeader_DeclaresFormat210(t *testing.T) {
+	got := MapHeader(&telemetryv1.TelemetryHeader{CaptureId: "x"})
+	if got.GetFormatVersion() != 2 || got.GetFormatMinor() != 1 || got.GetFormatPatch() != 0 {
+		t.Errorf("format = %d.%d.%d, want 2.1.0",
+			got.GetFormatVersion(), got.GetFormatMinor(), got.GetFormatPatch())
+	}
+}
+
+// Item 2 (F): the converter tags the capture as SPARSE-encoded.
+func TestMapHeader_FrameEncodingSparse(t *testing.T) {
+	got := MapHeader(&telemetryv1.TelemetryHeader{CaptureId: "x"})
+	if got.GetFrameEncoding() != capturepb.FrameEncoding_FRAME_ENCODING_SPARSE {
+		t.Errorf("frame_encoding = %v, want SPARSE", got.GetFrameEncoding())
+	}
+}
+
+// Item 3 (F-2): RoundPaused carries the pause state, requesting team, and timer.
+func TestMapEvent_RoundPausedCarriesPauseState(t *testing.T) {
+	v1e := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_RoundPaused{
+			RoundPaused: &telemetryv1.RoundPaused{
+				PauseState: &enginev1.PauseState{
+					PausedState:         "paused",
+					PausedRequestedTeam: "blue",
+					PausedTimer:         12.5,
+				},
+			},
+		},
+	}
+	rp := mapEvent(v1e).GetRoundPaused()
+	if rp.GetPauseState() != capturepb.PauseState_PAUSE_STATE_PAUSED {
+		t.Errorf("pause_state = %v, want PAUSED", rp.GetPauseState())
+	}
+	if rp.GetRequestingTeam() != capturepb.Role_ROLE_BLUE_TEAM {
+		t.Errorf("requesting_team = %v, want BLUE", rp.GetRequestingTeam())
+	}
+	if rp.GetPauseTimer() != 12.5 {
+		t.Errorf("pause_timer = %v, want 12.5", rp.GetPauseTimer())
+	}
+}

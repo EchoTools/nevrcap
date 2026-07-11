@@ -5,6 +5,35 @@ status. Check this before idling. (Convention: every repo gets a root BUGS.md.)
 
 ---
 
+## OPEN — RELEASE-001: `feat/obvious-batch-2.1.0` carries a TEMP go.mod replace (pre-merge gate)
+
+**Severity:** release-blocker for merging `feat/obvious-batch-2.1.0` to main. Not a
+code bug.
+
+**What:** The obvious-batch items (SemVer 2.1.0 header fields, `FrameEncoding`,
+`GoalScored.person_scored/assist_scored`) depend on telemetry/v2 proto additions
+that live in `nevr-proto` branch `feat/obvious-batch-2.1.0` and are **not yet
+published to the BSR** (`buf.build/echotools/nevr-api`). So `tape/go.mod` on this
+branch carries a **temporary dev-local `replace`** pointing at nevr-proto's local
+`buf generate` output, marked `// TEMP pre-BSR-publish shim`. Without it the tape
+wire-ups do not compile against the pinned BSR module.
+
+**Pre-merge gate (hard invariant — main's go.mod NEVER carries this replace):**
+before merging `feat/obvious-batch-2.1.0` to main, the `nevr-proto` proto changes
+must be merged and BSR-published, then in tape: **remove the `replace` line and
+bump the `buf.build/gen/go/echotools/nevr-api/protocolbuffers/go` require to the
+newly-published nevr-api version**, and confirm `go build ./...` + `go test -race
+./...` green against that BSR pin.
+
+**Evidence:** dropping the replace on this branch fails to build with 6 compile
+errors (`unknown field FormatMinor…`, `undefined: capturepb.FrameEncoding_…`,
+`gs.PersonScored undefined`, etc.) because the BSR module lacks the new fields.
+The local codegen harness (`nevr-proto/buf.gen.yaml`, `docs/local-codegen.md`) is
+byte-parity with the BSR SDK plus these additive fields, so the golden regenerated
+now will match post-publish BSR output.
+
+---
+
 ## OPEN — FIDELITY-001: v2 is a lossy projection of v1; echoreplay does not round-trip through v2
 
 **Severity:** design-level. Blocks treating v2 as the archival/anticheat format.

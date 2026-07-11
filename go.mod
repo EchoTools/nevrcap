@@ -21,3 +21,6 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/term v0.44.0 // indirect
 )
+
+// TEMP pre-BSR-publish shim — REMOVE and bump to the published nevr-api version before merge to main
+replace buf.build/gen/go/echotools/nevr-api/protocolbuffers/go => /home/andrew/src/nevr-proto/gen/go/buf.build/gen/go/echotools/nevr-api/protocolbuffers/go

@@ -575,3 +575,24 @@ func TestEmotePlayed_EmoteTypePreserved(t *testing.T) {
 	// mapper.
 	_ = ep.Emote
 }
+
+// Item 6 (F-8): GoalScored now carries the engine's scorer/assister display
+// names (v1 LastScore person_scored/assist_scored) into v2.
+func TestGoalScored_NamesPopulated(t *testing.T) {
+	v1e := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_GoalScored{
+			GoalScored: &telemetryv1.GoalScored{
+				ScoreDetails: &enginev1.LastScore{
+					PersonScored: "PlayerOne", AssistScored: "PlayerTwo",
+				},
+			},
+		},
+	}
+	gs := mapEvent(v1e).GetGoalScored()
+	if gs.GetPersonScored() != "PlayerOne" {
+		t.Errorf("person_scored = %q, want PlayerOne", gs.GetPersonScored())
+	}
+	if gs.GetAssistScored() != "PlayerTwo" {
+		t.Errorf("assist_scored = %q, want PlayerTwo", gs.GetAssistScored())
+	}
+}
