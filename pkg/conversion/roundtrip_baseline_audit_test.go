@@ -42,6 +42,8 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 
 	totalFrames := 0
 	lossy := 0
+	lossySession := 0
+	lossyFrame := 0
 
 	for _, f := range files {
 		frames, sessionMismatch, frameMismatch, err := roundTripEchoReplay(t, f)
@@ -50,18 +52,51 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 			continue
 		}
 		totalFrames += frames
-		status := "LOSSLESS"
-		if sessionMismatch > 0 {
-			status = "LOSSY"
+		status, isLossy := auditStatus(sessionMismatch, frameMismatch)
+		if isLossy {
 			lossy++
+			if sessionMismatch > 0 {
+				lossySession++
+			} else {
+				lossyFrame++
+			}
 		}
-		t.Logf("%-8s %-70s frames=%-6d session-mismatch=%d whole-frame-mismatch=%d",
+		t.Logf("%-14s %-70s frames=%-6d session-mismatch=%d whole-frame-mismatch=%d",
 			status, filepath.Base(f), frames, sessionMismatch, frameMismatch)
 	}
 
-	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy", len(files), totalFrames, lossy)
+	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy (%d SessionResponse, %d whole-frame-only)",
+		len(files), totalFrames, lossy, lossySession, lossyFrame)
 	if lossy > 0 {
-		t.Fatalf("ECHOREPLAY ROUND-TRIP IS LOSSY on %d/%d audited file(s)", lossy, len(files))
+		t.Fatalf("ECHOREPLAY ROUND-TRIP IS LOSSY on %d/%d audited file(s): "+
+			"%d lost SessionResponse fields, %d lost whole-frame data outside the SessionResponse "+
+			"(player bones) while their SessionResponse survived",
+			lossy, len(files), lossySession, lossyFrame)
+	}
+}
+
+// auditStatus classifies one audited file from its two mismatch counters. The
+// lanes are kept distinct — and BOTH are fatal:
+//
+//   - sessionMismatch: the frame's SessionResponse did not survive the
+//     round-trip. A session field was lost.
+//   - frameMismatch: the whole LobbySessionStateFrame did not survive. The
+//     SessionResponse is part of the frame, so a session loss always shows up
+//     here as well; a frame mismatch with NO session mismatch means the loss is
+//     OUTSIDE the SessionResponse — in practice the player bones.
+//
+// The bones case is why the frame lane must fail the audit: a recording that
+// round-tripped with every PlayerBones dropped scores sessionMismatch=0, and
+// calling that LOSSLESS is exactly the wrong answer to the only question this
+// audit exists to answer — whether the originals can be deleted.
+func auditStatus(sessionMismatch, frameMismatch int) (status string, lossy bool) {
+	switch {
+	case sessionMismatch > 0:
+		return "LOSSY-SESSION", true
+	case frameMismatch > 0:
+		return "LOSSY-FRAME", true
+	default:
+		return "LOSSLESS", false
 	}
 }
 

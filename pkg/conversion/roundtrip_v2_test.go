@@ -13,6 +13,7 @@ import (
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/echotools/tape/pkg/codec"
 	"github.com/echotools/tape/pkg/conversion"
+	"google.golang.org/protobuf/proto"
 )
 
 // Two float tolerances, by error mechanism:
@@ -368,16 +369,60 @@ func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("last_throw", orig.GetLastThrow() != nil && recon.GetLastThrow() == nil, "present in orig, dropped in recon")
 	ta.found("last_score", orig.GetLastScore() != nil && recon.GetLastScore() == nil, "present in orig, dropped in recon")
 
-	// Team-level fields with no v2 home.
+	// Team-level fields with no v2 home. Every probe below compares the original
+	// against the RECONSTRUCTION — a probe that only checks presence in the
+	// original cannot tell a fixed field from a lost one, and would fail the
+	// gate on correct code the day someone deletes its knownUnpreserved entry.
+	//
+	// Teams are paired by their slot set, not by array index: reconstruction
+	// omits empty teams, so index i is not the same team on both sides. An
+	// original team with no counterpart compares against the zero Team, which is
+	// the truth — its fields are absent from the reconstruction. That structural
+	// case is reported separately as team_count(empty_teams), so a team-level
+	// field only stops being a finding once empty teams are reconstructed too.
 	teamCountFinding := len(orig.GetTeams()) != len(recon.GetTeams())
 	ta.found("team_count(empty_teams)", teamCountFinding, fmt.Sprintf("orig=%d recon=%d teams", len(orig.GetTeams()), len(recon.GetTeams())))
+	reconTeams := teamsBySlotSet(recon)
+	reconMembers := slotMembers(recon)
 	for _, team := range orig.GetTeams() {
-		ta.found("team_name", team.GetTeamName() != "", team.GetTeamName())
-		ta.found("team.stats", team.GetStats() != nil, "team stats dropped")
+		rteam := reconTeams[slotSetKey(team)]
+		ta.found("team_name", team.GetTeamName() != rteam.GetTeamName(),
+			fmt.Sprintf("orig=%q recon=%q", team.GetTeamName(), rteam.GetTeamName()))
+		ta.found("team.stats", !proto.Equal(team.GetStats(), rteam.GetStats()),
+			fmt.Sprintf("team %q: orig has stats=%v recon has stats=%v", team.GetTeamName(), team.GetStats() != nil, rteam.GetStats() != nil))
 		for _, m := range team.GetPlayers() {
-			ta.found("player.stats", m.GetStats() != nil, "player stats dropped")
+			rm := reconMembers[m.GetSlotNumber()]
+			ta.found("player.stats", !proto.Equal(m.GetStats(), rm.GetStats()),
+				fmt.Sprintf("slot %d: orig has stats=%v recon has stats=%v", m.GetSlotNumber(), m.GetStats() != nil, rm.GetStats() != nil))
 		}
 	}
+}
+
+// slotSetKey identifies a team by the sorted slot numbers of its players.
+func slotSetKey(team *enginev1.Team) string {
+	slots := make([]int32, 0, len(team.GetPlayers()))
+	for _, m := range team.GetPlayers() {
+		slots = append(slots, m.GetSlotNumber())
+	}
+	slices.Sort(slots)
+	return fmt.Sprint(slots)
+}
+
+// teamsBySlotSet indexes a session's teams by slot set so an original team can
+// be paired with its reconstructed counterpart independent of team-array
+// ordering. If two teams share a slot set (in practice only the empty one), the
+// first wins; the resulting count difference is reported as
+// team_count(empty_teams).
+func teamsBySlotSet(s *enginev1.SessionResponse) map[string]*enginev1.Team {
+	out := map[string]*enginev1.Team{}
+	for _, team := range s.GetTeams() {
+		key := slotSetKey(team)
+		if _, dup := out[key]; dup {
+			continue
+		}
+		out[key] = team
+	}
+	return out
 }
 
 // runRoundTrip performs echoreplay -> v2 -> echoreplay and compares originals to
