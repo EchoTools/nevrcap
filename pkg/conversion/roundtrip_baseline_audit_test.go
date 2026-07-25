@@ -24,8 +24,13 @@ import (
 // TAPE_AUDIT_FILE may be a single .echoreplay OR a directory, in which case
 // every .echoreplay inside is checked (bounded by TAPE_AUDIT_LIMIT, default 25).
 //
+// TAPE_AUDIT_KEYSCAN bounds the key-set guard's per-file frame budget
+// (default defaultKeyScanBudget; 0 = every frame).
+//
 // BAC: for every audited recording, echoreplay -> v1 codec -> echoreplay
-// preserves the complete SessionResponse of every frame, field for field.
+// preserves the complete SessionResponse of every frame, field for field, AND
+// every JSON key present in the original file's session objects is a key the
+// proto can represent — nothing was dropped before the comparison began.
 func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 	target := os.Getenv("TAPE_AUDIT_FILE")
 	if target == "" {
@@ -40,10 +45,12 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 		t.Fatalf("no .echoreplay files found under %s", target)
 	}
 
+	budget := keyScanBudget()
 	totalFrames := 0
 	lossy := 0
 	lossySession := 0
 	lossyFrame := 0
+	lossyKeys := 0
 
 	for _, f := range files {
 		frames, sessionMismatch, frameMismatch, err := roundTripEchoReplay(t, f)
@@ -51,32 +58,58 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 			t.Errorf("%s: %v", filepath.Base(f), err)
 			continue
 		}
+		// The key-set completeness guard reads the ORIGINAL FILE'S BYTES. The
+		// two mismatch counters above cannot: both sides of that comparison
+		// come from the same reader, which discards unknown keys, so content
+		// dropped at read time is invisible to it. See keyset_guard_test.go.
+		keys, err := auditSessionKeys(f, budget)
+		if err != nil {
+			t.Errorf("%s: key-set guard: %v", filepath.Base(f), err)
+			continue
+		}
 		totalFrames += frames
-		status, isLossy := auditStatus(sessionMismatch, frameMismatch)
+		status, isLossy := auditStatus(sessionMismatch, frameMismatch, len(keys.Findings))
 		if isLossy {
 			lossy++
-			if sessionMismatch > 0 {
+			switch {
+			case len(keys.Findings) > 0:
+				lossyKeys++
+			case sessionMismatch > 0:
 				lossySession++
-			} else {
+			default:
 				lossyFrame++
 			}
 		}
-		t.Logf("%-14s %-70s frames=%-6d session-mismatch=%d whole-frame-mismatch=%d",
-			status, filepath.Base(f), frames, sessionMismatch, frameMismatch)
+		t.Logf("%-14s %-70s frames=%-6d session-mismatch=%d whole-frame-mismatch=%d %s",
+			status, filepath.Base(f), frames, sessionMismatch, frameMismatch, keys.Summary())
 	}
 
-	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy (%d SessionResponse, %d whole-frame-only)",
-		len(files), totalFrames, lossy, lossySession, lossyFrame)
+	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy (%d unrepresentable-keys, %d SessionResponse, %d whole-frame-only)",
+		len(files), totalFrames, lossy, lossyKeys, lossySession, lossyFrame)
 	if lossy > 0 {
 		t.Fatalf("ECHOREPLAY ROUND-TRIP IS LOSSY on %d/%d audited file(s): "+
-			"%d lost SessionResponse fields, %d lost whole-frame data outside the SessionResponse "+
-			"(player bones) while their SessionResponse survived",
-			lossy, len(files), lossySession, lossyFrame)
+			"%d carry JSON keys the proto cannot represent (discarded at read time, so the "+
+			"round-trip comparison never saw them), %d lost SessionResponse fields, %d lost "+
+			"whole-frame data outside the SessionResponse (player bones) while their "+
+			"SessionResponse survived",
+			lossy, len(files), lossyKeys, lossySession, lossyFrame)
 	}
 }
 
-// auditStatus classifies one audited file from its two mismatch counters. The
-// lanes are kept distinct — and BOTH are fatal:
+// keyScanBudget bounds how many frames per file the key-set guard JSON-parses.
+// TAPE_AUDIT_KEYSCAN overrides it; 0 means parse every frame. See
+// defaultKeyScanBudget for why a budget exists and what sampling costs.
+func keyScanBudget() int {
+	if v := os.Getenv("TAPE_AUDIT_KEYSCAN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return n
+		}
+	}
+	return defaultKeyScanBudget
+}
+
+// auditStatus classifies one audited file from its loss counters. The lanes are
+// kept distinct — and ALL are fatal:
 //
 //   - sessionMismatch: the frame's SessionResponse did not survive the
 //     round-trip. A session field was lost.
@@ -89,8 +122,19 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 // round-tripped with every PlayerBones dropped scores sessionMismatch=0, and
 // calling that LOSSLESS is exactly the wrong answer to the only question this
 // audit exists to answer — whether the originals can be deleted.
-func auditStatus(sessionMismatch, frameMismatch int) (status string, lossy bool) {
+//
+// The third lane, unknownKeys, comes from the key-set completeness guard
+// (keyset_guard_test.go) and outranks both mismatch lanes. Both mismatch
+// counters are computed from PARSED frames, so anything the reader discarded
+// is missing from both sides of the comparison and scores zero in each: the
+// reader is built with protojson DiscardUnknown, and a real recording rebuilt
+// with an unknown key in all 288 session objects audited LOSSLESS, 0/0, PASS.
+// A non-zero unknownKeys count means the file carries content the codec never
+// admitted — so the comparison was blind and its zeroes prove nothing.
+func auditStatus(sessionMismatch, frameMismatch, unknownKeys int) (status string, lossy bool) {
 	switch {
+	case unknownKeys > 0:
+		return "LOSSY-KEYS", true
 	case sessionMismatch > 0:
 		return "LOSSY-SESSION", true
 	case frameMismatch > 0:
