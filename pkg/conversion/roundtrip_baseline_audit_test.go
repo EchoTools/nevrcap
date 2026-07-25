@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/pkg/fidelity"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -24,8 +25,11 @@ import (
 // TAPE_AUDIT_FILE may be a single .echoreplay OR a directory, in which case
 // every .echoreplay inside is checked (bounded by TAPE_AUDIT_LIMIT, default 25).
 //
-// TAPE_AUDIT_KEYSCAN bounds the key-set guard's per-file frame budget
-// (default defaultKeyScanBudget; 0 = every frame).
+// The key-set guard is exhaustive: every frame of every file. It used to take a
+// frame budget (TAPE_AUDIT_KEYSCAN) and sample past it, because parsing each
+// payload into map[string]any cost ~20 minutes and 13 GB on a 102,892-frame
+// recording. The scanner no longer materializes anything, so the budget — and
+// with it the possibility of a guard that quietly did not look — is gone.
 //
 // BAC: for every audited recording, echoreplay -> v1 codec -> echoreplay
 // preserves the complete SessionResponse of every frame, field for field, AND
@@ -45,15 +49,15 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 		t.Fatalf("no .echoreplay files found under %s", target)
 	}
 
-	budget := keyScanBudget()
 	totalFrames := 0
 	lossy := 0
 	lossySession := 0
 	lossyFrame := 0
 	lossyKeys := 0
+	lossyDropped := 0
 
 	for _, f := range files {
-		frames, sessionMismatch, frameMismatch, err := roundTripEchoReplay(t, f)
+		frames, skipped, sessionMismatch, frameMismatch, err := roundTripEchoReplay(t, f)
 		if err != nil {
 			t.Errorf("%s: %v", filepath.Base(f), err)
 			continue
@@ -61,17 +65,21 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 		// The key-set completeness guard reads the ORIGINAL FILE'S BYTES. The
 		// two mismatch counters above cannot: both sides of that comparison
 		// come from the same reader, which discards unknown keys, so content
-		// dropped at read time is invisible to it. See keyset_guard_test.go.
-		keys, err := auditSessionKeys(f, budget)
+		// dropped at read time is invisible to it. It is exhaustive — every
+		// frame of every file. See pkg/fidelity/keyscan.go.
+		keys, err := fidelity.ScanEchoReplayKeys(f)
 		if err != nil {
 			t.Errorf("%s: key-set guard: %v", filepath.Base(f), err)
 			continue
 		}
 		totalFrames += frames
-		status, isLossy := auditStatus(sessionMismatch, frameMismatch, len(keys.Findings))
+		dropped := skipped + keys.ParseErrors
+		status, isLossy := auditStatus(sessionMismatch, frameMismatch, len(keys.Findings), dropped)
 		if isLossy {
 			lossy++
 			switch {
+			case dropped > 0:
+				lossyDropped++
 			case len(keys.Findings) > 0:
 				lossyKeys++
 			case sessionMismatch > 0:
@@ -80,32 +88,21 @@ func TestEchoReplayRoundTripFidelityAudit(t *testing.T) {
 				lossyFrame++
 			}
 		}
-		t.Logf("%-14s %-70s frames=%-6d session-mismatch=%d whole-frame-mismatch=%d %s",
-			status, filepath.Base(f), frames, sessionMismatch, frameMismatch, keys.Summary())
+		t.Logf("%-14s %-70s frames=%-6d codec-skipped=%d session-mismatch=%d whole-frame-mismatch=%d %s",
+			status, filepath.Base(f), frames, skipped, sessionMismatch, frameMismatch, keys.Summary())
 	}
 
-	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy (%d unrepresentable-keys, %d SessionResponse, %d whole-frame-only)",
-		len(files), totalFrames, lossy, lossyKeys, lossySession, lossyFrame)
+	t.Logf("AUDIT SUMMARY: %d file(s), %d frames, %d lossy (%d dropped-at-read, %d unrepresentable-keys, %d SessionResponse, %d whole-frame-only)",
+		len(files), totalFrames, lossy, lossyDropped, lossyKeys, lossySession, lossyFrame)
 	if lossy > 0 {
 		t.Fatalf("ECHOREPLAY ROUND-TRIP IS LOSSY on %d/%d audited file(s): "+
-			"%d carry JSON keys the proto cannot represent (discarded at read time, so the "+
-			"round-trip comparison never saw them), %d lost SessionResponse fields, %d lost "+
-			"whole-frame data outside the SessionResponse (player bones) while their "+
+			"%d dropped whole frames at read time (unparseable payloads, absent from both sides "+
+			"of the comparison), %d carry JSON keys the proto cannot represent (discarded at read "+
+			"time, so the round-trip comparison never saw them), %d lost SessionResponse fields, "+
+			"%d lost whole-frame data outside the SessionResponse (player bones) while their "+
 			"SessionResponse survived",
-			lossy, len(files), lossyKeys, lossySession, lossyFrame)
+			lossy, len(files), lossyDropped, lossyKeys, lossySession, lossyFrame)
 	}
-}
-
-// keyScanBudget bounds how many frames per file the key-set guard JSON-parses.
-// TAPE_AUDIT_KEYSCAN overrides it; 0 means parse every frame. See
-// defaultKeyScanBudget for why a budget exists and what sampling costs.
-func keyScanBudget() int {
-	if v := os.Getenv("TAPE_AUDIT_KEYSCAN"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			return n
-		}
-	}
-	return defaultKeyScanBudget
 }
 
 // auditStatus classifies one audited file from its loss counters. The lanes are
@@ -124,15 +121,25 @@ func keyScanBudget() int {
 // audit exists to answer — whether the originals can be deleted.
 //
 // The third lane, unknownKeys, comes from the key-set completeness guard
-// (keyset_guard_test.go) and outranks both mismatch lanes. Both mismatch
+// (pkg/fidelity/keyscan.go) and outranks both mismatch lanes. Both mismatch
 // counters are computed from PARSED frames, so anything the reader discarded
 // is missing from both sides of the comparison and scores zero in each: the
 // reader is built with protojson DiscardUnknown, and a real recording rebuilt
 // with an unknown key in all 288 session objects audited LOSSLESS, 0/0, PASS.
 // A non-zero unknownKeys count means the file carries content the codec never
 // admitted — so the comparison was blind and its zeroes prove nothing.
-func auditStatus(sessionMismatch, frameMismatch, unknownKeys int) (status string, lossy bool) {
+//
+// The fourth lane, droppedFrames, outranks even that, and is the same defect
+// one step further: a frame whose session JSON does not parse is not partially
+// read, it is SKIPPED (pkg/codec/echoreplay.go increments skippedFrames and
+// continues). A skipped frame is absent from both sides of every comparison and
+// from the frame counts on both sides, so nothing downstream can notice it.
+// Whole frames vanishing is the largest possible loss, so it is the highest
+// lane.
+func auditStatus(sessionMismatch, frameMismatch, unknownKeys, droppedFrames int) (status string, lossy bool) {
 	switch {
+	case droppedFrames > 0:
+		return "LOSSY-DROPPED", true
 	case unknownKeys > 0:
 		return "LOSSY-KEYS", true
 	case sessionMismatch > 0:
@@ -181,48 +188,55 @@ func collectEchoReplays(target string, limit int) ([]string, error) {
 
 // roundTripEchoReplay reads a recording, writes it back out through the
 // echoreplay codec, re-reads it, and compares every frame's SessionResponse.
-func roundTripEchoReplay(t *testing.T, src string) (frames, sessionMismatch, frameMismatch int, err error) {
+//
+// skipped is what the reader itself refused: lines whose session JSON did not
+// parse. The codec counts them and continues, so they never appear in `orig` at
+// all — which is precisely why the caller must treat a non-zero count as loss
+// rather than as an absence of evidence.
+func roundTripEchoReplay(t *testing.T, src string) (frames, skipped, sessionMismatch, frameMismatch int, err error) {
 	t.Helper()
 
 	r1, err := codec.NewEchoReplayReader(src)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("open original: %w", err)
+		return 0, 0, 0, 0, fmt.Errorf("open original: %w", err)
 	}
 	orig, err := r1.ReadFrames()
+	skipped = int(r1.SkippedFrames())
 	_ = r1.Close()
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("read original: %w", err)
+		return 0, skipped, 0, 0, fmt.Errorf("read original: %w", err)
 	}
 	if len(orig) == 0 {
-		return 0, 0, 0, fmt.Errorf("original had zero frames")
+		return 0, skipped, 0, 0, fmt.Errorf("original had zero frames")
 	}
 
 	tmp := filepath.Join(t.TempDir(), filepath.Base(src))
 	w, err := codec.NewEchoReplayWriter(tmp)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("open writer: %w", err)
+		return 0, skipped, 0, 0, fmt.Errorf("open writer: %w", err)
 	}
 	for _, f := range orig {
 		if err := w.WriteFrame(f); err != nil {
 			_ = w.Close()
-			return 0, 0, 0, fmt.Errorf("write frame: %w", err)
+			return 0, skipped, 0, 0, fmt.Errorf("write frame: %w", err)
 		}
 	}
 	if err := w.Close(); err != nil {
-		return 0, 0, 0, fmt.Errorf("close writer: %w", err)
+		return 0, skipped, 0, 0, fmt.Errorf("close writer: %w", err)
 	}
 
 	r2, err := codec.NewEchoReplayReader(tmp)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("open round-tripped: %w", err)
+		return 0, skipped, 0, 0, fmt.Errorf("open round-tripped: %w", err)
 	}
 	rt, err := r2.ReadFrames()
+	skipped += int(r2.SkippedFrames())
 	_ = r2.Close()
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("read round-tripped: %w", err)
+		return 0, skipped, 0, 0, fmt.Errorf("read round-tripped: %w", err)
 	}
 	if len(rt) != len(orig) {
-		return 0, 0, 0, fmt.Errorf("frame count changed: %d -> %d", len(orig), len(rt))
+		return 0, skipped, 0, 0, fmt.Errorf("frame count changed: %d -> %d", len(orig), len(rt))
 	}
 
 	for i := range orig {
@@ -233,5 +247,5 @@ func roundTripEchoReplay(t *testing.T, src string) (frames, sessionMismatch, fra
 			frameMismatch++
 		}
 	}
-	return len(orig), sessionMismatch, frameMismatch, nil
+	return len(orig), skipped, sessionMismatch, frameMismatch, nil
 }

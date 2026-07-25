@@ -34,6 +34,46 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — FIDELITY-002: fields the reflective differ found losing, that the hand-written comparison never looked at (AWAITING RULING)
+
+**Severity:** unresolved fidelity loss. `TestRoundTripBAC` is RED on the
+committed sample until Andrew rules on each path below. Do NOT allowlist them to
+get green.
+
+**What:** the round-trip comparison was a hand-written enumeration. Replacing it
+with a descriptor-driven differ (`pkg/fidelity`, per Andrew's 2026-07-25 ruling
+"i want everything compared … errors on anything not in the round trip or any
+fields/differences in the round trip source and target") raised SessionResponse
+coverage from a partial hand list to **138/138 schema fields, proven reached**.
+The fields below were never compared before and do not round-trip. Each needs a
+ruling: fix the loss, or record it in `KnownUnpreserved` with a citation.
+
+| path | observed |
+| ---- | -------- |
+| `SessionResponse.client_name` | sample: orig=`Milkyway` recon=`""`, all 1023 frames. Empty in the chi1 recordings, so it only fails where the file has one. |
+| `SessionResponse.pause.unpaused_team` | sample: orig=`none` recon=`""` ×1023. chi1: orig=`blue` ×5272. |
+| `SessionResponse.pause.paused_requested_team` | sample: orig=`none` recon=`""` ×1023. chi1: orig=`blue` ×5272. |
+| `SessionResponse.pause.unpaused_timer` | chi1: orig=`-0.0033778567` recon=`0` ×5272. |
+| `SessionResponse.pause.paused_timer` | chi1: orig=`128.05461` recon=`0` ×5272. |
+
+`PauseState` was previously compared on `paused_state` alone — 1 of its 5 fields.
+The DIRECTIVE already lists "pause sub-state (`paused_state` narrowing,
+`unpaused_team`, timers)" as still-open, so these are the same hole, now
+measured; they are NOT allowlisted because no one has ruled that they may be
+lost.
+
+Held failing deliberately (Andrew, same ruling): `blue_round_score`,
+`orange_round_score`, `possession`. Pinned by
+`TestKnownUnpreservedDoesNotCoverTheHeldFields`.
+
+Also newly compared and now covered by EXISTING allowlist entries as subtrees —
+listed here because the entries widened from "the field is lost" to "every
+sub-field of it is lost", which is the same documented hole but was never
+measured before: `last_throw.*` (13 sub-fields), `last_score.*` (7),
+`teams[].stats.*` (12), `teams[].players[].stats.*` (12).
+
+---
+
 ## OPEN — FIDELITY-001: v2 is a lossy projection of v1; echoreplay does not round-trip through v2
 
 **Severity:** design-level. Blocks treating v2 as the archival/anticheat format.
