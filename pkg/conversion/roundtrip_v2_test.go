@@ -32,9 +32,59 @@ const (
 	orientTol = 5e-3
 )
 
+// knownUnpreserved is the explicit allowlist of SessionResponse fields that are
+// KNOWN not to survive echoreplay -> v2 -> echoreplay today. It is seeded from
+// what is actually observed on the committed sample and on a real chi1
+// recording — not from the schema, and not from guesswork.
+//
+// A finding on a field IN this map is logged (the reporting is preserved
+// verbatim) but does not fail. A finding on ANY other field FAILS the test: an
+// acceptance gate that cannot fail on the loss it detects is not a gate.
+//
+// This map is the mechanism by which a future fix is proven: when a field gains
+// a v2 home and round-trips, DELETE its entry — the gate then holds that field
+// losslessly forever after. When this map is empty, v2 is a true superset of
+// engine.v1.SessionResponse and BUGS.md FIDELITY-001 can close.
+//
+// Do NOT add an entry to silence a new failure without a BUGS.md citation and
+// Andrew's call: a new key here is a new documented hole in the archive format.
+var knownUnpreserved = map[string]string{
+	// BUGS.md DIRECTIVE 2026-06-29, still-OPEN: "rules_changed_by /
+	// rules_changed_at — no v2 home." Observed on sample (orig="Milkyway",
+	// rules_changed_at=573360097) and chi1 (orig="[INVALID]").
+	"rules_changed_by": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: rules_changed_by has no v2 home",
+	"rules_changed_at": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: rules_changed_at has no v2 home",
+
+	// BUGS.md DIRECTIVE still-open: "per-frame last_throw and last_score (incl.
+	// scorer/assist names — v2 GoalScored is slot-only) — v2 only carries
+	// throws/goals as events." Observed present-in-orig, nil-in-recon on every
+	// frame of both files.
+	"last_throw": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: per-frame last_throw is only carried as an event",
+	"last_score": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: per-frame last_score is only carried as an event",
+
+	// BUGS.md DIRECTIVE still-open: "per-frame game_clock_display +
+	// blue/orange_round_score — only event-sampled (ScoreboardUpdated); BUG: the
+	// score sensor seeds frame 0 silently (no event), so any pre-first-change
+	// value is unrecoverable." Observed: orig="11:02.80"/"10:00.00", recon="".
+	// NOTE: blue_round_score / orange_round_score are deliberately NOT
+	// allowlisted — they round-trip on both files today, so the gate holds them.
+	"game_clock_display": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: game_clock_display is only event-sampled; score sensor does not seed frame 0",
+
+	// BUGS.md DIRECTIVE still-open: "team_name (string) — roster stores Role
+	// enum only." Observed on every team of every frame in both files.
+	"team_name": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: team_name has no v2 home (roster stores Role enum only)",
+
+	// BUGS.md DIRECTIVE still-open: "per-frame team.stats / player.stats; empty-team
+	// structural case." Observed on every team and every player of both files;
+	// the empty (spectator) team is dropped, so orig=3 teams -> recon=2.
+	"team.stats":              "BUGS.md FIDELITY-001 / DIRECTIVE still-open: per-frame team.stats has no v2 home",
+	"player.stats":            "BUGS.md FIDELITY-001 / DIRECTIVE still-open: per-frame player.stats has no v2 home",
+	"team_count(empty_teams)": "BUGS.md FIDELITY-001 / DIRECTIVE still-open: empty-team structural case — teams with no players are not reconstructed",
+}
+
 // tally accumulates the round-trip comparison: recoverable mismatches (which
 // must be zero for the gate to pass) and findings (fields v2 does not preserve,
-// measured and reported but not asserted — see SCHEMA-GAPS.md).
+// which must all be on the knownUnpreserved allowlist — see SCHEMA-GAPS.md).
 type tally struct {
 	exactMismatch  map[string]int
 	exactExample   map[string]string
@@ -302,9 +352,10 @@ func compareHandPart(ta *tally, name string, a, b *enginev1.HandPart) {
 	ta.orientVec(name+".up", a.GetUp(), b.GetUp())
 }
 
-// measureFindings counts SessionResponse fields that v2 does not preserve. These
-// are reported, never asserted: per SCHEMA-GAPS.md they have no v2 home (or only
-// an event sample), so a non-zero count here is the round-trip's true loss.
+// measureFindings counts SessionResponse fields that v2 does not preserve. A
+// non-zero count here is the round-trip's true loss. Findings on fields in
+// knownUnpreserved are reported; findings on any other field fail the test
+// (see report).
 func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("rules_changed_by", orig.GetRulesChangedBy() != recon.GetRulesChangedBy(), fmt.Sprintf("orig=%q recon=%q", orig.GetRulesChangedBy(), recon.GetRulesChangedBy()))
 	ta.found("rules_changed_at", orig.GetRulesChangedAt() != recon.GetRulesChangedAt(), fmt.Sprintf("orig=%d recon=%d", orig.GetRulesChangedAt(), recon.GetRulesChangedAt()))
@@ -406,6 +457,10 @@ func readEchoReplay(t *testing.T, path string) []*telemetryv1.LobbySessionStateF
 // exercise per-frame variation that v2 stores only as a snapshot (jersey/level
 // captured at join; paused_requested narrowed to PAUSED), which the sample does
 // not contain. Those are reported here and called out as findings.
+//
+// Findings are asserted against knownUnpreserved in BOTH modes: a field that
+// fails to round-trip and is not on the allowlist fails the test regardless of
+// strict. strict governs only the recoverable lane.
 func report(t *testing.T, src string, ta *tally, strict bool) {
 	t.Helper()
 	t.Logf("ROUND-TRIP echoreplay -> v2 -> echoreplay | file=%s frames=%d player-frames=%d", src, ta.frames, ta.playerFrames)
@@ -430,9 +485,20 @@ func report(t *testing.T, src string, ta *tally, strict bool) {
 		t.Logf("FINDINGS: none — this file round-trips losslessly.")
 		return
 	}
-	t.Logf("FINDINGS (fields v2 does not preserve; reported, not asserted — see SCHEMA-GAPS.md):")
+	t.Logf("FINDINGS (fields v2 does not preserve; allowlisted in knownUnpreserved — see BUGS.md FIDELITY-001):")
+	var unallowlisted []string
 	for _, f := range sortedKeys(ta.finding) {
+		if _, allowed := knownUnpreserved[f]; !allowed {
+			unallowlisted = append(unallowlisted, f)
+			continue
+		}
 		t.Logf("  %-32s does NOT round-trip in %d frames/teams/players; e.g. %s", f, ta.finding[f], ta.findingExample[f])
+	}
+	for _, f := range unallowlisted {
+		t.Errorf("UNALLOWLISTED FIDELITY LOSS %-32s does NOT round-trip in %d frames/teams/players; e.g. %s\n"+
+			"    %q is not in knownUnpreserved. v2 must not silently drop it: either fix the loss, or add an\n"+
+			"    entry citing BUGS.md. Do not add an entry to make this test green without Andrew's call.",
+			f, ta.finding[f], ta.findingExample[f], f)
 	}
 }
 
@@ -447,8 +513,9 @@ func sortedKeys(m map[string]int) []string {
 
 // TestRoundTripBAC is the acceptance gate: on the committed sample, every
 // recoverable SessionResponse/bones field must round-trip exactly (non-spatial)
-// or within float32 tolerance (spatial). Fields with no v2 home are reported as
-// findings, not asserted.
+// or within float32 tolerance (spatial). Fields with no v2 home must be on the
+// knownUnpreserved allowlist; any other field that fails to round-trip fails
+// this test.
 func TestRoundTripBAC(t *testing.T) {
 	src := filepath.Join("..", "..", "testdata", "sample.echoreplay")
 	if _, err := os.Stat(src); err != nil {
@@ -459,8 +526,10 @@ func TestRoundTripBAC(t *testing.T) {
 }
 
 // TestRoundTripBACAudit runs the same comparison on a larger external recording
-// when TAPE_AUDIT_FILE is set (e.g. the alienq capture). It reports numbers and
-// findings without failing on capture-specific recoverable gaps (see report).
+// when TAPE_AUDIT_FILE is set (e.g. the alienq capture). It reports numbers
+// without failing on capture-specific recoverable gaps (see report), but the
+// knownUnpreserved allowlist is enforced here exactly as in TestRoundTripBAC:
+// a real recording that loses a field no one has documented fails this test.
 func TestRoundTripBACAudit(t *testing.T) {
 	src := os.Getenv("TAPE_AUDIT_FILE")
 	if src == "" {
