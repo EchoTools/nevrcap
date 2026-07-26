@@ -56,6 +56,72 @@ ruling: fix the loss, or record it in `KnownUnpreserved` with a citation.
 | `SessionResponse.pause.unpaused_timer` | chi1: orig=`-0.0033778567` recon=`0` ×5272. |
 | `SessionResponse.pause.paused_timer` | chi1: orig=`128.05461` recon=`0` ×5272. |
 
+### 2026-07-26 — the allowlist was narrowed to EXACT PATHS; these 24 are the new red
+
+Andrew's ruling is errors on **any** difference. The allowlist absorbed whole
+subtrees, so an entry meaning "`last_throw` has no v2 home" ALSO excused a
+reconstruction that returned a *different value* for `last_throw.arm_speed` — a
+field present on both sides and simply wrong. Measured: **52 of 138**
+SessionResponse paths (37.7%) could not fail at all. Reproduced before the fix:
+`last_throw.arm_speed` allowed=true with orig=12.5 recon=999, and
+`teams[].players[].stats.stuns` allowed=true with orig=7 recon=4242.
+
+An allowlist entry now covers exactly the path it names (plus that path's
+`#presence`/`#count` forms — the same field failing differently) and nothing
+beneath it. That un-excused **132 path forms / 44 fields**; on the committed
+sample **24 of them actually differ** and are now RED. Each needs its own
+ruling — fix the loss, or record the sub-field with a citation. **They were NOT
+allowlisted to restore green.**
+
+| newly-failing path (committed sample, ×1023 frames unless noted) | observed |
+| ---- | -------- |
+| `SessionResponse.last_throw.arm_speed` | orig=`0.39658257` recon=`0` |
+| `SessionResponse.last_throw.total_speed` | orig=`0.56624627` recon=`0` |
+| `SessionResponse.last_throw.off_axis_spin_deg` | orig=`49.16243` recon=`0` |
+| `SessionResponse.last_throw.wrist_throw_penalty` | orig=`0.026895806` recon=`0` |
+| `SessionResponse.last_throw.rot_per_sec` | orig=`0.24592718` recon=`0` |
+| `SessionResponse.last_throw.pot_speed_from_rot` | orig=`0.18542472` recon=`0` |
+| `SessionResponse.last_throw.speed_from_arm` | orig=`0.39658257` recon=`0` |
+| `SessionResponse.last_throw.speed_from_movement` | orig=`0.086443841` recon=`0` |
+| `SessionResponse.last_throw.speed_from_wrist` | orig=`0.083219856` recon=`0` |
+| `SessionResponse.last_throw.wrist_align_to_throw_deg` | orig=`39.597031` recon=`0` |
+| `SessionResponse.last_throw.throw_align_to_movement_deg` | orig=`51.407391` recon=`0` |
+| `SessionResponse.last_throw.off_axis_penalty` | orig=`0.062036529` recon=`0` |
+| `SessionResponse.last_throw.throw_move_penalty` | orig=`0.18051183` recon=`0` |
+| `SessionResponse.last_score.disc_speed` | orig=`12.853542` recon=`0` |
+| `SessionResponse.last_score.team` | orig=`orange` recon=`""` |
+| `SessionResponse.last_score.goal_type` | orig=`LONG SHOT` recon=`""` |
+| `SessionResponse.last_score.point_amount` | orig=`3` recon=`0` |
+| `SessionResponse.last_score.distance_thrown` | orig=`9.2512016` recon=`0` |
+| `SessionResponse.last_score.person_scored` | orig=`[INVALID]` recon=`""` |
+| `SessionResponse.last_score.assist_scored` | orig=`[INVALID]` recon=`""` |
+| `SessionResponse.teams[].stats.possession_time` | orig=`13.224689` recon=`0` ×2046 |
+| `SessionResponse.teams[].stats.steals` | orig=`1` recon=`0` ×1655 |
+| `SessionResponse.teams[].players[].stats.possession_time` | orig=`13.224689` recon=`0` ×2046 |
+| `SessionResponse.teams[].players[].stats.steals` | orig=`1` recon=`0` ×1655 |
+
+The remaining 20 of the 44 un-excused fields (the other `stats` sub-fields) are
+zero in this recording on BOTH sides, so they do not differ here. They are
+un-excused all the same: they now fail the day a recording carries a value.
+`TestKnownUnpreservedExcusesNothingBeneathItself` prints the full list and fails
+if any path is excused only because an ancestor is allowlisted.
+
+### 2026-07-26 — losses on the 603 MB / 102,892-frame chi1 recording, in no bug doc until now (AWAITING RULING)
+
+Found by the exhaustive differ on the largest audited recording. NOT
+allowlisted; each needs Andrew's ruling.
+
+| path | observed |
+| ---- | -------- |
+| `SessionResponse.total_round_count` | orig=`3` recon=`0` ×102,763 |
+| `PlayerBonesResponse#presence` | whole bones payload lost on ×132 frames |
+| `SessionResponse.teams[].players[].level` | ×689,770 |
+| `SessionResponse.teams[].players[].jersey_number` | ×384,791 |
+
+`level` / `jersey_number` are the DIRECTIVE's "per-frame jersey_number/level —
+v2 stores only a join snapshot" item, now measured at scale. `total_round_count`
+and the dropped bones payloads are new.
+
 `PauseState` was previously compared on `paused_state` alone — 1 of its 5 fields.
 The DIRECTIVE already lists "pause sub-state (`paused_state` narrowing,
 `unpaused_team`, timers)" as still-open, so these are the same hole, now
@@ -66,11 +132,73 @@ Held failing deliberately (Andrew, same ruling): `blue_round_score`,
 `orange_round_score`, `possession`. Pinned by
 `TestKnownUnpreservedDoesNotCoverTheHeldFields`.
 
-Also newly compared and now covered by EXISTING allowlist entries as subtrees —
-listed here because the entries widened from "the field is lost" to "every
-sub-field of it is lost", which is the same documented hole but was never
-measured before: `last_throw.*` (13 sub-fields), `last_score.*` (7),
-`teams[].stats.*` (12), `teams[].players[].stats.*` (12).
+~~Also newly compared and now covered by EXISTING allowlist entries as
+subtrees: `last_throw.*` (13 sub-fields), `last_score.*` (7), `teams[].stats.*`
+(12), `teams[].players[].stats.*` (12).~~ **Superseded 2026-07-26:** subtree
+coverage was the defect. Those 44 fields are no longer excused — see the
+narrowing section above.
+
+---
+
+## OPEN — PERF-001: `ReconstructFile` accumulates every frame; 11.9 GB RSS on a 603 MB recording, OOM on 16 GB
+
+**Severity:** blocks verifying the largest recordings on ordinary hardware —
+which is exactly the archival decision the verdict exists to inform.
+
+**Measured (2026-07-26):** the 603 MB / 102,892-frame chi1 recording took
+**7m15s at 11.9 GB peak RSS** through `VerifyEchoReplayRoundTrip`. The
+comparison itself streams (one frame per side at a time); the cost is
+`ReconstructFile` / `NewSessionReconstructor` accumulating every frame in memory
+(`pkg/conversion/reconstruct.go:159`, `session.go:63-66` — the same unbounded
+accumulation SEC-001 capped for hostile input but did not make streaming). The
+largest chi1 file is **741 MB**, extrapolating to ~14–15 GB, which OOMs a 16 GB
+machine.
+
+**Not fixed — recorded only.** The fix is to make reconstruction streaming
+rather than materializing, which is a real design change to `session.go`'s
+random-access API (`RosterAt`/`LoadoutAt`/`GrabAt`/`ScoreAt` index by frame).
+
+---
+
+## FIXED — VERDICT-001: five ways to obtain a passing verdict on a file that lost data
+
+**Status: FIXED** 2026-07-26 on `feat/obvious-batch-2.1.0`. An independent
+adversarial review of `171c5e1` found five. A verdict authorizes deleting an
+irreplaceable recording, so each one was a way to delete data on a receipt for
+work nobody did.
+
+1. **The receipt lied.** With `VerifyOptions.SkipKeyScan`, a file with 1023
+   discarded JSON keys returned FIDELITY PASS while the receipt printed
+   `keyscan=0/0 frames (exhaustive) unknown-keys=0`. `SkipKeyScan` is **deleted**
+   — the scan is unconditional. `KeyScanResult.Ran` renders as
+   `keyscan=NOT RUN — this verdict does not certify key completeness` and is
+   fatal, so no hand-assembled verdict can claim the scan either.
+   (`TestKeyScanSummaryNeverClaimsWorkItDidNotDo`, `TestVerifyHasNoSkipKnob`)
+2. **The zero value read as success.** `fidelity.Verdict{}` printed FIDELITY
+   PASS with `Pass()==true`. A verdict now has to be affirmatively completed
+   (`MarkComplete`, called last, after every lane); until then it fails closed.
+   (`TestZeroVerdictFailsClosed`)
+3. **Two loss vectors had no lane.** A 4th tab-separated payload on a frame line
+   (`parseFrameLine` reads `parts[0..2]`) and a second zip member
+   (`ReplayMember` picks one) were both silently discarded and both passed.
+   Each is now fatal and named. Corpus shape ASSERTED, not assumed: the
+   committed sample is 1 zip member and 1023 lines of exactly 3 fields; all 458
+   chi1 files measured 1 member / 3 fields.
+   (`TestVerifyFailsOnExtraTabField`, `TestVerifyFailsOnSecondZipMember`,
+   `TestCorpusShapeIsOneMemberThreeFields`)
+4. **The coverage denominator was guarded for one root of three.** Deleting
+   `PlayerBonesResponse.user_bones[].bone_o[]` — recorded skeleton ORIENTATION —
+   from the plan reported "reached 4/4 schema fields" and kept the package green.
+   The guard now runs over every compared root; repeating the deletion fails with
+   the missing path named. (`TestSchemaPathsMatchDescriptors/PlayerBonesResponse`)
+5. **52 of 138 paths could not fail.** See the FIDELITY-002 narrowing section.
+
+**Made load-bearing:** `VerifyEchoReplayRoundTrip` was called only from
+`_test.go`. `tapedeck verify` now runs it, prints the receipt, and exits
+non-zero on FAIL; its old hand-written event checks — which printed
+`VERDICT: PASS` for the sample — are a clearly subordinate section over derived
+data. `tapedeck convert` is deliberately unchanged (refusing to emit unverified
+tapes is sequenced separately).
 
 ---
 

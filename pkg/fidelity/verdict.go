@@ -11,15 +11,21 @@ import (
 )
 
 // Allowlist is the ONLY escape hatch from "any difference is an error". It maps
-// a field path — or the root of a field subtree — to the reason that loss is
-// accepted, which must cite where the decision is recorded (BUGS.md).
+// a field path to the reason that loss is accepted, which must cite where the
+// decision is recorded (BUGS.md).
 //
-// Matching is exact, or subtree: an entry for "SessionResponse.last_throw"
-// covers "SessionResponse.last_throw#presence" and
-// "SessionResponse.last_throw.arm_speed", because the recorded reason ("v2 only
-// carries throws as events") is a statement about the whole message. Subtree
-// matching never crosses a name boundary: "SessionResponse.last_score" does not
-// match "SessionResponse.last_score_extra".
+// MATCHING IS EXACT — an entry excuses THE PATH IT NAMES AND NOTHING BENEATH
+// IT. The kind suffixes are the same path in a different failure mode, not a
+// child of it, so an entry for "SessionResponse.last_throw" also covers
+// "SessionResponse.last_throw#presence" and "…#count". It does NOT cover
+// "SessionResponse.last_throw.arm_speed".
+//
+// It used to absorb whole subtrees. That made 52 of 138 SessionResponse paths
+// unfailable: "last_throw has no v2 home" also excused a reconstruction that
+// returned arm_speed=999 for a recorded 12.5 — a value present on both sides
+// and simply WRONG, which is a different defect wearing the documented hole's
+// excuse. Andrew's ruling (2026-07-25) is errors on any difference, so the
+// excuse is per path, and only where someone ruled on that path.
 //
 // Adding an entry is a documented hole in the archive format. It is not a way
 // to make a test green.
@@ -33,12 +39,10 @@ func (a Allowlist) Reason(path string) (string, bool) {
 	if r, ok := a[path]; ok {
 		return r, true
 	}
-	for k, r := range a {
-		if len(path) <= len(k) || !strings.HasPrefix(path, k) {
-			continue
-		}
-		switch path[len(k)] {
-		case '.', '[', '{', '#':
+	// A kind suffix names the same field, so an entry covers every way that
+	// field can differ. Nothing else matches: a child path is a different field.
+	if i := strings.LastIndexByte(path, '#'); i > 0 {
+		if r, ok := a[path[:i]]; ok {
 			return r, true
 		}
 	}
@@ -109,7 +113,24 @@ type Verdict struct {
 	// JSON did not parse. Such a frame is absent from BOTH sides of the
 	// comparison, exactly like an unknown key, so its count is fatal.
 	SkippedFrames int
+
+	// completed is set by MarkComplete when a verification ran to the end. It
+	// is unexported and it FAILS CLOSED: the zero Verdict — an exported struct
+	// whose meaning is "this recording survived, you may delete the original" —
+	// must never say that on its own. Passing is earned by doing the work, and
+	// only the code that did the work can attest to it.
+	completed bool
 }
+
+// MarkComplete records that a full verification ran to the end. Until it is
+// called, Pass() is false whatever else the verdict contains.
+//
+// Call it LAST, once every lane has been populated. Calling it earlier makes it
+// a claim about work that has not happened yet.
+func (v *Verdict) MarkComplete() { v.completed = true }
+
+// Complete reports whether a full verification produced this verdict.
+func (v *Verdict) Complete() bool { return v.completed }
 
 // Failures is every non-allowlisted field-path difference across all roots.
 func (v *Verdict) Failures() []Diff {
@@ -138,6 +159,26 @@ func (v *Verdict) Pass() bool { return len(v.FailureReasons()) == 0 }
 // means the file round-tripped completely.
 func (v *Verdict) FailureReasons() []string {
 	var out []string
+	// Fail closed, in both senses: a verdict nobody completed proves nothing,
+	// and a lane that did not run cannot be reported as having found nothing.
+	if !v.completed {
+		out = append(out, "the verification did not run to completion: this verdict certifies nothing")
+	}
+	if !v.KeyScan.Ran {
+		out = append(out, "key-set scan did not run: this verdict does not certify key completeness. "+
+			"The field comparison is blind to anything the reader discarded, because a discarded key is "+
+			"missing from BOTH sides of it")
+	}
+	if v.KeyScan.ZipMembers > 1 {
+		out = append(out, fmt.Sprintf("the archive holds %d zip members and exactly one is read: "+
+			"%d member(s) are content no round trip can carry", v.KeyScan.ZipMembers, v.KeyScan.ZipMembers-1))
+	}
+	if v.KeyScan.ExtraFields > 0 {
+		out = append(out, fmt.Sprintf("%d frame line(s) carry more than %d tab-separated field(s): "+
+			"the codec reads the first %d and discards the rest, so the surplus is content that never "+
+			"reached the comparison (e.g. %s)",
+			v.KeyScan.ExtraFields, v.KeyScan.ExpectedFields, v.KeyScan.ExpectedFields, v.KeyScan.ExtraFieldExample))
+	}
 	for _, e := range v.Errors {
 		out = append(out, "error: "+e)
 	}
@@ -183,6 +224,9 @@ func (v *Verdict) String() string {
 		verdict = "FAIL"
 	}
 	fmt.Fprintf(&b, "FIDELITY %s  %s\n", verdict, v.Source)
+	if !v.completed {
+		b.WriteString("  INCOMPLETE: no verification ran to completion — this verdict certifies nothing\n")
+	}
 	fmt.Fprintf(&b, "  identity: %d bytes sha256=%s\n", v.SourceBytes, v.SourceSHA256)
 	fmt.Fprintf(&b, "  frames: original=%d reconstruction=%d codec-skipped=%d\n", v.FramesOriginal, v.FramesRecon, v.SkippedFrames)
 	fmt.Fprintf(&b, "  keyscan: %s\n", v.KeyScan.Summary())

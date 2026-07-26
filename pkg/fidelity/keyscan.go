@@ -61,8 +61,11 @@ type KeyFinding struct {
 // KeyScanResult is the guard's verdict for one recording.
 type KeyScanResult struct {
 	ParseExample string
-	Findings     []KeyFinding
-	FramesTotal  int // frame lines in the file
+	// ExtraFieldExample names the first line carrying surplus tab-separated
+	// fields, and quotes what was on it.
+	ExtraFieldExample string
+	Findings          []KeyFinding
+	FramesTotal       int // frame lines in the file
 	// FramesScanned is frame lines inspected — always all of them.
 	FramesScanned int
 	// ParseErrors counts payloads that are not parseable JSON at all. Such a
@@ -70,14 +73,43 @@ type KeyScanResult struct {
 	// and is therefore absent from BOTH sides of any comparison — the same
 	// blindness as an unknown key, so it is counted here and it is fatal.
 	ParseErrors int
+	// ZipMembers is how many members the archive holds. The codec's reader and
+	// this scanner both bind exactly ONE (see ReplayMember); every other member
+	// is content that is read by nobody and reconstructed by nothing, so more
+	// than one is fatal. Measured: every .echoreplay in the chi1 corpus holds
+	// exactly one.
+	ZipMembers int
+	// ExpectedFields is how many tab-separated fields of a frame line the codec
+	// actually parses, derived from the payload targets rather than assumed.
+	ExpectedFields int
+	// ExtraFields counts frame lines carrying MORE than ExpectedFields.
+	// pkg/codec's parseFrameLine reads parts[0..2] and silently drops the rest
+	// of the line, so a 4th payload is in the file, in no comparison, and in no
+	// reconstruction. Measured: every line of every chi1 recording has exactly
+	// three.
+	ExtraFields int
+	// Ran reports whether the scan actually executed. It exists because a
+	// receipt must never describe work it did not do: the summary used to print
+	// "keyscan=0/0 frames (exhaustive) unknown-keys=0" for a scan that never
+	// happened, which reads as proof of absence and is the opposite.
+	Ran bool
 }
 
 // Summary renders the verdict in the audit's log style. It always states the
 // coverage, because a guard that quietly inspects a fraction of a file and
-// prints OK is the same blindness the guard exists to remove.
+// prints OK is the same blindness the guard exists to remove — and it states
+// FIRST whether it ran at all, because "0/0 frames (exhaustive)" over a scan
+// that never happened is a lie in the shape of a pass.
 func (r KeyScanResult) Summary() string {
+	if !r.Ran {
+		return "keyscan=NOT RUN — this verdict does not certify key completeness"
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "keyscan=%d/%d frames (exhaustive)", r.FramesScanned, r.FramesTotal)
+	fmt.Fprintf(&b, "keyscan=%d/%d frames (exhaustive) zip-members=%d fields<=%d surplus-fields=%d",
+		r.FramesScanned, r.FramesTotal, r.ZipMembers, r.ExpectedFields, r.ExtraFields)
+	if r.ExtraFields > 0 {
+		fmt.Fprintf(&b, " (e.g. %s)", r.ExtraFieldExample)
+	}
 	if r.ParseErrors > 0 {
 		fmt.Fprintf(&b, " json-unparseable=%d (e.g. %s)", r.ParseErrors, r.ParseExample)
 	}
@@ -152,9 +184,24 @@ func ScanEchoReplayKeysWith(path string, targets []PayloadTarget) (KeyScanResult
 	counts := map[string]int{}
 	var sc scanner
 
-	err := EachFrameLine(path, func(i int, line []byte) error {
+	// The expected field count comes from the targets — the same list that says
+	// which payloads the codec parses — so it cannot drift from what is read.
+	for _, t := range targets {
+		if t.Part+1 > res.ExpectedFields {
+			res.ExpectedFields = t.Part + 1
+		}
+	}
+
+	members, err := eachFrameLine(path, func(i int, line []byte) error {
 		res.FramesTotal++
 		res.FramesScanned++
+		if n := bytes.Count(line, []byte("\t")) + 1; n > res.ExpectedFields {
+			res.ExtraFields++
+			if res.ExtraFieldExample == "" {
+				res.ExtraFieldExample = fmt.Sprintf("frame %d has %d fields, surplus starts %q",
+					i, n, clip(tabField(line, res.ExpectedFields), 64))
+			}
+		}
 		for _, t := range targets {
 			payload := tabField(line, t.Part)
 			if len(payload) == 0 {
@@ -170,9 +217,11 @@ func ScanEchoReplayKeysWith(path string, targets []PayloadTarget) (KeyScanResult
 		}
 		return nil
 	})
+	res.ZipMembers = members
 	if err != nil {
 		return res, err
 	}
+	res.Ran = true
 
 	paths := make([]string, 0, len(counts))
 	for p := range counts {
@@ -183,6 +232,15 @@ func ScanEchoReplayKeysWith(path string, targets []PayloadTarget) (KeyScanResult
 		res.Findings = append(res.Findings, KeyFinding{Path: p, Count: counts[p]})
 	}
 	return res, nil
+}
+
+// clip bounds a quoted example so one pathological line cannot dominate a
+// receipt.
+func clip(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return string(b[:n]) + "…"
 }
 
 // tabField returns field n of a tab-separated line, without allocating.
@@ -571,20 +629,29 @@ func ReplayMember(zr *zip.Reader, name string) (*zip.File, error) {
 
 // EachFrameLine calls fn for every non-empty line of the recording, with the
 // line's frame index. The line slice is only valid until fn returns.
-func EachFrameLine(path string, fn func(i int, line []byte) error) (err error) {
+func EachFrameLine(path string, fn func(i int, line []byte) error) error {
+	_, err := eachFrameLine(path, fn)
+	return err
+}
+
+// eachFrameLine is EachFrameLine plus the archive's MEMBER COUNT, which the
+// scan needs: exactly one member is ever read, so the count is the only place
+// a second one becomes visible.
+func eachFrameLine(path string, fn func(i int, line []byte) error) (members int, err error) {
 	zr, err := zip.OpenReader(path)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer func() { err = errors.Join(err, zr.Close()) }()
+	members = len(zr.File)
 
 	member, err := ReplayMember(&zr.Reader, path)
 	if err != nil {
-		return err
+		return members, err
 	}
 	rc, err := member.Open()
 	if err != nil {
-		return err
+		return members, err
 	}
 	defer func() { err = errors.Join(err, rc.Close()) }()
 
@@ -598,9 +665,9 @@ func EachFrameLine(path string, fn func(i int, line []byte) error) (err error) {
 			continue
 		}
 		if err := fn(i, line); err != nil {
-			return err
+			return members, err
 		}
 		i++
 	}
-	return sc.Err()
+	return members, sc.Err()
 }

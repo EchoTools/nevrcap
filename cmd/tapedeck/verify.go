@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
@@ -21,17 +20,27 @@ func newVerifyCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "verify <file.echoreplay>",
-		Short: "Verify end-to-end data integrity of echoreplay-to-tape conversion",
-		Long: `Convert an .echoreplay file to .tape in a temp directory, then read
-the .tape back and verify that no data was lost or corrupted during conversion.
+		Short: "Verify that a recording survives echoreplay -> tape -> echoreplay, field for field",
+		Long: `Convert an .echoreplay to .tape in a temp directory, reconstruct the
+.echoreplay back out of it, and compare the reconstruction against the original
+EXHAUSTIVELY: every frame, every field of every message, no sampling.
 
-Checks:
-  - Every last_throw change in the source produces a discThrown event with ThrowDetails
-  - Every last_score change in the source produces a goalScored event with populated fields
-  - Player join/leave counts are consistent (joins - leaves = final player count)
-  - Round numbers increment monotonically
-  - No events have empty/zeroed data that should be populated
-  - Frame count in .tape matches frame count in .echoreplay`,
+This is the question you ask before deleting an irreplaceable recording, so the
+answer is a receipt: the source's size and SHA-256, the frame counts on both
+sides, the raw-bytes key scan, per-message schema coverage, and every field path
+that differed with a count and an example. Exit status is non-zero unless the
+recording round-tripped completely.
+
+Differences on paths documented in conversion.KnownUnpreserved (BUGS.md
+FIDELITY-001/002) are printed as "allowed" and do not fail. Every other
+difference fails, as does anything the comparison never saw: an unparseable
+frame, a JSON key the proto cannot represent, a surplus tab-separated payload,
+or a second member inside the zip.
+
+Secondary, and reported separately: the event-enrichment checks over the tape
+this verification already produced (throw/score events, player join-leave
+balance, round monotonicity). Those cover derived data, which is not file
+content and so is outside the round-trip comparison.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runVerify(cmd, args[0], verbose)
@@ -81,6 +90,14 @@ func (r *verifyResult) warn(name, details string) {
 	r.warned++
 }
 
+// runVerify is the production caller of the round-trip verification.
+//
+// It used to BE a verification: a hand-written list of event-shape checks that
+// printed "VERDICT: PASS" for the committed sample — a file that provably loses
+// client_name and the whole pause sub-state on every one of its 1023 frames.
+// Checks nobody runs are decoration; a check that runs and cannot see the loss
+// is worse, because it issues a receipt. The field-for-field verification is
+// now the verdict, and the event checks are a clearly subordinate section.
 func runVerify(cmd *cobra.Command, inputPath string, verbose bool) error {
 	out := cmd.OutOrStdout()
 
@@ -88,63 +105,79 @@ func runVerify(cmd *cobra.Command, inputPath string, verbose bool) error {
 		return fmt.Errorf("expected .echoreplay file, got %s", filepath.Ext(inputPath))
 	}
 
-	result := &verifyResult{verbose: verbose}
-
-	// --- Phase 1: Read the .echoreplay source and collect ground truth ---
-	printf(out, "phase 1: reading source %s\n", inputPath)
-	truth, err := collectGroundTruth(inputPath)
-	if err != nil {
-		return fmt.Errorf("read source: %w", err)
-	}
-	printf(out, "  source frames: %d, throw changes: %d, score changes: %d\n",
-		truth.frameCount, len(truth.throwChanges), len(truth.scoreChanges))
-
-	// --- Phase 2: Convert to .tape in a temp directory ---
 	tmpDir, err := os.MkdirTemp("", "tapedeck-verify-*")
 	if err != nil {
 		return fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmpDir) //nolint:errcheck // best-effort cleanup
 
-	base := filepath.Base(inputPath)
-	tapePath := filepath.Join(tmpDir, strings.TrimSuffix(base, filepath.Ext(base))+".tape")
+	// --- the verdict: every frame, every field ---
+	printf(out, "verifying %s\n", inputPath)
+	printf(out, "  echoreplay -> tape -> echoreplay, every frame, every field of every message\n\n")
 
-	printf(out, "phase 2: converting to %s\n", tapePath)
-	convResult, err := conversion.ConvertFile(inputPath, tapePath)
+	verdict, err := conversion.VerifyEchoReplayRoundTrip(inputPath, conversion.VerifyOptions{
+		Allowlist: conversion.KnownUnpreserved,
+		WorkDir:   tmpDir,
+	})
 	if err != nil {
-		return fmt.Errorf("conversion failed: %w", err)
+		return fmt.Errorf("verify %s: %w", inputPath, err)
 	}
-	printf(out, "  converted: %d frames, %d events\n", convResult.FrameCount, convResult.EventCount)
+	printf(out, "%s", verdict.String())
 
-	// --- Phase 3: Read the .tape back and collect tape data ---
-	printf(out, "phase 3: reading tape and verifying\n")
+	reasons := verdict.FailureReasons()
+	if len(reasons) > 0 {
+		printf(out, "\n%d reason(s) this recording did NOT survive the round trip:\n", len(reasons))
+		for _, why := range reasons {
+			printf(out, "  - %s\n", why)
+		}
+	}
+
+	// --- secondary: the derived events, over the tape already written ---
+	result := &verifyResult{verbose: verbose}
+	if evErr := runEventChecks(out, inputPath, filepath.Join(tmpDir, conversion.VerifyTapeName), result); evErr != nil {
+		return evErr
+	}
+
+	println(out)
+	printf(out, "event checks: passed %d, failed %d, warned %d\n", result.passed, result.failed, result.warned)
+
+	switch {
+	case !verdict.Pass():
+		printf(out, "\nVERDICT: FIDELITY FAIL — %d reason(s). Do NOT delete the original.\n", len(reasons))
+		return fmt.Errorf("%s did not round-trip: %d reason(s)", filepath.Base(inputPath), len(reasons))
+	case result.failed > 0:
+		printf(out, "\nVERDICT: FAIL — the round trip is complete, but %d event check(s) failed.\n", result.failed)
+		return fmt.Errorf("%d event check(s) failed", result.failed)
+	default:
+		printf(out, "\nVERDICT: FIDELITY PASS — %d frames, every schema field compared, "+
+			"only documented holes differ (see BUGS.md).\n", verdict.FramesOriginal)
+		return nil
+	}
+}
+
+// runEventChecks reports on data pkg/events DERIVES during conversion. It is
+// not part of the round trip: events are not present in the .echoreplay, so
+// comparing them would measure this repository's own enrichment rather than the
+// recording (see conversion.NotFileContent).
+func runEventChecks(out io.Writer, inputPath, tapePath string, result *verifyResult) error {
+	truth, err := collectGroundTruth(inputPath)
+	if err != nil {
+		return fmt.Errorf("read source: %w", err)
+	}
 	tapeData, err := collectTapeData(tapePath)
 	if err != nil {
 		return fmt.Errorf("read tape: %w", err)
 	}
 
-	// --- Phase 4: Run all verification checks ---
-
-	// Check 1: Frame count
 	verifyFrameCount(result, truth.frameCount, tapeData.frameCount)
-
-	// Check 2: Throw events
 	verifyThrowEvents(result, truth, tapeData)
-
-	// Check 3: Score events
 	verifyScoreEvents(result, truth, tapeData)
-
-	// Check 4: Player join/leave consistency
 	verifyPlayerConsistency(result, tapeData)
-
-	// Check 5: Round monotonicity
 	verifyRoundMonotonicity(result, tapeData)
-
-	// Check 6: No empty events
 	verifyNoEmptyEvents(result, tapeData)
 
-	// --- Print results ---
 	println(out)
+	printf(out, "event enrichment checks (derived data — NOT part of the round trip):\n")
 	for _, check := range result.checks {
 		var marker string
 		switch check.status {
@@ -156,20 +189,11 @@ func runVerify(cmd *cobra.Command, inputPath string, verbose bool) error {
 			marker = "WARN"
 		}
 		printf(out, "  [%s] %s", marker, check.name)
-		if check.details != "" && (verbose || check.status != statusPass) {
+		if check.details != "" && (result.verbose || check.status != statusPass) {
 			printf(out, ": %s", check.details)
 		}
 		println(out)
 	}
-
-	println(out)
-	printf(out, "passed: %d, failed: %d, warned: %d\n", result.passed, result.failed, result.warned)
-
-	if result.failed > 0 {
-		printf(out, "\nVERDICT: FAIL\n")
-		return fmt.Errorf("%d check(s) failed", result.failed)
-	}
-	printf(out, "\nVERDICT: PASS\n")
 	return nil
 }
 

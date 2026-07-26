@@ -70,11 +70,15 @@ const (
 // difference on ANY other path FAILS: a gate that cannot fail on the loss it
 // detects is not a gate.
 //
-// Keys are field PATHS in the differ's own path language, and a key covers its
-// subtree (see fidelity.Allowlist): an entry for "SessionResponse.last_throw"
-// covers "SessionResponse.last_throw#presence" and every
-// "SessionResponse.last_throw.<sub-field>", because the recorded reason — v2
-// has no home for last_throw at all — is a statement about the whole message.
+// Keys are field PATHS in the differ's own path language, and a key covers
+// EXACTLY the path it names — plus that path's #presence / #count forms, which
+// are the same field failing in a different way. It does NOT cover sub-fields:
+// "SessionResponse.last_throw has no v2 home" excuses last_throw going missing,
+// and excuses nothing about a reconstruction that returns a WRONG VALUE for
+// last_throw.arm_speed. Subtree absorption made 52 of 138 SessionResponse paths
+// unfailable; per Andrew's ruling ("errors on ... any fields/differences in the
+// round trip source and target") each sub-field now needs its own ruling and
+// its own entry, or it fails. See BUGS.md FIDELITY-002.
 //
 // This map is the mechanism by which a future fix is proven: when a field gains
 // a v2 home and round-trips, DELETE its entry — the gate then holds that field
@@ -259,12 +263,28 @@ type VerifyOptions struct {
 	// WorkDir holds the intermediate .tape and reconstructed .echoreplay. If
 	// empty a temporary directory is created and removed.
 	WorkDir string
-	// SkipKeyScan omits the raw-bytes key-set guard. It exists only so a caller
-	// that has already scanned the file does not pay twice; leaving it set on a
-	// verification that decides deletion re-introduces the blindness the guard
-	// exists to remove.
-	SkipKeyScan bool
 }
+
+// There is deliberately NO option to skip a lane.
+//
+// There was one — SkipKeyScan, "so a caller that has already scanned the file
+// does not pay twice". With it set, a file carrying 1023 discarded JSON keys
+// returned FIDELITY PASS and the receipt still printed "keyscan=0/0 frames
+// (exhaustive) unknown-keys=0": a claim of exhaustive coverage over a scan that
+// never ran. The saving was one pass over the bytes; the cost was a verdict
+// that authorizes deleting an irreplaceable recording on the strength of work
+// nobody did. The knob is gone, the scan is unconditional, and
+// fidelity.KeyScanResult.Ran makes a skipped scan visible and fatal if some
+// future caller ever assembles a Verdict by hand.
+
+// The intermediate artifacts a verification produces inside its WorkDir. They
+// are named so a caller that supplies a WorkDir can inspect or reuse them —
+// notably `tapedeck verify`, which runs its event checks against the tape the
+// verification already wrote instead of converting the recording a second time.
+const (
+	VerifyTapeName           = "verify.tape"
+	VerifyReconstructionName = "verify-recon.echoreplay"
+)
 
 // VerifyEchoReplayRoundTrip converts one .echoreplay to v2, reconstructs it
 // back, and compares the reconstruction against the original EXHAUSTIVELY:
@@ -299,8 +319,8 @@ func VerifyEchoReplayRoundTrip(src string, opts VerifyOptions) (verdict *fidelit
 		}
 		defer func() { err = errors.Join(err, os.RemoveAll(work)) }()
 	}
-	tapePath := filepath.Join(work, "verify.tape")
-	reconPath := filepath.Join(work, "verify-recon.echoreplay")
+	tapePath := filepath.Join(work, VerifyTapeName)
+	reconPath := filepath.Join(work, VerifyReconstructionName)
 
 	if _, convErr := ConvertFile(src, tapePath); convErr != nil {
 		return nil, fmt.Errorf("convert %s: %w", src, convErr)
@@ -309,13 +329,11 @@ func VerifyEchoReplayRoundTrip(src string, opts VerifyOptions) (verdict *fidelit
 		return nil, fmt.Errorf("reconstruct %s: %w", src, recErr)
 	}
 
-	if !opts.SkipKeyScan {
-		ks, scanErr := fidelity.ScanEchoReplayKeys(src)
-		if scanErr != nil {
-			return nil, fmt.Errorf("key-set guard on %s: %w", src, scanErr)
-		}
-		v.KeyScan = ks
+	ks, scanErr := fidelity.ScanEchoReplayKeys(src)
+	if scanErr != nil {
+		return nil, fmt.Errorf("key-set guard on %s: %w", src, scanErr)
 	}
+	v.KeyScan = ks
 
 	tsC := tsS.NewComparator()
 	sessionC := sessionS.NewComparator()
@@ -375,6 +393,10 @@ func VerifyEchoReplayRoundTrip(src string, opts VerifyOptions) (verdict *fidelit
 
 	allow := opts.Allowlist
 	v.Classify(allow)
+	// Last, and only here: every lane has now run. Before this call the verdict
+	// fails closed, so an abort on any path above can never be mistaken for a
+	// clean result.
+	v.MarkComplete()
 	return v, nil
 }
 

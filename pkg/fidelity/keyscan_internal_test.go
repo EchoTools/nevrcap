@@ -169,9 +169,16 @@ func TestTabField(t *testing.T) {
 	}
 }
 
+// TestKeyScanSummaryStatesExhaustiveness pins both halves of the receipt's
+// honesty: a scan that RAN states its coverage, and a scan that did not run
+// never borrows the word "exhaustive" to describe itself.
 func TestKeyScanSummaryStatesExhaustiveness(t *testing.T) {
-	r := KeyScanResult{FramesTotal: 10, FramesScanned: 10}
-	if !strings.Contains(r.Summary(), "10/10") || !strings.Contains(r.Summary(), "exhaustive") {
-		t.Errorf("summary does not state coverage: %q", r.Summary())
+	ran := KeyScanResult{FramesTotal: 10, FramesScanned: 10, ZipMembers: 1, ExpectedFields: 3, Ran: true}
+	if !strings.Contains(ran.Summary(), "10/10") || !strings.Contains(ran.Summary(), "exhaustive") {
+		t.Errorf("summary does not state coverage: %q", ran.Summary())
+	}
+	var never KeyScanResult
+	if strings.Contains(never.Summary(), "exhaustive") {
+		t.Errorf("a scan that never ran describes itself as exhaustive: %q", never.Summary())
 	}
 }

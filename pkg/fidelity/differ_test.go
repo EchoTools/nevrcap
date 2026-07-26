@@ -11,6 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // --- coverage: the self-proving half ------------------------------------------
@@ -282,24 +283,48 @@ func TestRecursiveMessageIsRejected(t *testing.T) {
 // TestSchemaPathsMatchDescriptors checks the plan against an independent
 // descriptor walk, so a bug in the plan builder cannot make coverage look
 // complete by shrinking the denominator.
+//
+// It runs over EVERY root a verification compares, not just the biggest one.
+// Guarding SessionResponse alone left the other two denominators unguarded:
+// dropping PlayerBonesResponse.user_bones[].bone_o[] — the recorded skeleton
+// ORIENTATION — from the plan reported "reached 4/4 schema fields" and kept the
+// whole package green. A denominator that shrinks with the numerator measures
+// nothing.
 func TestSchemaPathsMatchDescriptors(t *testing.T) {
-	schema, err := fidelity.New(&enginev1.SessionResponse{}, fidelity.Options{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
+	for _, root := range comparedRoots() {
+		name := string(root.ProtoReflect().Descriptor().Name())
+		t.Run(name, func(t *testing.T) {
+			schema, err := fidelity.New(root, fidelity.Options{})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			want := enumerate(root.ProtoReflect().Descriptor(), name)
+			got := append([]string(nil), schema.Paths()...)
+			sort.Strings(want)
+			sort.Strings(got)
+			if len(want) != len(got) {
+				t.Fatalf("schema has %d paths, an independent descriptor walk finds %d:\n  plan: %s\n  walk: %s",
+					len(got), len(want), strings.Join(got, "\n        "), strings.Join(want, "\n        "))
+			}
+			for i := range want {
+				if want[i] != got[i] {
+					t.Fatalf("path %d: schema %q, descriptor walk %q", i, got[i], want[i])
+				}
+			}
+			t.Logf("plan matches descriptors: %d field paths", len(got))
+		})
 	}
-	want := enumerate((&enginev1.SessionResponse{}).ProtoReflect().Descriptor(), "SessionResponse")
-	got := append([]string(nil), schema.Paths()...)
-	sort.Strings(want)
-	sort.Strings(got)
-	if len(want) != len(got) {
-		t.Fatalf("schema has %d paths, an independent descriptor walk finds %d", len(got), len(want))
+}
+
+// comparedRoots is every message type a .echoreplay round-trip verification
+// compares — the three a frame line carries. Any guard over "the schema" has to
+// be a guard over all of them, or the unguarded ones are free to shrink.
+func comparedRoots() []proto.Message {
+	return []proto.Message{
+		&timestamppb.Timestamp{},
+		&enginev1.SessionResponse{},
+		&enginev1.PlayerBonesResponse{},
 	}
-	for i := range want {
-		if want[i] != got[i] {
-			t.Fatalf("path %d: schema %q, descriptor walk %q", i, got[i], want[i])
-		}
-	}
-	t.Logf("plan matches descriptors: %d field paths", len(got))
 }
 
 // --- helpers -----------------------------------------------------------------

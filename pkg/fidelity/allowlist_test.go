@@ -6,12 +6,20 @@ import (
 	"github.com/echotools/tape/pkg/fidelity"
 )
 
-// TestAllowlistSubtreeMatching pins the one thing the allowlist must get right:
-// an entry covers the field it names and everything beneath it — because an
-// entry like "last_throw has no v2 home" is a statement about the whole message
-// — and it must NOT bleed onto a field whose name merely starts the same way.
-// A bleeding prefix would silently excuse a loss nobody ruled on.
-func TestAllowlistSubtreeMatching(t *testing.T) {
+// TestAllowlistMatchesExactPathsOnly pins the one thing the allowlist must get
+// right, per Andrew's 2026-07-25 ruling ("errors on ... any fields/differences
+// in the round trip source and target"): an entry excuses THE PATH IT NAMES and
+// nothing beneath it.
+//
+// It previously absorbed whole subtrees, so "SessionResponse.last_throw has no
+// v2 home" also excused a reconstruction that returned arm_speed=999 for a
+// recorded 12.5. A wrong value is not the documented hole; it is a different
+// defect wearing the hole's excuse. 52 of 138 SessionResponse paths were
+// unfailable that way.
+//
+// The kind suffixes (#presence, #count) are the SAME path in a different
+// failure mode, not a child of it, so an entry covers them.
+func TestAllowlistMatchesExactPathsOnly(t *testing.T) {
 	a := fidelity.Allowlist{
 		"SessionResponse.last_throw":    "documented",
 		"SessionResponse.teams[]#count": "documented",
@@ -19,7 +27,7 @@ func TestAllowlistSubtreeMatching(t *testing.T) {
 	covered := []string{
 		"SessionResponse.last_throw",
 		"SessionResponse.last_throw#presence",
-		"SessionResponse.last_throw.arm_speed",
+		"SessionResponse.last_throw#count",
 		"SessionResponse.teams[]#count",
 	}
 	for _, p := range covered {
@@ -28,6 +36,12 @@ func TestAllowlistSubtreeMatching(t *testing.T) {
 		}
 	}
 	notCovered := []string{
+		// The defect: sub-fields of an allowlisted message. A value present on
+		// both sides and DIFFERENT is a loss nobody ruled on.
+		"SessionResponse.last_throw.arm_speed",
+		"SessionResponse.last_throw.total_speed#presence",
+		"SessionResponse.last_throw.player_name",
+		// Never bleed onto a name that merely starts the same way.
 		"SessionResponse.last_throw_extra",
 		"SessionResponse.last_score",
 		"SessionResponse.teams[]",
