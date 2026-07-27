@@ -107,6 +107,65 @@ count a bones payload it could not parse.
 
 ---
 
+## FIXED — GOALTYPE-001: six of eleven goal types collapsed to UNSPECIFIED
+
+**What:** `goalTypeStringMap` covered 5 goal types; the engine has 11. Anything
+unmapped became `GOAL_TYPE_UNSPECIFIED`, silently losing the value on every
+`GoalScored` event carrying it.
+
+**Where:** the engine's table is contiguous in `echovr.exe` at
+`0x1416e22b0`-`0x1416e2360` (read via ReVault):
+
+| VA | string | was mapped |
+|---|---|---|
+| `0x1416e22b0` | `[NO GOAL]` | no |
+| `0x1416e22c0` | `SLAM DUNK` | no |
+| `0x1416e22d0` | `INSIDE SHOT` | yes |
+| `0x1416e22e0` | `LONG SHOT` | yes |
+| `0x1416e22f0` | `BOUNCE SHOT` | yes |
+| `0x1416e2300` | `LONG BOUNCE SHOT` | yes |
+| `0x1416e2318` | `HEADBUTT` | no |
+| `0x1416e2328` | `LONG HEADBUTT` | no |
+| `0x1416e2338` | `BUMPER SHOT` | no |
+| `0x1416e2348` | `LONG BUMPER SHOT` | no |
+| `0x1416e2360` | `SELF GOAL` | yes |
+
+**Impact, measured:** across 30 sampled dal1 captures, `SLAM DUNK` appears in 7
+files and `[NO GOAL]` in 6. A January 2026 client capture carries `SLAM DUNK` on
+2,032 frames and `LONG HEADBUTT` on 729. All were being discarded.
+
+**Fix:** six enum values added (nevr-proto `5c921c3`, numbered 6-11 after the
+originals since renumbering a published enum is a wire break), map completed,
+and `goalTypeReverse` added for reconstruction.
+
+Tests: `TestGoalTypeMapCoversEveryEngineValue` walks the engine table and fails
+on any value that maps to UNSPECIFIED; `TestGoalTypeRoundTrips` pins the reverse
+direction, since a value that maps in but not back is still lost.
+
+---
+
+## FIXED — LASTSCORE-001: `last_score` never round-tripped
+
+**What:** `SessionResponse.last_score` (7 fields) is a carried-forward snapshot —
+the engine repeats the most recent goal on every frame. `GoalScoredSensor`
+already emitted a `GoalScored` event on each change, and `GoalScored` already
+carried all 7 fields, but nothing replayed it back: `reconstructSession` never
+assigned `s.LastScore`.
+
+**Fix:** `Session` gains a `lastGoal` lane replaying `GoalScored` forward
+(`LastGoalAt`), and `reconstructSession` rebuilds `LastScore` from it. Required
+`goalTypeReverse` and `teamRoleReverse` to render the enums back to the engine's
+exact spellings — which is why GOALTYPE-001 had to land first: without the six
+missing values, reconstruction would have written an empty `goal_type`.
+
+**Evidence:** `last_score` removed from the BAC findings on the committed sample
+and on the 12,817-frame / 114,805-player-frame audit capture, both reporting
+"exact on all non-spatial, within tolerance on all spatial. 0 mismatches."
+
+`last_throw` is now the only remaining field-level gap.
+
+---
+
 ## FIXED — ROSTER-001: a 2-frame engine glitch at join poisoned jersey/level for the whole session
 
 **What:** echovr reports `jersey_number` and `level` as 0 for roughly the first

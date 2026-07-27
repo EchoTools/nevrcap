@@ -65,15 +65,33 @@ func teamStringToRole(team string) capturepb.Role {
 	return capturepb.Role_ROLE_UNSPECIFIED
 }
 
-// goalTypeStringToEnum maps v1 goal_type strings to v2 GoalType enum.
+// goalTypeStringMap covers the engine's complete goal-type table, which sits
+// contiguously in echovr.exe at 0x1416e22b0-0x1416e2360. An unmapped value
+// becomes GOAL_TYPE_UNSPECIFIED and is lost, so this must stay exhaustive —
+// TestGoalTypeMapCoversEveryEngineValue fails if the engine gains one.
 var goalTypeStringMap = map[string]capturepb.GoalType{
+	"[NO GOAL]":        capturepb.GoalType_GOAL_TYPE_NO_GOAL,
+	"SLAM DUNK":        capturepb.GoalType_GOAL_TYPE_SLAM_DUNK,
 	"INSIDE SHOT":      capturepb.GoalType_GOAL_TYPE_INSIDE_SHOT,
 	"LONG SHOT":        capturepb.GoalType_GOAL_TYPE_LONG_SHOT,
 	"BOUNCE SHOT":      capturepb.GoalType_GOAL_TYPE_BOUNCE_SHOT,
 	"LONG BOUNCE SHOT": capturepb.GoalType_GOAL_TYPE_LONG_BOUNCE_SHOT,
+	"HEADBUTT":         capturepb.GoalType_GOAL_TYPE_HEADBUTT,
+	"LONG HEADBUTT":    capturepb.GoalType_GOAL_TYPE_LONG_HEADBUTT,
+	"BUMPER SHOT":      capturepb.GoalType_GOAL_TYPE_BUMPER_SHOT,
+	"LONG BUMPER SHOT": capturepb.GoalType_GOAL_TYPE_LONG_BUMPER_SHOT,
 	"SELF GOAL":        capturepb.GoalType_GOAL_TYPE_SELF_GOAL,
 }
 
+// goalTypeReverse renders a GoalType back to the engine's exact spelling.
+var goalTypeReverse = buildReverse(goalTypeStringMap, capturepb.GoalType_GOAL_TYPE_UNSPECIFIED, "")
+
+// teamRoleReverse renders a Role back to the lowercase team string the engine
+// uses in last_score.team. Distinct from roleToTeamString, which spells the
+// absent case "none" for the pause sub-fields.
+var teamRoleReverse = buildReverse(teamStringToRoleMap, capturepb.Role_ROLE_UNSPECIFIED, "")
+
+// goalTypeStringToEnum maps a v1 goal_type string to the v2 GoalType enum.
 func goalTypeStringToEnum(goalType string) capturepb.GoalType {
 	if gt, ok := goalTypeStringMap[goalType]; ok {
 		return gt

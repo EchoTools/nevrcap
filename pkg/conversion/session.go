@@ -51,6 +51,10 @@ type Session struct {
 	grab    []map[int32]Grab
 	score   []Score
 	stats   []map[int32]*capturepb.PlayerStatsUpdated
+	// lastGoal is the most recent GoalScored as of each frame. The engine's
+	// last_score field is a carried-forward snapshot, so replaying the event
+	// forward reproduces it on every frame.
+	lastGoal []*capturepb.GoalScored
 }
 
 // NewSession builds a Session from a v2 Echo Arena header and its frames, in
@@ -59,13 +63,14 @@ type Session struct {
 // including that frame.
 func NewSession(header *capturepb.EchoArenaHeader, frames []*capturepb.Frame) *Session {
 	s := &Session{
-		header:  header,
-		frames:  frames,
-		roster:  make([]map[int32]*capturepb.PlayerInfo, len(frames)),
-		loadout: make([]map[int32]Loadout, len(frames)),
-		grab:    make([]map[int32]Grab, len(frames)),
-		score:   make([]Score, len(frames)),
-		stats:   make([]map[int32]*capturepb.PlayerStatsUpdated, len(frames)),
+		header:   header,
+		frames:   frames,
+		roster:   make([]map[int32]*capturepb.PlayerInfo, len(frames)),
+		loadout:  make([]map[int32]Loadout, len(frames)),
+		grab:     make([]map[int32]Grab, len(frames)),
+		score:    make([]Score, len(frames)),
+		stats:    make([]map[int32]*capturepb.PlayerStatsUpdated, len(frames)),
+		lastGoal: make([]*capturepb.GoalScored, len(frames)),
 	}
 	s.replay()
 	return s
@@ -133,8 +138,6 @@ func (s *Session) GrabAt(frame int) map[int32]Grab {
 	return s.grab[frame]
 }
 
-// ScoreAt returns the scoreboard snapshot for the given frame ordinal, or the
-// zero Score when out of range.
 // StatsAt returns slot -> the engine's per-player stat counters as of frame,
 // replayed from PlayerStatsUpdated events. The returned map must not be
 // mutated; it is shared across frames where nothing changed.
@@ -150,6 +153,18 @@ func (s *Session) StatsAt(frame int) map[int32]*capturepb.PlayerStatsUpdated {
 	return s.stats[frame]
 }
 
+// LastGoalAt returns the most recent GoalScored as of frame, or nil when no
+// goal has been recorded yet. The engine carries last_score forward on every
+// frame, so replaying the event reproduces it.
+func (s *Session) LastGoalAt(frame int) *capturepb.GoalScored {
+	if frame < 0 || frame >= len(s.lastGoal) {
+		return nil
+	}
+	return s.lastGoal[frame]
+}
+
+// ScoreAt returns the scoreboard snapshot for the given frame ordinal, or the
+// zero Score when out of range.
 func (s *Session) ScoreAt(frame int) Score {
 	if frame < 0 || frame >= len(s.score) {
 		return Score{}
@@ -170,6 +185,7 @@ func (s *Session) replay() {
 	grab := map[int32]Grab{}
 	stats := map[int32]*capturepb.PlayerStatsUpdated{}
 	var score Score
+	var lastGoal *capturepb.GoalScored
 
 	for i, f := range s.frames {
 		rosterDirty, loadoutDirty, grabDirty, statsDirty := false, false, false, false
@@ -240,6 +256,8 @@ func (s *Session) replay() {
 					Left:  gc.GetLeftHolding(),
 					Right: gc.GetRightHolding(),
 				}
+			case *capturepb.EchoEvent_GoalScored:
+				lastGoal = e.GoalScored
 			case *capturepb.EchoEvent_PlayerInfoUpdated:
 				// Corrects the join snapshot: the engine reports jersey/level
 				// as 0 for the first frames after a join.
@@ -282,5 +300,6 @@ func (s *Session) replay() {
 		s.grab[i] = grab
 		s.score[i] = score
 		s.stats[i] = stats
+		s.lastGoal[i] = lastGoal
 	}
 }

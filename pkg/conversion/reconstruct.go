@@ -293,6 +293,20 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 		s.Player = reconstructPlayerRoot(vr)
 	}
 
+	// last_score is a carried-forward snapshot in the engine, so it comes from
+	// replaying GoalScored rather than from anything on this frame.
+	if g := rc.session.LastGoalAt(i); g != nil {
+		s.LastScore = &enginev1.LastScore{
+			DiscSpeed:      float64(g.GetDiscSpeed()),
+			Team:           teamRoleReverse[g.GetTeam()],
+			GoalType:       goalTypeReverse[g.GetGoalType()],
+			PointAmount:    g.GetPointAmount(),
+			DistanceThrown: float64(g.GetDistanceThrown()),
+			PersonScored:   g.GetPersonScored(),
+			AssistScored:   g.GetAssistScored(),
+		}
+	}
+
 	s.Teams = rc.reconstructTeams(i, ea)
 	s.Possession = reconstructPossession(ea, s.Teams)
 
