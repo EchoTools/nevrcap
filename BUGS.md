@@ -34,6 +34,49 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — VOCAB-001: an unknown engine string is erased silently
+
+**Severity:** medium (archival integrity). Not currently triggered by any capture
+measured, but the failure mode is total and silent.
+
+**What:** `gameStatusMap`, `matchTypeMap`, `pauseStateMap` and
+`goalTypeStringMap` translate engine strings to enums; an unrecognized string
+falls through to `*_UNSPECIFIED`, and the reverse map renders `UNSPECIFIED` as
+`""`. So a value the tables do not know converts cleanly and is simply gone.
+This is `docs/fable-audit.md` F-9.
+
+**GOALTYPE-001 was an instance of exactly this** — six of eleven goal types were
+missing and were being discarded on real captures. That one is fixed; the class
+is not.
+
+**Measured (this is the reassuring part):** across 25 dal1 captures plus the two
+client captures, every `game_status`, `match_type` and `paused_state` value is
+already mapped:
+
+| field | values seen | unmapped |
+|---|---|---|
+| `game_status` | `pre_match`, `playing`, `round_start`, `score`, `""` | none |
+| `match_type` | `Echo_Arena_Private` | none |
+| `paused_state` | `unpaused`, `none`, `paused`, `unpausing` | none |
+
+`game_status: ""` appears in 10 of 25 files and round-trips **correctly by
+accident**: unmapped → `UNSPECIFIED` → `""`. It is indistinguishable from a real
+unknown value, which is the whole problem.
+
+Note the binary is not authoritative for `match_type`: echovr.exe carries
+lowercase symbol names (`echo_arena_private` @`0x1416d8d07`), while the JSON uses
+`Echo_Arena_Private`. The two vocabularies differ, so the mapping table cannot be
+verified against the string table the way GOALTYPE-001 was.
+
+**Fix direction:** count unmapped values during conversion and surface them on
+`ConvertResult` alongside `SkippedLines`, so the loss is visible per file on a
+corpus run. Deliberately *not* "fail the conversion" — one unknown string should
+not abort a 174 GB pass — and deliberately not "guess", since the tables cannot
+be completed from the binary. Andrew's call on whether the CLI should also exit
+non-zero when any are seen.
+
+---
+
 ## OPEN — CANONICAL-001: `echoreplay -> tape -> echoreplay` is not byte-identical
 
 **Severity:** blocks treating a `.tape` as a byte-faithful replacement for its
