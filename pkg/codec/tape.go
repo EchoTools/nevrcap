@@ -271,6 +271,19 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 		return nil, err
 	}
 
+	// A tape is normally a zstd frame, but an uncompressed envelope stream is
+	// still a valid capture; read it rather than failing on magic mismatch.
+	compressed, err := startsWith(file, zstdMagic)
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+
+	r := &Reader{file: file, limits: limits}
+	if !compressed {
+		r.reader = newBudgetReader(file, limits.MaxDecodedBytes)
+		return r, nil
+	}
+
 	// SEC-001: cap the decoder's own memory (streaming window) alongside the
 	// total decoded-bytes budget enforced by budgetReader.
 	var zstdOpts []zstd.DOption
@@ -282,12 +295,9 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 		return nil, errors.Join(err, file.Close())
 	}
 
-	return &Reader{
-		file:    file,
-		decoder: decoder,
-		reader:  newBudgetReader(decoder, limits.MaxDecodedBytes),
-		limits:  limits,
-	}, nil
+	r.decoder = decoder
+	r.reader = newBudgetReader(decoder, limits.MaxDecodedBytes)
+	return r, nil
 }
 
 // Limits returns the resource budgets in effect for this reader. Frame
@@ -357,7 +367,10 @@ func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 
 // Close closes the decoder and underlying file.
 func (r *Reader) Close() error {
-	r.decoder.Close()
+	// decoder is nil for an uncompressed capture.
+	if r.decoder != nil {
+		r.decoder.Close()
+	}
 	return r.file.Close()
 }
 

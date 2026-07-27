@@ -109,20 +109,37 @@ func NewEchoReplayReader(filename string, opts ...ReaderOption) (*EchoReplay, er
 }
 
 func NewEchoReplayReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*EchoReplay, error) {
-	zipReader, err := zip.OpenReader(filename)
+	zipped, err := fileStartsWith(filename, zipMagic)
 	if err != nil {
 		return nil, err
 	}
 
 	codec := &EchoReplay{
-		filename:  filename,
-		zipReader: zipReader,
-		progress:  progress,
-		limits:    applyReaderOptions(opts),
+		filename: filename,
+		progress: progress,
+		limits:   applyReaderOptions(opts),
 		unmarshaler: &protojson.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
 	}
+
+	if !zipped {
+		// Some recorders wrote the NDJSON directly with no zip container. The
+		// line format is identical, so only the source differs.
+		file, openErr := os.Open(filename) //nolint:gosec // filename is caller-provided path
+		if openErr != nil {
+			return nil, fmt.Errorf("codec.NewEchoReplayReaderWithProgress: %w", openErr)
+		}
+		codec.replayFile = file
+		codec.startScanner(file)
+		return codec, nil
+	}
+
+	zipReader, err := zip.OpenReader(filename)
+	if err != nil {
+		return nil, err
+	}
+	codec.zipReader = zipReader
 
 	// Initialize the scanner for streaming
 	if err := codec.initScanner(); err != nil {
@@ -170,23 +187,29 @@ func (e *EchoReplay) initScanner() error {
 		return err
 	}
 
-	var src io.Reader = reader
+	e.replayFile = reader
+	e.startScanner(reader)
+
+	return nil
+}
+
+// startScanner wires src into the line scanner, applying the progress tee and
+// the SEC-001 decoded-bytes budget. Shared by the zip and uncompressed paths,
+// which differ only in where the NDJSON comes from.
+func (e *EchoReplay) startScanner(src io.Reader) {
 	if e.progress != nil {
-		src = io.TeeReader(reader, e.progress)
+		src = io.TeeReader(src, e.progress)
 	}
 
-	// SEC-001: bound total decompressed bytes read from the zip member.
+	// SEC-001: bound total decompressed bytes read from the source.
 	src = newBudgetReader(src, e.limits.MaxDecodedBytes)
 
-	e.replayFile = reader
 	e.scanner = bufio.NewScanner(src)
 	// Set a larger buffer for long lines (some frames can be very large)
 	// Default is 64KB, increase to 10MB
 	const maxScannerBuffer = 10 * 1024 * 1024
 	e.scanner.Buffer(make([]byte, 64*1024), maxScannerBuffer)
 	e.frameIndex = 0
-
-	return nil
 }
 
 // WriteFrame writes a frame to the .echoreplay file using optimized buffer operations
