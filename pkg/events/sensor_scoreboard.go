@@ -33,21 +33,19 @@ func (s *ScoreboardSensor) AddFrame(frame *telemetry.LobbySessionStateFrame) *te
 	orangeRound := session.GetOrangeRoundScore()
 	gameClock := session.GetGameClockDisplay()
 
-	if !s.initialized {
-		s.prevBluePoints = bluePoints
-		s.prevOrangePoints = orangePoints
-		s.prevBlueRoundScore = blueRound
-		s.prevOrangeRoundScore = orangeRound
-		s.initialized = true
-		return nil
-	}
+	// Seed on the first frame. Without this the opening scoreboard is never
+	// emitted, so a capture that starts mid-match reconstructs as 0-0 until the
+	// next goal — the state before the first change is otherwise unrecoverable.
+	seeding := !s.initialized
 
 	// Check if any score changed
-	if bluePoints != s.prevBluePoints ||
+	if seeding ||
+		bluePoints != s.prevBluePoints ||
 		orangePoints != s.prevOrangePoints ||
 		blueRound != s.prevBlueRoundScore ||
 		orangeRound != s.prevOrangeRoundScore {
 
+		s.initialized = true
 		s.prevBluePoints = bluePoints
 		s.prevOrangePoints = orangePoints
 		s.prevBlueRoundScore = blueRound

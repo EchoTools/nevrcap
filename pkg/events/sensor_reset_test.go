@@ -122,10 +122,14 @@ func TestSensorReset(t *testing.T) {
 
 		s.Reset()
 
-		// After reset, initialized is false; first frame silent.
+		// After reset, initialized is false, so the next frame seeds again —
+		// a new session must record its opening scoreboard.
 		events := drainSensor(s, frame)
-		if len(events) != 0 {
-			t.Fatalf("expected 0 events after reset (re-init), got %d", len(events))
+		if len(events) != 1 {
+			t.Fatalf("expected 1 seed event after reset (re-init), got %d", len(events))
+		}
+		if got := events[0].GetScoreboardUpdated().GetBluePoints(); got != 3 {
+			t.Errorf("seed blue_points = %d, want 3", got)
 		}
 	})
 

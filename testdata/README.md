@@ -20,12 +20,31 @@ Tests unblocked by this file:
 
 ## `sample.tape.golden` is committed and trustworthy
 
-Conversion is now byte-deterministic: converting `sample.echoreplay` always
-produces the same tape bytes
-(`sha256:cc060af5e7c937165239e977b8aff1b4520eb530b53c121796ad572485a9b41e`,
-1625143 bytes, 1023 frames, 36 events). The golden is committed and tracked
-(its `/testdata/*.golden` gitignore entry was removed), so `TestGoldenConvert`
-is a real byte-level fidelity gate, not just a smoke test.
+Conversion is byte-deterministic: converting `sample.echoreplay` always produces
+the same tape bytes. The golden is committed and tracked (its
+`/testdata/*.golden` gitignore entry was removed), so `TestGoldenConvert` is a
+real byte-level fidelity gate, not just a smoke test.
+
+**Current golden** (measured 2026-07-27):
+
+    sha256:709a1c31bfbe239bf56a4dc5720a62c2956f341c3132ab338c7c337cb941a164
+    1620524 bytes, 1023 frames, 200 events
+
+Regenerate by deleting `sample.tape.golden` and running `TestGoldenConvert`,
+which recreates it when absent. **Update the three values above in the same
+commit** — they drifted before (the file was regenerated at some point while
+this block still recorded `cc060af5…`, 1625143 bytes and 36 events, none of
+which matched the committed artifact), which makes the record useless for
+telling whether the golden is the artifact it should be.
+
+Changing the golden means changing the converter's output. Say what changed it:
+
+- **2026-07-27** — `ScoreboardSensor` now emits a seed event on the first frame
+  (previously it recorded state and returned nil, so the opening scoreboard was
+  never captured). Events 199 → 200. The uncompressed stream grew 21 bytes
+  (1862615 → 1862636); the compressed file *shrank* 10661 bytes, because the
+  seed at frame 0 gives zstd a better early match reference. Verified the
+  payload grew and only the compression ratio moved.
 
 ### The non-determinism that used to block it (now fixed)
 

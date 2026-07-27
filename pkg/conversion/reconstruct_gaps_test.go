@@ -106,6 +106,30 @@ func roundTripSession(t *testing.T, session *enginev1.SessionResponse) *enginev1
 	return frames[0].GetSession()
 }
 
+// TestReconstructPreservesInitialRoundScores covers the frame-0 seed bug named
+// in BUGS.md: ScoreboardSensor.AddFrame records the first frame's scores and
+// returns nil (sensor_scoreboard.go:36-43), so a capture that starts mid-match
+// with a non-zero round score has no ScoreboardUpdated to replay and
+// reconstructs as 0-0 until the next goal.
+func TestReconstructPreservesInitialRoundScores(t *testing.T) {
+	t.Parallel()
+
+	session := payloadSession()
+	session.BlueRoundScore = 2
+	session.OrangeRoundScore = 1
+	session.BluePoints = 15
+	session.OrangePoints = 10
+
+	got := roundTripSession(t, session)
+
+	if got.GetBlueRoundScore() != 2 {
+		t.Errorf("blue_round_score = %d, want 2", got.GetBlueRoundScore())
+	}
+	if got.GetOrangeRoundScore() != 1 {
+		t.Errorf("orange_round_score = %d, want 1", got.GetOrangeRoundScore())
+	}
+}
+
 func TestReconstructPreservesClientName(t *testing.T) {
 	t.Parallel()
 
