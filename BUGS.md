@@ -34,6 +34,79 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — CANONICAL-001: `echoreplay -> tape -> echoreplay` is not byte-identical
+
+**Severity:** blocks treating a `.tape` as a byte-faithful replacement for its
+source. Structure IS preserved; three things stop byte identity.
+
+**How it is measured:** `pkg/conversion/canonical_test.go`. The comparison is
+against the CANONICAL form of the original — the source read and rewritten
+through the echoreplay writer — not the raw source bytes, so recorder drift
+(Spark booleans, exponent spelling, absent `client_name`) is normalised out and
+only v2 loss remains. `TestCanonicalRoundTripStructure` asserts record count,
+per-record field count and key sets. `TestCanonicalRoundTripByteDelta` reports
+the byte delta without failing; flip it to an assertion when this entry closes.
+
+**Status on the committed sample:** structure identical — 1023 records, no key
+added, none dropped. Byte delta 8,854,398 vs 9,502,522.
+
+### 1. Float spelling (not data loss)
+
+The engine writes floats as `%.8g` with trailing zeros trimmed to at least one
+decimal place; protojson writes shortest-round-trip float64. So `-1.309` comes
+back as `-1.309000015258789`.
+
+**Every engine float is exactly a float32**, verified by reproducing the source
+token from `float32(value)` with that format: 38,700/38,700 on the sample,
+133,707/133,707 on a January 2026 capture, and 100% on three dal1 captures
+(the only misses were exponent spelling, `1.5345009e24` vs `e+24`, which
+`FixExponentNotation` already handles). So v2's float32 storage loses nothing
+here — the writer's number formatting is the entire gap.
+
+**Fix direction:** format floats engine-style in the echoreplay writer, as a
+byte-level pass alongside `FixProtojsonUint64Encoding` / `FixExponentNotation`.
+Note this is on the write hot path.
+
+### 2. `last_throw` / `last_score` (real, known)
+
+Not wired through v2 at either end. Differs on 100% of frames. See §4 of
+`docs/format-design.md`; `last_throw` is local-player-only, so read
+[[last-throw-is-local-player-only]] before wiring.
+
+### 3. Bones payload shape is not representable (real, new)
+
+An echoreplay line has 2 or 3 tab-separated fields, and the third has three
+distinct forms in the wild. v2 collapses them:
+
+| source line | representable in v2 |
+|---|---|
+| `ts\tsession` | yes |
+| `ts\tsession\t` — zero-length payload | **no** |
+| `ts\tsession\t{"user_bones":[],"err_code":0}` | **no** |
+| `ts\tsession\t{"user_bones":[...]}` | yes |
+
+`mapPlayerBones` returns nil when `len(userBones) == 0`, so "bones present but
+empty" and "bones absent" are the same tape. Reconstruction then emits a
+2-field line where the source had 3.
+
+Measured on dal1: 132 of the first 5000 lines of
+`rec_2025-08-01_18-37-52_5990EAE3…` carry an empty `user_bones`; zero-length
+payloads appear in 13 of 3000-line samples across 12 files. This is what
+`TestCanonicalRoundTripAudit` fails on today (`record 0: field count
+canonical=3 via-tape=2`).
+
+Note the zero-length case is also **silently dropped on read**:
+`parseFrameLine` only parses `parts[2]` when non-empty, and a bones payload that
+fails to parse is discarded without incrementing `SkippedFrames`
+(`pkg/codec/echoreplay.go` — `if err := ...Unmarshal(bonesData, userBones); err
+== nil`). So bones loss is invisible to READLOSS-002's counter.
+
+**Fix direction:** v2 needs to distinguish the three payload forms — a
+`bones_present` flag or an optional empty `PlayerBones` — and the reader should
+count a bones payload it could not parse.
+
+---
+
 ## FIXED — READLOSS-001: the round-trip BAC could not detect anything the reader dropped
 
 **Severity:** high (verification integrity). The gate reported lossless on files

@@ -257,7 +257,13 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 
 	// Pause: only the enum survives; reconstruct the canonical paused_state
 	// string. Sub-fields (teams, timers) have no v2 home.
-	s.Pause = &enginev1.PauseState{PausedState: pauseStateReverse[ea.GetPauseState()]}
+	// The engine spells "no team" as "none", not the empty string, and writes
+	// both team fields on every frame whether or not a pause is in progress.
+	s.Pause = &enginev1.PauseState{
+		PausedState:         pauseStateReverse[ea.GetPauseState()],
+		UnpausedTeam:        "none",
+		PausedRequestedTeam: "none",
+	}
 	if detail := ea.GetPauseDetail(); detail != nil {
 		s.Pause.UnpausedTeam = roleToTeamString(detail.GetUnpausedTeam())
 		s.Pause.PausedRequestedTeam = roleToTeamString(detail.GetPausedRequestedTeam())
