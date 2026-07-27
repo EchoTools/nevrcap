@@ -239,6 +239,8 @@ func classifyEvent(evt *capturepb.EchoEvent) capturepb.EventType {
 		return capturepb.EventType_EVENT_TYPE_PLAYER_SHOT_TAKEN
 	case *capturepb.EchoEvent_PlayerStatsUpdated:
 		return capturepb.EventType_EVENT_TYPE_PLAYER_STATS_UPDATED
+	case *capturepb.EchoEvent_PlayerInfoUpdated:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_INFO_UPDATED
 	case *capturepb.EchoEvent_LoadoutChanged:
 		return capturepb.EventType_EVENT_TYPE_LOADOUT_CHANGED
 	case *capturepb.EchoEvent_GrabChanged:

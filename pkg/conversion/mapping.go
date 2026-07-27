@@ -240,11 +240,16 @@ func rosterRole(teamIdx int, jersey int32) capturepb.Role {
 type FrameMapper struct {
 	BaseTime    time.Time
 	RoundNumber int32
-	// Per-slot previous loadout/grab/stats, for emitting change events.
+	// Per-slot previous loadout/grab/stats/roster-info, for emitting change events.
 	prevLoadout map[int32]loadoutState
 	prevGrab    map[int32]grabState
 	prevStats   map[int32]statCounters
+	prevInfo    map[int32]rosterInfo
 }
+
+// rosterInfo holds the roster attributes that are session-constant by intent but
+// are reported as 0 by the engine for the first frames after a join.
+type rosterInfo struct{ jersey, level int32 }
 
 type loadoutState struct{ weapon, ordnance, tacMod string }
 type grabState struct{ left, right string }
@@ -275,6 +280,7 @@ func (m *FrameMapper) Reset() {
 	m.prevLoadout = nil
 	m.prevGrab = nil
 	m.prevStats = nil
+	m.prevInfo = nil
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
@@ -308,6 +314,7 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 		m.prevLoadout = make(map[int32]loadoutState)
 		m.prevGrab = make(map[int32]grabState)
 		m.prevStats = make(map[int32]statCounters)
+		m.prevInfo = make(map[int32]rosterInfo)
 	}
 
 	type entry struct {
@@ -345,6 +352,28 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 				},
 			})
 			m.prevLoadout[e.slot] = ld
+		}
+
+		// Roster attributes, corrected after the join snapshot. The engine
+		// reports jersey/level as 0 for the first frames after a join, so the
+		// value PlayerJoined captured is not necessarily final. Seeded on first
+		// sighting (the join value is already on PlayerJoined, so the seed
+		// emits nothing); afterwards any change becomes a delta. See BUGS.md
+		// ROSTER-001.
+		ri := rosterInfo{jersey: e.tm.GetJerseyNumber(), level: e.tm.GetLevel()}
+		if prev, ok := m.prevInfo[e.slot]; !ok {
+			m.prevInfo[e.slot] = ri
+		} else if prev != ri {
+			ea.Events = append(ea.Events, &capturepb.EchoEvent{
+				Event: &capturepb.EchoEvent_PlayerInfoUpdated{
+					PlayerInfoUpdated: &capturepb.PlayerInfoUpdated{
+						PlayerSlot:   e.slot,
+						JerseyNumber: ri.jersey,
+						Level:        ri.level,
+					},
+				},
+			})
+			m.prevInfo[e.slot] = ri
 		}
 
 		// The engine's own stat counters, seeded on first sighting so a capture

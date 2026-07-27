@@ -107,6 +107,56 @@ count a bones payload it could not parse.
 
 ---
 
+## FIXED — ROSTER-001: a 2-frame engine glitch at join poisoned jersey/level for the whole session
+
+**What:** echovr reports `jersey_number` and `level` as 0 for roughly the first
+two frames after a player joins. tape's join sensor latched the join frame, so
+`PlayerJoined` captured `(0,0)` and reconstruction replayed it for every
+subsequent frame.
+
+**Measured** on `rec_2026-01-19_22-50-54.echoreplay` (12,817 frames, 9 players):
+
+| slot | player | distinct (number, level) | detail |
+|---|---|---|---|
+| 0-7 | (eight players) | **1** each | constant all 12,817 frames |
+| 8 | `iluvfemboys` | **2** | `(0,0)` on frames 243-244, `(1,1)` on 12,572 |
+
+Frame 243 is exactly that player's first frame. The BAC reported 12,572
+mismatches — precisely the settled-frame count.
+
+Same signature previously recorded on alienq (slot 10: 1/50 for 18,865 frames,
+0/0 for 3).
+
+**Fix:** treat the roster fields as occasionally-changing rather than constant,
+and record the correction as a delta — `PlayerInfoUpdated` (nevr-proto
+`5ecc03d`), synthesized v2-side in `appendLoadoutGrabEvents` alongside
+`LoadoutChanged`/`GrabChanged`, replayed over the roster by `Session.replay()`.
+
+**Why not a heuristic.** "Discard a 0 at join and use the next value" would
+fabricate: jersey 0 is legitimate — two players in that same capture have it —
+so it would emit `(1,1)` on frames where the source genuinely said `(0,0)` and
+break fidelity in the other direction. Recording what the engine said keeps BOTH
+the glitched frames and the settled ones exact.
+
+**Why not per-frame.** The format is delta-based; occasional changes are events.
+Putting jersey/level on `PlayerState` would duplicate a session constant across
+every frame to accommodate a two-frame artifact.
+
+**Evidence:** 12,572 mismatches → **0** on the audit capture. `jersey_number`
+and `level` no longer appear in the mismatch list at all. Golden unchanged
+(byte-identical, sha256 `9e51e60d…`) — the committed sample has no glitched
+join, so zero events fire and proto3 writes nothing.
+
+Tests: `TestGlitchedJoinRoundTrips` (`pkg/conversion/player_info_test.go`)
+reproduces the exact shape and asserts the glitched frames round-trip as `(0,0)`
+and the settled ones as `(1,1)`.
+
+**Upstream:** the engine-side read is Andrew's to patch. Worth checking whether
+other `TeamMember` fields share the same post-join window, since anything else
+snapshotted at join inherits the same failure.
+
+---
+
 ## FIXED — READLOSS-001: the round-trip BAC could not detect anything the reader dropped
 
 **Severity:** high (verification integrity). The gate reported lossless on files

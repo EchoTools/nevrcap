@@ -240,6 +240,24 @@ func (s *Session) replay() {
 					Left:  gc.GetLeftHolding(),
 					Right: gc.GetRightHolding(),
 				}
+			case *capturepb.EchoEvent_PlayerInfoUpdated:
+				// Corrects the join snapshot: the engine reports jersey/level
+				// as 0 for the first frames after a join.
+				iu := e.PlayerInfoUpdated
+				if cur, ok := roster[iu.GetPlayerSlot()]; ok {
+					if !rosterDirty {
+						roster = maps.Clone(roster)
+						rosterDirty = true
+					}
+					roster[iu.GetPlayerSlot()] = &capturepb.PlayerInfo{
+						Slot:          cur.GetSlot(),
+						AccountNumber: cur.GetAccountNumber(),
+						DisplayName:   cur.GetDisplayName(),
+						Role:          cur.GetRole(),
+						JerseyNumber:  iu.GetJerseyNumber(),
+						Level:         iu.GetLevel(),
+					}
+				}
 			case *capturepb.EchoEvent_PlayerStatsUpdated:
 				su := e.PlayerStatsUpdated
 				if !statsDirty {
