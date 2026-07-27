@@ -215,6 +215,7 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 		// Session constants (header).
 		SessionId:       rc.ea.GetSessionId(),
 		SessionIp:       rc.ea.GetSessionIp(),
+		ClientName:      rc.ea.GetClientName(),
 		MapName:         rc.ea.GetMapName(),
 		MatchType:       matchTypeReverse[rc.ea.GetMatchType()],
 		PrivateMatch:    rc.ea.GetPrivateMatch(),
@@ -246,6 +247,16 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 	// Pause: only the enum survives; reconstruct the canonical paused_state
 	// string. Sub-fields (teams, timers) have no v2 home.
 	s.Pause = &enginev1.PauseState{PausedState: pauseStateReverse[ea.GetPauseState()]}
+
+	// Echo Combat payload state. mapping.go only emits PayloadState when some
+	// payload value is non-zero, so this stays nil for every arena capture.
+	if payload := ea.GetPayload(); payload != nil {
+		s.PayloadMultiplier = float64(payload.GetMultiplier())
+		s.PayloadCheckpoint = payload.GetCheckpoint()
+		s.PayloadDistance = float64(payload.GetDistance())
+		s.PayloadDefenders = payload.GetDefenders()
+		s.PayloadSpeed = float64(payload.GetSpeed())
+	}
 
 	if disc := ea.GetDisc(); disc != nil {
 		s.Disc = reconstructDisc(disc)

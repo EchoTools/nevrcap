@@ -185,6 +185,8 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	// Session constants + per-frame scalars (exact).
 	ta.exact("session_id", orig.GetSessionId() == recon.GetSessionId(), orig.GetSessionId())
 	ta.exact("session_ip", orig.GetSessionIp() == recon.GetSessionIp(), orig.GetSessionIp())
+	ta.exact("client_name", orig.GetClientName() == recon.GetClientName(),
+		fmt.Sprintf("%q vs %q", orig.GetClientName(), recon.GetClientName()))
 	ta.exact("map_name", orig.GetMapName() == recon.GetMapName(), orig.GetMapName())
 	ta.exact("match_type", orig.GetMatchType() == recon.GetMatchType(), fmt.Sprintf("%q vs %q", orig.GetMatchType(), recon.GetMatchType()))
 	ta.exact("private_match", orig.GetPrivateMatch() == recon.GetPrivateMatch(), "")
@@ -204,6 +206,15 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.mag("right_shoulder", orig.GetRightShoulderPressed(), recon.GetRightShoulderPressed())
 	ta.mag("left_shoulder2", orig.GetLeftShoulderPressed2(), recon.GetLeftShoulderPressed2())
 	ta.mag("right_shoulder2", orig.GetRightShoulderPressed2(), recon.GetRightShoulderPressed2())
+
+	// Echo Combat payload. Zero on both sides for any arena capture, so this
+	// guards regression rather than measuring the sample; TestReconstructPreservesPayload
+	// exercises the non-zero path.
+	ta.mag("payload_multiplier", orig.GetPayloadMultiplier(), recon.GetPayloadMultiplier())
+	ta.exact("payload_checkpoint", orig.GetPayloadCheckpoint() == recon.GetPayloadCheckpoint(), "")
+	ta.mag("payload_distance", orig.GetPayloadDistance(), recon.GetPayloadDistance())
+	ta.exact("payload_defenders", orig.GetPayloadDefenders() == recon.GetPayloadDefenders(), "")
+	ta.mag("payload_speed", orig.GetPayloadSpeed(), recon.GetPayloadSpeed())
 
 	// Disc.
 	od, rd := orig.GetDisc(), recon.GetDisc()
