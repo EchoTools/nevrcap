@@ -40,13 +40,18 @@ var gameStatusReverse = buildReverse(gameStatusMap, capturepb.GameStatus_GAME_ST
 var matchTypeReverse = buildReverse(matchTypeMap, capturepb.MatchType_MATCH_TYPE_UNSPECIFIED, "")
 
 // pauseStateReverse maps a v2 PauseState enum back to a canonical v1
-// paused_state string. The forward pauseStateMap is many-to-one
-// ("" and "unpaused" both map to NOT_PAUSED; "paused" and "paused_requested"
-// both map to PAUSED), so the reverse picks the canonical non-empty spelling.
-// The "paused_requested" narrowing is not recoverable (see SCHEMA-GAPS BUG-5).
+// paused_state string. The forward pauseStateMap is still many-to-one — "" and
+// "unpaused" both map to NOT_PAUSED — so the reverse picks the canonical
+// non-empty spelling.
+//
+// The 2.1.0 proto added PAUSE_STATE_NONE and PAUSE_STATE_PAUSED_REQUESTED, so
+// "none" and "paused_requested" are no longer narrowed away and round-trip
+// exactly.
 var pauseStateReverse = map[capturepb.PauseState]string{
 	capturepb.PauseState_PAUSE_STATE_NOT_PAUSED:       "unpaused",
+	capturepb.PauseState_PAUSE_STATE_NONE:             "none",
 	capturepb.PauseState_PAUSE_STATE_PAUSED:           "paused",
+	capturepb.PauseState_PAUSE_STATE_PAUSED_REQUESTED: "paused_requested",
 	capturepb.PauseState_PAUSE_STATE_UNPAUSING:        "unpausing",
 	capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY: "autopause_replay",
 }
@@ -221,6 +226,8 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 		PrivateMatch:    rc.ea.GetPrivateMatch(),
 		TournamentMatch: rc.ea.GetTournamentMatch(),
 		TotalRoundCount: rc.ea.GetTotalRoundCount(),
+		RulesChangedBy:  rc.ea.GetRulesChangedBy(),
+		RulesChangedAt:  rc.ea.GetRulesChangedAt(),
 	}
 	if ea == nil {
 		return s
@@ -251,6 +258,17 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 	// Pause: only the enum survives; reconstruct the canonical paused_state
 	// string. Sub-fields (teams, timers) have no v2 home.
 	s.Pause = &enginev1.PauseState{PausedState: pauseStateReverse[ea.GetPauseState()]}
+	if detail := ea.GetPauseDetail(); detail != nil {
+		s.Pause.UnpausedTeam = roleToTeamString(detail.GetUnpausedTeam())
+		s.Pause.PausedRequestedTeam = roleToTeamString(detail.GetPausedRequestedTeam())
+		s.Pause.UnpausedTimer = float64(detail.GetUnpausedTimer())
+		s.Pause.PausedTimer = float64(detail.GetPausedTimer())
+	}
+
+	// Transient request flags; zero on virtually every frame.
+	s.ErrCode = ea.GetErrCode()
+	s.BlueTeamRestartRequest = ea.GetBlueTeamRestartRequest()
+	s.OrangeTeamRestartRequest = ea.GetOrangeTeamRestartRequest()
 
 	// Echo Combat payload state. mapping.go only emits PayloadState when some
 	// payload value is non-zero, so this stays nil for every arena capture.
@@ -301,10 +319,56 @@ func gameClockDisplay(clock float32) string {
 // team index encoded in flags, preserving player order within each team (which
 // is the original order, since mapPlayers appended team-by-team). Empty teams
 // present in the source have no v2 representation and are not reconstructed.
+// roleToTeamString inverts teamStringToRole for the pause sub-fields, which
+// spell the team in lowercase and use "none" rather than an empty string.
+func roleToTeamString(r capturepb.Role) string {
+	switch r {
+	case capturepb.Role_ROLE_BLUE_TEAM:
+		return "blue"
+	case capturepb.Role_ROLE_ORANGE_TEAM:
+		return "orange"
+	default:
+		return "none"
+	}
+}
+
+// sumTeamStats derives a v1 TeamStats by summing its players' stats. Measured
+// exact on 7,470 team-frames for all eleven integer counters, and for
+// possession_time exact in 4,269 with the remainder inside 7e-5 (float
+// accumulation order). So the team block needs no v2 field of its own.
+func sumTeamStats(members []*enginev1.TeamMember) *enginev1.TeamStats {
+	total := &enginev1.TeamStats{}
+	any := false
+	for _, m := range members {
+		st := m.GetStats()
+		if st == nil {
+			continue
+		}
+		any = true
+		total.PossessionTime += st.GetPossessionTime()
+		total.Points += st.GetPoints()
+		total.Saves += st.GetSaves()
+		total.Goals += st.GetGoals()
+		total.Stuns += st.GetStuns()
+		total.Passes += st.GetPasses()
+		total.Catches += st.GetCatches()
+		total.Steals += st.GetSteals()
+		total.Blocks += st.GetBlocks()
+		total.Interceptions += st.GetInterceptions()
+		total.Assists += st.GetAssists()
+		total.ShotsTaken += st.GetShotsTaken()
+	}
+	if !any {
+		return nil
+	}
+	return total
+}
+
 func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaFrame) []*enginev1.Team {
 	roster := rc.session.RosterAt(i)
 	loadout := rc.session.LoadoutAt(i)
 	grab := rc.session.GrabAt(i)
+	stats := rc.session.StatsAt(i)
 
 	// Group players by team index, tracking encounter order of team indices.
 	byTeam := map[int32][]*enginev1.TeamMember{}
@@ -314,7 +378,22 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 		if _, seen := byTeam[teamIdx]; !seen {
 			order = append(order, teamIdx)
 		}
-		byTeam[teamIdx] = append(byTeam[teamIdx], reconstructMember(ps, roster, loadout, grab))
+		byTeam[teamIdx] = append(byTeam[teamIdx], reconstructMember(ps, roster, loadout, grab, stats))
+	}
+
+	teamNames := rc.ea.GetTeamNames()
+
+	// A team with no players has no PlayerState to be inferred from, so it used
+	// to vanish from the reconstruction. team_names records the source's team
+	// count, which restores the empty ones (typically an unoccupied SPECTATORS
+	// team). Tapes written before 2.1.0 carry no team_names and keep the old
+	// behaviour.
+	for i := range len(teamNames) {
+		idx := int32(i) //nolint:gosec // bounded by the header's team_names length, at most a handful
+		if _, seen := byTeam[idx]; !seen {
+			byTeam[idx] = nil
+			order = append(order, idx)
+		}
 	}
 
 	// Emit teams in ascending team-index order (blue, orange, spectator).
@@ -322,7 +401,10 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 	teams := make([]*enginev1.Team, 0, len(order))
 	for _, teamIdx := range order {
 		members := byTeam[teamIdx]
-		team := &enginev1.Team{Players: members}
+		team := &enginev1.Team{Players: members, Stats: sumTeamStats(members)}
+		if int(teamIdx) < len(teamNames) {
+			team.TeamName = teamNames[teamIdx]
+		}
 		// Team possession is true when any member holds the disc.
 		for _, m := range members {
 			if m.GetHasPossession() {
@@ -337,7 +419,7 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 
 // reconstructMember rebuilds a v1 TeamMember from a v2 PlayerState plus the
 // per-frame identity/loadout/grab looked up by slot.
-func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.PlayerInfo, loadout map[int32]Loadout, grab map[int32]Grab) *enginev1.TeamMember {
+func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.PlayerInfo, loadout map[int32]Loadout, grab map[int32]Grab, stats map[int32]*capturepb.PlayerStatsUpdated) *enginev1.TeamMember {
 	slot := ps.GetSlot()
 	flags := ps.GetFlags()
 
@@ -366,6 +448,29 @@ func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.Pl
 	if g, ok := grab[slot]; ok {
 		m.LeftHoldingOnto = g.Left
 		m.RightHoldingOnto = g.Right
+	}
+
+	// Reassemble the engine's stats block: eleven counters replayed from
+	// PlayerStatsUpdated, plus possession_time from the per-frame PlayerState.
+	// Emitted whenever either source carries something, so a player with only
+	// possession time still gets a block.
+	if su, ok := stats[slot]; ok {
+		m.Stats = &enginev1.PlayerStats{
+			PossessionTime: float64(ps.GetPossessionTime()),
+			Points:         su.GetPoints(),
+			Saves:          su.GetSaves(),
+			Goals:          su.GetGoals(),
+			Stuns:          su.GetStuns(),
+			Passes:         su.GetPasses(),
+			Catches:        su.GetCatches(),
+			Steals:         su.GetSteals(),
+			Blocks:         su.GetBlocks(),
+			Interceptions:  su.GetInterceptions(),
+			Assists:        su.GetAssists(),
+			ShotsTaken:     su.GetShotsTaken(),
+		}
+	} else if ps.GetPossessionTime() != 0 {
+		m.Stats = &enginev1.PlayerStats{PossessionTime: float64(ps.GetPossessionTime())}
 	}
 
 	if head := ps.GetHead(); head != nil {

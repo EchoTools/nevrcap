@@ -237,15 +237,19 @@ func classifyEvent(evt *capturepb.EchoEvent) capturepb.EventType {
 		return capturepb.EventType_EVENT_TYPE_PLAYER_ASSIST
 	case *capturepb.EchoEvent_PlayerShotTaken:
 		return capturepb.EventType_EVENT_TYPE_PLAYER_SHOT_TAKEN
+	case *capturepb.EchoEvent_PlayerStatsUpdated:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_STATS_UPDATED
+	case *capturepb.EchoEvent_LoadoutChanged:
+		return capturepb.EventType_EVENT_TYPE_LOADOUT_CHANGED
+	case *capturepb.EchoEvent_GrabChanged:
+		return capturepb.EventType_EVENT_TYPE_GRAB_CHANGED
 	case *capturepb.EchoEvent_GenericEvent:
 		return capturepb.EventType_EVENT_TYPE_GENERIC
 	default:
-		// Reached by LoadoutChanged and GrabChanged: EchoEvent defines 26 oneof
-		// variants but EventType defines only 24 values, with none for these
-		// two. WriteFrame skips UNSPECIFIED, so they never enter the footer's
-		// event index. Fixing that needs an enum addition in nevr-proto — see
-		// BUGS.md INDEX-001. TestClassifyEventCoversEveryEchoEventVariant fails
-		// here if any other variant lands in this branch.
+		// Unreachable for any variant the proto currently defines;
+		// TestClassifyEventCoversEveryEchoEventVariant fails if a newly added
+		// one lands here, because WriteFrame (tape.go:96) skips UNSPECIFIED and
+		// it would silently vanish from the footer's event index.
 		return capturepb.EventType_EVENT_TYPE_UNSPECIFIED
 	}
 }

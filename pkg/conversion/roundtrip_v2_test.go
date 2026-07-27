@@ -248,6 +248,7 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	}
 
 	compareTeamMembership(ta, orig, recon)
+	compareTeamLevel(ta, orig, recon)
 	measureFindings(ta, orig, recon)
 }
 
@@ -290,6 +291,7 @@ func compareTeamMembership(ta *tally, orig, recon *enginev1.SessionResponse) {
 		ta.exact("has_possession", om.GetHasPossession() == rm.GetHasPossession(), "")
 		ta.exact("is_emote_playing", om.GetIsEmotePlaying() == rm.GetIsEmotePlaying(), "")
 		ta.exact("ping", om.GetPing() == rm.GetPing(), fmt.Sprintf("slot %d: %d vs %d", slot, om.GetPing(), rm.GetPing()))
+		comparePlayerStats(ta, slot, om, rm)
 		// Network + spatial (tolerance).
 		ta.mag("packet_loss_ratio", om.GetPacketLossRatio(), rm.GetPacketLossRatio())
 		ta.magVec("velocity", om.GetVelocity(), rm.GetVelocity())
@@ -336,16 +338,58 @@ func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("last_throw", orig.GetLastThrow() != nil && recon.GetLastThrow() == nil, "present in orig, dropped in recon")
 	ta.found("last_score", orig.GetLastScore() != nil && recon.GetLastScore() == nil, "present in orig, dropped in recon")
 
-	// Team-level fields with no v2 home.
-	teamCountFinding := len(orig.GetTeams()) != len(recon.GetTeams())
-	ta.found("team_count(empty_teams)", teamCountFinding, fmt.Sprintf("orig=%d recon=%d teams", len(orig.GetTeams()), len(recon.GetTeams())))
-	for _, team := range orig.GetTeams() {
-		ta.found("team_name", team.GetTeamName() != "", team.GetTeamName())
-		ta.found("team.stats", team.GetStats() != nil, "team stats dropped")
-		for _, m := range team.GetPlayers() {
-			ta.found("player.stats", m.GetStats() != nil, "player stats dropped")
+}
+
+// compareTeamLevel asserts the team container and its stats. These were
+// previously "findings" that fired on presence in the ORIGINAL and never looked
+// at the reconstruction at all, so they reported loss even when the round-trip
+// was exact. They are real comparisons now, and hard assertions, because 2.1.0
+// gave team_names a header home and player stats an event home.
+func compareTeamLevel(ta *tally, orig, recon *enginev1.SessionResponse) {
+	ta.exact("team_count", len(orig.GetTeams()) == len(recon.GetTeams()),
+		fmt.Sprintf("orig=%d recon=%d teams", len(orig.GetTeams()), len(recon.GetTeams())))
+	if len(orig.GetTeams()) != len(recon.GetTeams()) {
+		return
+	}
+
+	for i, team := range orig.GetTeams() {
+		rt := recon.GetTeams()[i]
+		ta.exact("team_name", team.GetTeamName() == rt.GetTeamName(),
+			fmt.Sprintf("team %d: %q vs %q", i, team.GetTeamName(), rt.GetTeamName()))
+
+		os, rs := team.GetStats(), rt.GetStats()
+		ta.exact("team.stats.present", (os == nil) == (rs == nil),
+			fmt.Sprintf("team %d: orig=%v recon=%v", i, os != nil, rs != nil))
+		if os != nil && rs != nil {
+			ta.exact("team.stats.stuns", os.GetStuns() == rs.GetStuns(),
+				fmt.Sprintf("team %d: %d vs %d", i, os.GetStuns(), rs.GetStuns()))
+			ta.exact("team.stats.points", os.GetPoints() == rs.GetPoints(), "")
+			ta.mag("team.stats.possession_time", os.GetPossessionTime(), rs.GetPossessionTime())
 		}
 	}
+}
+
+// comparePlayerStats asserts the engine's per-player stat block, replayed from
+// PlayerStatsUpdated plus per-frame possession_time.
+func comparePlayerStats(ta *tally, slot int32, om, rm *enginev1.TeamMember) {
+	os, rs := om.GetStats(), rm.GetStats()
+	ta.exact("player.stats.present", (os == nil) == (rs == nil),
+		fmt.Sprintf("slot %d: orig=%v recon=%v", slot, os != nil, rs != nil))
+	if os == nil || rs == nil {
+		return
+	}
+	ta.exact("player.stats.points", os.GetPoints() == rs.GetPoints(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.saves", os.GetSaves() == rs.GetSaves(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.goals", os.GetGoals() == rs.GetGoals(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.stuns", os.GetStuns() == rs.GetStuns(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.passes", os.GetPasses() == rs.GetPasses(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.catches", os.GetCatches() == rs.GetCatches(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.steals", os.GetSteals() == rs.GetSteals(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.blocks", os.GetBlocks() == rs.GetBlocks(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.interceptions", os.GetInterceptions() == rs.GetInterceptions(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.assists", os.GetAssists() == rs.GetAssists(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.shots_taken", os.GetShotsTaken() == rs.GetShotsTaken(), fmt.Sprintf("slot %d", slot))
+	ta.mag("player.stats.possession_time", os.GetPossessionTime(), rs.GetPossessionTime())
 }
 
 // runRoundTrip performs echoreplay -> v2 -> echoreplay and compares originals to

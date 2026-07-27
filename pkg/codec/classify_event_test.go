@@ -8,17 +8,13 @@ import (
 
 // eventTypeGap lists EchoEvent oneof variants that intentionally classify to
 // EVENT_TYPE_UNSPECIFIED because telemetry.v2's EventType enum has no value for
-// them (capture.proto:130-167 defines 24 values; EchoEvent defines 26 variants).
-// Writer.WriteFrame skips UNSPECIFIED, so events named here never reach the
-// footer's event index and cannot be found by an index scan.
+// them. Writer.WriteFrame skips UNSPECIFIED, so anything named here never
+// reaches the footer's event index and cannot be found by an index scan.
 //
-// These are v2-native events with no v1 source — the forward mapper synthesizes
-// them in appendLoadoutGrabEvents — so the fix is a proto addition in nevr-proto,
-// not a change here. See BUGS.md INDEX-001.
-var eventTypeGap = map[string]bool{
-	"loadout_changed": true,
-	"grab_changed":    true,
-}
+// Empty as of 2.1.0: EventType gained EVENT_TYPE_LOADOUT_CHANGED,
+// EVENT_TYPE_GRAB_CHANGED and EVENT_TYPE_PLAYER_STATS_UPDATED, closing
+// BUGS.md INDEX-001. Every variant is now mappable — keep it that way.
+var eventTypeGap = map[string]bool{}
 
 // TestClassifyEventCoversEveryEchoEventVariant walks the EchoEvent oneof from
 // the descriptor so a variant added to the proto without a classifyEvent case
@@ -72,7 +68,7 @@ func TestClassifyEventGapIsStillReal(t *testing.T) {
 	variants := oneof.Fields().Len()
 	mappable := variants - len(eventTypeGap)
 
-	const wantVariants, wantMappable = 26, 24
+	const wantVariants, wantMappable = 27, 27
 	if variants != wantVariants || mappable != wantMappable {
 		t.Errorf("EchoEvent has %d variants (%d mappable); expected %d and %d. "+
 			"The proto changed — reconcile classifyEvent and eventTypeGap",

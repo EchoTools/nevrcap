@@ -40,12 +40,14 @@ var matchTypeMap = map[string]capturepb.MatchType{
 
 // pauseStateMap maps v1 PauseState.paused_state strings to v2 PauseState enum.
 var pauseStateMap = map[string]capturepb.PauseState{
-	"":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"unpaused": capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"paused":   capturepb.PauseState_PAUSE_STATE_PAUSED,
-	// Intentional data narrowing: v2 proto has no PAUSE_STATE_REQUESTED;
-	// "paused_requested" is treated as PAUSED.
-	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED,
+	"":       capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"none":   capturepb.PauseState_PAUSE_STATE_NONE,
+	"paused": capturepb.PauseState_PAUSE_STATE_PAUSED,
+	// 2.1.0 added PAUSE_STATE_NONE and PAUSE_STATE_PAUSED_REQUESTED, so the
+	// former narrowing of "none" onto NOT_PAUSED and "paused_requested" onto
+	// PAUSED is gone; both now round-trip exactly.
+	"unpaused":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED_REQUESTED,
 	"unpausing":        capturepb.PauseState_PAUSE_STATE_UNPAUSING,
 	"autopause_replay": capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY,
 }
@@ -159,11 +161,44 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 		eaHeader.SessionIp = session.GetSessionIp()
 	}
 
+	// Session constants measured invariant across every frame of 15 sampled
+	// captures, so they are written once rather than per frame.
+	if eaHeader.RulesChangedBy == "" {
+		eaHeader.RulesChangedBy = session.GetRulesChangedBy()
+	}
+	if eaHeader.RulesChangedAt == 0 {
+		eaHeader.RulesChangedAt = session.GetRulesChangedAt()
+	}
+
+	// Team display names, indexed by team. Not derivable from Role: private and
+	// tournament matches use custom names. Constant within a capture (measured
+	// 25/25), so they ride the header.
+	if names := buildTeamNames(session.GetTeams()); len(names) > 0 {
+		eaHeader.TeamNames = names
+	}
+
 	if roster := buildInitialRoster(session.GetTeams()); len(roster) > 0 {
 		eaHeader.InitialRoster = roster
 	}
 
 	return header
+}
+
+// buildTeamNames collects team display names in team-array order, returning nil
+// when every name is empty so an all-blank capture costs nothing on the wire.
+func buildTeamNames(teams []*enginev1.Team) []string {
+	names := make([]string, 0, len(teams))
+	any := false
+	for _, team := range teams {
+		if team.GetTeamName() != "" {
+			any = true
+		}
+		names = append(names, team.GetTeamName())
+	}
+	if !any {
+		return nil
+	}
+	return names
 }
 
 // buildInitialRoster builds the v2 initial roster from the session's teams.
@@ -205,19 +240,41 @@ func rosterRole(teamIdx int, jersey int32) capturepb.Role {
 type FrameMapper struct {
 	BaseTime    time.Time
 	RoundNumber int32
-	// Per-slot previous loadout/grab, for emitting change events.
+	// Per-slot previous loadout/grab/stats, for emitting change events.
 	prevLoadout map[int32]loadoutState
 	prevGrab    map[int32]grabState
+	prevStats   map[int32]statCounters
 }
 
 type loadoutState struct{ weapon, ordnance, tacMod string }
 type grabState struct{ left, right string }
+
+// statCounters holds the eleven integer counters of the engine's per-player
+// stats block. possession_time is excluded: it ticks continuously and rides
+// PlayerState per-frame instead, so including it here would turn a rare event
+// into a per-frame one.
+type statCounters struct {
+	points, saves, goals, stuns, passes, catches int32
+	steals, blocks, interceptions, assists       int32
+	shotsTaken                                   int32
+}
+
+func countersFrom(s *enginev1.PlayerStats) statCounters {
+	return statCounters{
+		points: s.GetPoints(), saves: s.GetSaves(), goals: s.GetGoals(),
+		stuns: s.GetStuns(), passes: s.GetPasses(), catches: s.GetCatches(),
+		steals: s.GetSteals(), blocks: s.GetBlocks(),
+		interceptions: s.GetInterceptions(), assists: s.GetAssists(),
+		shotsTaken: s.GetShotsTaken(),
+	}
+}
 
 // Reset clears the mapper's accumulated state for a new conversion session.
 func (m *FrameMapper) Reset() {
 	m.RoundNumber = 0
 	m.prevLoadout = nil
 	m.prevGrab = nil
+	m.prevStats = nil
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
@@ -250,6 +307,7 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 	if m.prevLoadout == nil {
 		m.prevLoadout = make(map[int32]loadoutState)
 		m.prevGrab = make(map[int32]grabState)
+		m.prevStats = make(map[int32]statCounters)
 	}
 
 	type entry struct {
@@ -287,6 +345,34 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 				},
 			})
 			m.prevLoadout[e.slot] = ld
+		}
+
+		// The engine's own stat counters, seeded on first sighting so a capture
+		// starting mid-match records its opening totals (they carry a
+		// pre-capture baseline and cannot be rebuilt by counting events).
+		if st := e.tm.GetStats(); st != nil {
+			sc := countersFrom(st)
+			if prev, ok := m.prevStats[e.slot]; !ok || prev != sc {
+				ea.Events = append(ea.Events, &capturepb.EchoEvent{
+					Event: &capturepb.EchoEvent_PlayerStatsUpdated{
+						PlayerStatsUpdated: &capturepb.PlayerStatsUpdated{
+							PlayerSlot:    e.slot,
+							Points:        sc.points,
+							Saves:         sc.saves,
+							Goals:         sc.goals,
+							Stuns:         sc.stuns,
+							Passes:        sc.passes,
+							Catches:       sc.catches,
+							Steals:        sc.steals,
+							Blocks:        sc.blocks,
+							Interceptions: sc.interceptions,
+							Assists:       sc.assists,
+							ShotsTaken:    sc.shotsTaken,
+						},
+					},
+				})
+				m.prevStats[e.slot] = sc
+			}
 		}
 
 		gr := grabState{e.tm.GetLeftHoldingOnto(), e.tm.GetRightHoldingOnto()}
@@ -339,12 +425,23 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 		OrangePoints: session.GetOrangePoints(),
 	}
 
-	// Map pause state.
+	// Map pause state. The sub-fields ride a per-frame message that stays nil
+	// unless a pause is actually in progress.
 	if pause := session.GetPause(); pause != nil {
 		if ps, ok := pauseStateMap[pause.GetPausedState()]; ok {
 			ea.PauseState = ps
 		}
+		if detail := mapPauseDetail(pause); detail != nil {
+			ea.PauseDetail = detail
+		}
 	}
+
+	// Transient request flags. Measured 0 on every sampled frame; proto3 writes
+	// nothing for a zero value, so carrying them per-frame is free and stays
+	// correct if they ever toggle.
+	ea.ErrCode = session.GetErrCode()
+	ea.BlueTeamRestartRequest = session.GetBlueTeamRestartRequest()
+	ea.OrangeTeamRestartRequest = session.GetOrangeTeamRestartRequest()
 
 	// Map disc.
 	if disc := session.GetDisc(); disc != nil {
@@ -402,6 +499,29 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 
 	frame.Payload = &capturepb.Frame_EchoArena{EchoArena: ea}
 	return frame
+}
+
+// mapPauseDetail carries the PauseState sub-fields the per-frame enum cannot
+// express. Returns nil when all four are at their zero value, which is every
+// frame outside an active pause.
+func mapPauseDetail(pause *enginev1.PauseState) *capturepb.PauseDetail {
+	unpausedTeam := teamStringToRole(pause.GetUnpausedTeam())
+	requestedTeam := teamStringToRole(pause.GetPausedRequestedTeam())
+	unpausedTimer := float32(pause.GetUnpausedTimer())
+	pausedTimer := float32(pause.GetPausedTimer())
+
+	if unpausedTeam == capturepb.Role_ROLE_UNSPECIFIED &&
+		requestedTeam == capturepb.Role_ROLE_UNSPECIFIED &&
+		unpausedTimer == 0 && pausedTimer == 0 {
+		return nil
+	}
+
+	return &capturepb.PauseDetail{
+		UnpausedTeam:        unpausedTeam,
+		PausedRequestedTeam: requestedTeam,
+		UnpausedTimer:       unpausedTimer,
+		PausedTimer:         pausedTimer,
+	}
 }
 
 func mapDisc(disc *enginev1.Disc) *capturepb.DiscState {
@@ -504,6 +624,10 @@ func mapPlayers(teams []*enginev1.Team) []*capturepb.PlayerState {
 				Ping: uint32(member.GetPing()), //nolint:gosec // ping is non-negative
 			}
 			ps.PacketLossRatio = float32(member.GetPacketLossRatio())
+			// Ticks continuously while a player holds the disc (29.4 changes
+			// per 100 frames measured), so it is per-frame rather than an
+			// event. The other eleven stats fields ride PlayerStatsUpdated.
+			ps.PossessionTime = float32(member.GetStats().GetPossessionTime())
 
 			// Map head pose.
 			if head := member.GetHead(); head != nil {

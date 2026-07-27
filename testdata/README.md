@@ -27,8 +27,8 @@ real byte-level fidelity gate, not just a smoke test.
 
 **Current golden** (measured 2026-07-27):
 
-    sha256:709a1c31bfbe239bf56a4dc5720a62c2956f341c3132ab338c7c337cb941a164
-    1620524 bytes, 1023 frames, 200 events
+    sha256:9e51e60dbb5d04e556cf7d280427df5ad393f79e374ec3b25b631b8ae96cb994
+    1618955 bytes, 1023 frames, 208 events
 
 Regenerate by deleting `sample.tape.golden` and running `TestGoldenConvert`,
 which recreates it when absent. **Update the three values above in the same
@@ -39,6 +39,14 @@ telling whether the golden is the artifact it should be.
 
 Changing the golden means changing the converter's output. Say what changed it:
 
+- **2026-07-27** — the 2.1.0 superset fields are wired: `rules_changed_by`/`_at`
+  and `team_names` in the header, `err_code` / both restart requests /
+  `pause_detail` per frame, `possession_time` on `PlayerState`, and a new
+  `PlayerStatsUpdated` event carrying the engine's eleven integer stat counters.
+  Events 200 → 208 (8 stat seeds, one per player per team occupancy).
+  EventType also gained values for LoadoutChanged, GrabChanged and
+  PlayerStatsUpdated, so those three finally reach CaptureFooter.event_index —
+  a larger footer, hence 1620524 → 1618955 bytes rather than a pure shrink.
 - **2026-07-27** — `ScoreboardSensor` now emits a seed event on the first frame
   (previously it recorded state and returned nil, so the opening scoreboard was
   never captured). Events 199 → 200. The uncompressed stream grew 21 bytes
