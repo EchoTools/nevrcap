@@ -87,6 +87,10 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
     with `has_possession` 100% (0 frames where one knew the holder and the other
     didn't). See `TestPossessionProbe`. The team is derivable from the roster.
     Rebuilt by `reconstructPossession` (`reconstruct.go:381`).
+  - **`Team.stats` — derived, not stored.** Summing the team's players
+    reproduces it exactly: measured on 7,470 team-frames, all eleven integer
+    counters exact, and `possession_time` exact in 4,269 with the remainder
+    inside 7e-5 (float accumulation order). `sumTeamStats` in `reconstruct.go`.
   - **`game_clock_display` — derived, not stored.** It is a pure formatting of
     the per-frame `game_clock`: `trunc(clock*100)` centiseconds rendered
     `"%02d:%02d.%02d"` (the engine truncates, does not round; minutes are
@@ -106,25 +110,12 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
   The reconstructor **is** built (§1).
 - **What still does not round-trip** (measured; `TestRoundTripBAC` reports these
   as findings, and the audit lane confirms them on a 12,817-frame capture):
-  - `rules_changed_by` / `rules_changed_at`, `err_code`, both
-    `*_team_restart_request` — **no v2 field exists**. Needs a proto addition.
-  - `team_name`, `Team.stats`, `TeamMember.stats` — **no v2 field for any of
-    them, and the stats are NOT derivable from the events.** Measured on the
-    committed sample: the engine reports `stuns=0 catches=0` for both players
-    while the event stream yields 3 and 5 (`tapedeck stats`), and engine
-    `possession_time` is already 13.22s on frame 0 because the capture starts
-    mid-match. The engine's counters are an independent quantity with a
-    pre-capture baseline; accumulating events from frame 0 fabricates a
-    different number that happens to look plausible. These need a proto home.
   - `last_throw` / `last_score` — `ThrowDetails` and `GoalScored` carry every
     field, but neither is read off the session on the way in nor written on the
     way out. Note `last_throw` is **local-player-only** in the source; see
     BUGS.md before wiring it.
   - per-frame `jersey_number` / `level` — vary per frame (12,572 frames on the
     audit capture); v2 stores only a join snapshot.
-  - `pause` sub-state — v2 narrows five engine fields to one enum plus
-    `RoundPaused{requesting_team, pause_timer}`.
-  - empty-team structural case — a team with no players has no v2 representation.
 - **Goal:** make v2 a **superset** so the round-trip is field-identical. What
   remains is the proto additions for the genuinely-absent fields above, plus
   read-side plumbing for the ones that already have homes.
@@ -163,12 +154,22 @@ Placed by §2's rule — nothing constant or rare gets propagated per-frame.
 - **Header** (constant): `EchoArenaHeader.session_ip`.
 - **Not added:** `possession[]` (redundant — §3).
 
-**Still needed** — fields with no v2 home at all (§4):
-`rules_changed_by`, `rules_changed_at`, `err_code`,
-`blue/orange_team_restart_request`, `Team.team_name`, the four `PauseState`
-sub-fields v2 narrows away, and `EventType` values for `LoadoutChanged` /
-`GrabChanged` (BUGS.md INDEX-001 — without them those two events cannot appear
-in the footer's event index).
+**Also SHIPPED (2.1.0)** — placement measured on the dal1 corpus rather than
+assumed, per §2's rule:
+
+| addition | where | why there |
+|---|---|---|
+| `rules_changed_by`, `rules_changed_at` | header | invariant across every frame of 15 sampled captures |
+| `team_names` | header | constant per capture (25/25); NOT derivable from `Role` — custom names exist |
+| `err_code`, `blue/orange_team_restart_request` | frame | measured 0 everywhere, but transient flags; proto3 makes a zero field free |
+| `PauseDetail` (`unpaused_team`, `paused_requested_team`, both timers) | frame | nil outside an active pause |
+| `PAUSE_STATE_NONE`, `PAUSE_STATE_PAUSED_REQUESTED` | enum | "none" and "paused_requested" were narrowed away and unrecoverable |
+| `PlayerState.possession_time` | frame | 29.4 changes per 100 frames |
+| `PlayerStatsUpdated` (11 counters) | event | 0.6 changes per 100 frames |
+| `EVENT_TYPE_LOADOUT_CHANGED` / `_GRAB_CHANGED` / `_PLAYER_STATS_UPDATED` | enum | without them those events never reached the footer index |
+
+**Still needed:** nothing for the fields above. What remains is `last_throw` /
+`last_score` plumbing and per-frame `jersey_number` / `level` (§4).
 
 Ship path: edit proto → CI `buf push` on merge to `nevr-proto` main publishes
 the BSR module → `go get` the new version in tape (or `buf generate` + a local

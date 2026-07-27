@@ -153,7 +153,7 @@ table-driven over partial loss, near-total loss (the GH #31 shape), and no loss.
 
 ---
 
-## OPEN — STATS-001: `player.stats` / `team.stats` are NOT derivable from events
+## FIXED — STATS-001: `player.stats` / `team.stats` are NOT derivable from events
 
 **Severity:** medium (fidelity). Needs a proto addition, not plumbing.
 
@@ -188,15 +188,22 @@ Two independent problems:
 check. Same failure mode as reconstructing `last_throw` from `DiscThrown` when
 the source field is local-player-only.
 
-**Fix direction:** give `TeamStats`/`PlayerStats` a real v2 home. They are
-per-frame-varying in principle but change rarely, so §2's rule points at an
-event carrying the engine's own values (not the detector's) — or a periodic
-snapshot. Andrew's call. Do **not** wire the existing accumulator into
-reconstruction.
+**Status: FIXED** in nevr-proto `eb3c3fb` + tape `b4f0d94`, along the fix
+direction this entry called for. Measured placement rather than guessed: the
+eleven integer counters move 0.6 times per 100 frames and ride a new
+`PlayerStatsUpdated` event carrying the ENGINE's values; `possession_time` moves
+29.4 times per 100 frames and rides `PlayerState` per-frame.
+
+`TeamStats` needed no field — measured derivable by summing the team's players,
+exact on 7470 team-frames for all eleven counters and within 7e-5 for
+possession_time.
+
+The existing `cmd/tapedeck/stats.go` accumulator was NOT wired into
+reconstruction, as this entry warned.
 
 ---
 
-## OPEN — INDEX-001: `LoadoutChanged`/`GrabChanged` cannot appear in the footer event index
+## FIXED — INDEX-001: `LoadoutChanged`/`GrabChanged` cannot appear in the footer event index
 
 **Severity:** low (index completeness). Not a fidelity bug — the events
 themselves round-trip correctly.
@@ -223,10 +230,11 @@ source and are synthesized by `appendLoadoutGrabEvents`
 (`pkg/conversion/mapping.go:279-305`), so they were never part of the v1→v2
 event-type mapping.
 
-**Fix direction:** add `EVENT_TYPE_LOADOUT_CHANGED` and
-`EVENT_TYPE_GRAB_CHANGED` to `EventType` in `nevr-proto`, publish to BSR, then
-add the two `classifyEvent` cases and remove them from `eventTypeGap`. The tests
-above will tell you when the enum lands. Not fixable in tape alone.
+**Status: FIXED.** `EVENT_TYPE_LOADOUT_CHANGED`, `EVENT_TYPE_GRAB_CHANGED` and
+`EVENT_TYPE_PLAYER_STATS_UPDATED` added in nevr-proto `eb3c3fb`; `classifyEvent`
+wired in tape `b4f0d94`. `eventTypeGap` is now empty and the count guard asserts
+27 variants / 27 mappable, so any future variant added without a case fails
+there.
 
 ---
 
