@@ -204,6 +204,11 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.exact("possession", int32SliceEqual(orig.GetPossession(), recon.GetPossession()),
 		fmt.Sprintf("%v vs %v", orig.GetPossession(), recon.GetPossession()))
 
+	// Derived from game_clock during reconstruction rather than carried as an
+	// event sample, so it is exact per-frame instead of stale between goals.
+	ta.exact("game_clock_display", orig.GetGameClockDisplay() == recon.GetGameClockDisplay(),
+		fmt.Sprintf("orig=%q recon=%q", orig.GetGameClockDisplay(), recon.GetGameClockDisplay()))
+
 	// Per-frame floats (float32-narrowed -> magnitude tolerance).
 	ta.mag("game_clock", orig.GetGameClock(), recon.GetGameClock())
 	ta.mag("left_shoulder", orig.GetLeftShoulderPressed(), recon.GetLeftShoulderPressed())
@@ -326,7 +331,6 @@ func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("err_code", orig.GetErrCode() != recon.GetErrCode(), fmt.Sprintf("orig=%d", orig.GetErrCode()))
 	ta.found("orange_team_restart_request", orig.GetOrangeTeamRestartRequest() != recon.GetOrangeTeamRestartRequest(), fmt.Sprintf("orig=%d", orig.GetOrangeTeamRestartRequest()))
 	ta.found("blue_team_restart_request", orig.GetBlueTeamRestartRequest() != recon.GetBlueTeamRestartRequest(), fmt.Sprintf("orig=%d", orig.GetBlueTeamRestartRequest()))
-	ta.found("game_clock_display", orig.GetGameClockDisplay() != recon.GetGameClockDisplay(), fmt.Sprintf("orig=%q recon=%q", orig.GetGameClockDisplay(), recon.GetGameClockDisplay()))
 	ta.found("blue_round_score", orig.GetBlueRoundScore() != recon.GetBlueRoundScore(), fmt.Sprintf("orig=%d recon=%d", orig.GetBlueRoundScore(), recon.GetBlueRoundScore()))
 	ta.found("orange_round_score", orig.GetOrangeRoundScore() != recon.GetOrangeRoundScore(), fmt.Sprintf("orig=%d recon=%d", orig.GetOrangeRoundScore(), recon.GetOrangeRoundScore()))
 	ta.found("last_throw", orig.GetLastThrow() != nil && recon.GetLastThrow() == nil, "present in orig, dropped in recon")

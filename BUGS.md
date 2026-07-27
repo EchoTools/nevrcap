@@ -80,6 +80,45 @@ parsed output rather than written lines.
 
 ---
 
+## FIXED — CLOCK-001: `game_clock_display` never round-tripped on any frame
+
+**Status: FIXED** in this commit.
+
+**What:** `game_clock_display` was reconstructed from the last
+`ScoreboardUpdated` event (`reconstruct.go`, via `Session.ScoreAt`). That sensor
+only fires when one of the four score integers changes
+(`pkg/events/sensor_scoreboard.go:46-49` — it does not look at the clock at
+all), so the display string was stale between goals and empty before the first
+one. Measured: **1023 of 1023** frames wrong on the committed sample
+(`orig="11:02.80" recon=""`), **12,817 of 12,817** on a January 2026 capture.
+
+**Root cause:** a per-frame-varying value stored as an event sample, which
+`docs/format-design.md` §2 explicitly rules out.
+
+**Fix:** derive it. `game_clock_display` is a pure formatting of the per-frame
+`game_clock`, which already round-trips to 5e-6:
+
+    centis  = trunc(game_clock * 100)      // engine truncates, does not round
+    display = "%02d:%02d.%02d" of centis/6000, (centis%6000)/100, centis%100
+
+Same reasoning as `possession[]` in `format-design.md` §3 — redundant, derivable,
+so derive rather than store.
+
+**Evidence:** exact on **13,840 real frames** across two recordings (1023/1023
+and 12,817/12,817), computed from the float32 the tape actually stores, so the
+float64→float32 narrowing is already accounted for. A variant using an epsilon
+before truncation was measured worse (11 mismatches) and rejected.
+
+`game_clock_display` moved from a reported finding to an asserted exact field in
+the BAC. `TestGoldenConvert` is unchanged — only the reverse path moved.
+
+**Residual risk:** truncation is unstable within ~5e-6 of a centisecond
+boundary, which is the measured round-trip error on `game_clock`. One frame of
+the 13,840 fell within 0.001cs of a boundary and still resolved correctly. The
+full-corpus run is what would surface a real collision.
+
+---
+
 ## FIXED — READLOSS-002: unparseable input lines were silently discarded
 
 **Status: FIXED** in this commit.
@@ -279,9 +318,13 @@ not-round-tripping; Andrew's call on which matter):**
 - `rules_changed_by` / `rules_changed_at` — no v2 home.
 - per-frame `last_throw` and `last_score` (incl. scorer/assist **names** — v2
   `GoalScored` is slot-only) — v2 only carries throws/goals as events.
-- per-frame `game_clock_display` + `blue/orange_round_score` — only event-sampled
-  (`ScoreboardUpdated`); **BUG: the score sensor seeds frame 0 silently (no
-  event)**, so any pre-first-change value is unrecoverable. Fix: emit a seed.
+- ~~per-frame `game_clock_display`~~ — **RESOLVED 2026-07-27 (CLOCK-001 below):**
+  derived from `game_clock` at reconstruction instead of event-sampled. Exact on
+  13,840 real frames.
+- per-frame `blue/orange_round_score` — only event-sampled (`ScoreboardUpdated`);
+  **BUG: the score sensor seeds frame 0 silently (no event)**
+  (`pkg/events/sensor_scoreboard.go:36-43` records state and returns nil), so any
+  pre-first-change value is unrecoverable. Fix: emit a seed. STILL OPEN.
 - `team_name` (string) — roster stores `Role` enum only.
 - **per-frame `jersey_number`/`level`** — alienq proves they VARY per-frame
   (slot 10: 1/50 for 18865 frames, 0/0 for 3); v2 stores only a join snapshot.

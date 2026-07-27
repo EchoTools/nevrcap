@@ -236,13 +236,17 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 	s.LeftShoulderPressed2 = float64(ea.GetLeftShoulderPressed_2())
 	s.RightShoulderPressed2 = float64(ea.GetRightShoulderPressed_2())
 
-	// Round scores + display clock survive only as event samples; carry the
-	// last ScoreboardUpdated forward (the per-frame value between samples, and
-	// any value before the first sample, is not recoverable — see the BAC).
+	// Round scores survive only as event samples; carry the last
+	// ScoreboardUpdated forward (any value before the first sample is not
+	// recoverable — see BUGS.md, the score sensor emits no seed at frame 0).
 	score := rc.session.ScoreAt(i)
 	s.BlueRoundScore = score.BlueRoundScore
 	s.OrangeRoundScore = score.OrangeRoundScore
-	s.GameClockDisplay = score.GameClockDisplay
+
+	// The display clock is derived, not carried. It changes every frame while
+	// ScoreboardUpdated only fires on a score change, so reading it from the
+	// event sample left it stale between goals and empty before the first one.
+	s.GameClockDisplay = gameClockDisplay(ea.GetGameClock())
 
 	// Pause: only the enum survives; reconstruct the canonical paused_state
 	// string. Sub-fields (teams, timers) have no v2 home.
@@ -269,6 +273,28 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 	s.Possession = reconstructPossession(ea, s.Teams)
 
 	return s
+}
+
+// gameClockDisplay renders the engine's "MM:SS.CC" clock string from the
+// per-frame game clock.
+//
+// The engine truncates to centiseconds rather than rounding, and zero-pads
+// minutes. Verified exact on 13,840 real frames across two recordings — all
+// 1023 of testdata/sample.echoreplay and all 12,817 of a January 2026 capture —
+// computed from the float32 the tape actually stores, so the float64->float32
+// narrowing is already accounted for.
+//
+// Truncation is unstable within ~5e-6 of a centisecond boundary, which is the
+// measured round-trip error on game_clock. Neither recording hit that window;
+// the full-corpus run is what would surface it.
+func gameClockDisplay(clock float32) string {
+	if clock < 0 {
+		clock = 0
+	}
+	// Multiply in float64 to match how the engine's value was formatted; doing
+	// it in float32 loses precision the truncation then amplifies.
+	centis := int(float64(clock) * 100)
+	return fmt.Sprintf("%02d:%02d.%02d", centis/6000, (centis%6000)/100, centis%100)
 }
 
 // reconstructTeams groups the flat v2 player list back into v1 teams by the
