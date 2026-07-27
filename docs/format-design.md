@@ -108,9 +108,14 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
   as findings, and the audit lane confirms them on a 12,817-frame capture):
   - `rules_changed_by` / `rules_changed_at`, `err_code`, both
     `*_team_restart_request` — **no v2 field exists**. Needs a proto addition.
-  - `team_name`, `Team.stats`, `TeamMember.stats` — no v2 field for the name;
-    the stats *are* recoverable from the `Player*` events but nothing
-    accumulates them (`Session.replay()` handles 6 of 26 `EchoEvent` variants).
+  - `team_name`, `Team.stats`, `TeamMember.stats` — **no v2 field for any of
+    them, and the stats are NOT derivable from the events.** Measured on the
+    committed sample: the engine reports `stuns=0 catches=0` for both players
+    while the event stream yields 3 and 5 (`tapedeck stats`), and engine
+    `possession_time` is already 13.22s on frame 0 because the capture starts
+    mid-match. The engine's counters are an independent quantity with a
+    pre-capture baseline; accumulating events from frame 0 fabricates a
+    different number that happens to look plausible. These need a proto home.
   - `last_throw` / `last_score` — `ThrowDetails` and `GoalScored` carry every
     field, but neither is read off the session on the way in nor written on the
     way out. Note `last_throw` is **local-player-only** in the source; see

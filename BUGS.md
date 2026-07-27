@@ -153,6 +153,49 @@ table-driven over partial loss, near-total loss (the GH #31 shape), and no loss.
 
 ---
 
+## OPEN — STATS-001: `player.stats` / `team.stats` are NOT derivable from events
+
+**Severity:** medium (fidelity). Needs a proto addition, not plumbing.
+
+**What:** It is tempting to reconstruct `TeamMember.stats` / `Team.stats` by
+replaying the `Player*` events, which carry running totals
+(`PlayerGoal.total_goals`, `PlayerStun.total_stuns`, …). An accumulator for
+exactly this already exists — `cmd/tapedeck/stats.go:118-170` handles
+PlayerGoal/Assist/Save/Steal/Stun/Block/ShotTaken/Interception, DiscThrown,
+DiscCaught, and derives possession time from `disc_holder_slot` deltas. Lifting
+it into `Session.replay()` looks like the obvious fix.
+
+**It would fabricate data.** Measured on `testdata/sample.echoreplay`:
+
+| | engine `stats` (frame 0 → last) | derived from events |
+|---|---|---|
+| Milkyway `stuns` | 0 → 0 | **3** |
+| Milkyway `catches` | 0 → 0 | **5** |
+| Milkyway `possession_time` | **13.22** → 63.87 | 48.2 |
+| sprockee `possession_time` | **7.73** → 23.00 | 15.3 |
+
+Two independent problems:
+
+1. The detector's notion of an event is not the engine's. The engine counts zero
+   stuns and zero catches across the whole capture; the sensors emit 3 and 5.
+2. The engine's counters carry a **pre-capture baseline** — `possession_time` is
+   already 13.22s on the first frame, because the recording starts mid-match.
+   Any accumulation from frame 0 is wrong by construction, no matter how good
+   the sensors get.
+
+**Impact:** reconstructing stats this way would turn a currently-honest
+"stats dropped" finding into a populated-but-wrong field that passes a presence
+check. Same failure mode as reconstructing `last_throw` from `DiscThrown` when
+the source field is local-player-only.
+
+**Fix direction:** give `TeamStats`/`PlayerStats` a real v2 home. They are
+per-frame-varying in principle but change rarely, so §2's rule points at an
+event carrying the engine's own values (not the detector's) — or a periodic
+snapshot. Andrew's call. Do **not** wire the existing accumulator into
+reconstruction.
+
+---
+
 ## OPEN — INDEX-001: `LoadoutChanged`/`GrabChanged` cannot appear in the footer event index
 
 **Severity:** low (index completeness). Not a fidelity bug — the events
@@ -265,9 +308,11 @@ Combat session, since no arena capture can exercise payload.
 
 **Remaining read-side gaps (not fixed here):** `last_throw` / `last_score` are
 absent at *both* ends (`mapFrame` never reads them off the session and
-`reconstruct.go` never writes them); `Team.stats` / `TeamMember.stats` are never
-reconstructed; `Session.replay()` handles 6 of 26 `EchoEvent` variants, which is
-why the stat totals have no accumulator to read from.
+`reconstruct.go` never writes them). `Team.stats` / `TeamMember.stats` are never
+reconstructed and — measured — **cannot be**, see STATS-001; they need a proto
+home rather than an accumulator. `Session.replay()` handling 6 of 26 `EchoEvent`
+variants is a real limitation for other consumers, but it is not what blocks
+stats.
 
 ---
 
