@@ -50,22 +50,55 @@ the byte delta without failing; flip it to an assertion when this entry closes.
 **Status on the committed sample:** structure identical — 1023 records, no key
 added, none dropped. Byte delta 8,854,398 vs 9,502,522.
 
-### 1. Float spelling (not data loss)
+### 1. Float spelling — FIXED
 
-The engine writes floats as `%.8g` with trailing zeros trimmed to at least one
-decimal place; protojson writes shortest-round-trip float64. So `-1.309` comes
-back as `-1.309000015258789`.
+The engine formats floats with 8 significant digits, trailing zeros trimmed but
+never leaving a bare integer, and writes exponents bare (`9.6339078e-5`,
+`1.5345009e24`). protojson emits the shortest float64 round-trip and Go spells
+exponents `e-05` / `e+24`. Identical values, different bytes.
 
-**Every engine float is exactly a float32**, verified by reproducing the source
-token from `float32(value)` with that format: 38,700/38,700 on the sample,
-133,707/133,707 on a January 2026 capture, and 100% on three dal1 captures
-(the only misses were exponent spelling, `1.5345009e24` vs `e+24`, which
-`FixExponentNotation` already handles). So v2's float32 storage loses nothing
-here — the writer's number formatting is the entire gap.
+`FixEngineFloatFormatting` (`pkg/codec/engine_float.go`) rewrites them. It is
+key-directed, not lexical: protojson writes a zero double and a zero int32
+identically (`0`) while the engine writes `0.0` and `0`, so the float-typed JSON
+keys are derived from the proto descriptors at init — 39 keys, verified to have
+**zero collisions** (no key is float-typed in one message and integer-typed in
+another), so a key alone determines the spelling.
 
-**Fix direction:** format floats engine-style in the echoreplay writer, as a
-byte-level pass alongside `FixProtojsonUint64Encoding` / `FixExponentNotation`.
-Note this is on the write hot path.
+**Evidence:** all **490,017** float literals in the committed capture reproduce
+the engine's spelling exactly (`TestAppendEngineFloatMatchesTheEngine`).
+
+It **replaces** `FixExponentNotation` on the write path. That function expands
+exponent form to decimal, which measurement showed is wrong — the engine *uses*
+exponent form for small magnitudes, so expanding diverged from it. Only
+float-typed fields can produce exponents, so the new fixer subsumes the old one.
+`FixExponentNotation` is retained as exported API for external callers.
+
+**Cost:** 19.5 µs/frame vs 6.6 µs (238 MB/s vs 706 MB/s), same single
+allocation — 3x, on the reconstruction path only. ~12 min/core for 174 GB.
+
+**Note on precision:** 8 significant digits does *not* round-trip every float32
+(a denormal such as 1.02424515e-36 needs 9). That cannot reach us: every value
+in a capture was written by the engine at 8 digits, so the precision was spent
+upstream. `TestAppendEngineFloatIsIdempotent` pins the invariant that actually
+governs — respelling an engine-written value reproduces it.
+
+### 1b. Orientation basis (newly isolated)
+
+With float spelling fixed, the first byte difference moved to `forward`/`left`/
+`up`:
+
+    canonical: [0.104,      0.70900005, -0.69700003]
+    via tape : [0.10386993, 0.70918642, -0.6969428 ]
+
+`position` and `velocity` now match byte-for-byte. This residual is the
+quaternion conversion in the forward mapping, not formatting: the engine writes
+a 9-float basis to ~3 decimals, so it is slightly non-orthonormal; v2 stores the
+nearest true rotation as a quaternion and reconstruction returns the
+**orthonormalized** basis. Real information loss, introduced by `mapping.go`,
+not recoverable by any writer change.
+
+Byte identity therefore requires a decision: store the raw basis alongside the
+quaternion, or accept that orientation is not byte-exact. Andrew's call.
 
 ### 2. `last_throw` / `last_score` (real, known)
 

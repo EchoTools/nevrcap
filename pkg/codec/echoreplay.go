@@ -280,7 +280,7 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbyS
 		return 0
 	}
 	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
-	e.scratchBuf = FixExponentNotation(e.scratchBuf)
+	e.scratchBuf = FixEngineFloatFormatting(e.scratchBuf)
 	dst.Write(e.scratchBuf)
 
 	// 4. Player Bones (optional) - only write if present and non-empty
@@ -295,7 +295,7 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbyS
 
 			// Write Player Bones
 			e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
-			e.scratchBuf = FixExponentNotation(e.scratchBuf)
+			e.scratchBuf = FixEngineFloatFormatting(e.scratchBuf)
 			dst.Write(e.scratchBuf)
 		}
 	}
