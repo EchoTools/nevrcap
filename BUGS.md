@@ -34,6 +34,71 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — READLOSS-001: the round-trip BAC cannot detect anything the reader drops
+
+**Severity:** high (verification integrity). The gate reports lossless on files
+from which nothing survived.
+
+**What:** `runRoundTrip` (`pkg/conversion/roundtrip_v2_test.go`) reads the
+original with `readEchoReplay(src)` and the reconstruction with
+`readEchoReplay(recon)` — the **same reader**. Lines that reader silently skips
+never enter `origFrames`, so they are never compared; and the reconstruction was
+written by tape in tape's own dialect, so it parses 100%. The only frame-count
+check is `len(origFrames) != len(reconFrames)` — survivor set against survivor
+set.
+
+Feed it a GH #31 March-2026 capture (450 lines, all rejected): `origFrames` is
+empty, `reconFrames` is empty, lengths match, zero mismatches, **PASS**.
+
+**Where:** `pkg/conversion/roundtrip_v2_test.go` `runRoundTrip`;
+`pkg/codec/echoreplay.go:504-508` (`skippedFrames++; continue`).
+
+**Partially addressed:** conversion now counts and reports dropped lines
+(`ConvertResult.SkippedLines`, surfaced by `tapedeck convert`) — see
+READLOSS-002 below. That makes the loss visible at convert time but does **not**
+fix the BAC, which still compares parsed-to-parsed.
+
+**Fix direction:** the round-trip comparison must count records in the source
+container (raw lines in the zip member / NDJSON file) and assert that number
+against frames read and lines written — three numbers, not one. Required before
+the full-corpus run, or the corpus grades us on the survivors.
+
+---
+
+## FIXED — READLOSS-002: unparseable input lines were silently discarded
+
+**Status: FIXED** in this commit.
+
+**What:** `EchoReplay.ReadFrame` counts a line it cannot parse and continues
+(`pkg/codec/echoreplay.go:504-508`). `SkippedFrames()` exposed the count, but
+`grep -rn SkippedFrames --include='*.go'` found consumers only in
+`boolean_int32_test.go` — nothing in the conversion pipeline or the CLI. A
+capture whose lines were all rejected converted to an empty tape and reported
+success.
+
+**Impact:** GH #31 reports real files in exactly this shape (450 lines read, 450
+rejected; 6476/6476; 696/696). Converting those would have produced empty tapes
+with a clean exit.
+
+**Fix:** `ConvertResult.SkippedLines`, populated via a consumer-side
+`lineSkipper` interface (only the line-oriented echoreplay reader has the
+notion; the length-delimited legacy reader errors out instead). `tapedeck
+convert` prints the total and names each lossy input.
+
+Measured on a fixture of 20 good lines plus 2 garbage lines:
+
+    converted: 1, skipped: 0, failed: 0
+    total frames: 20, total events: 9
+    unparsed lines: 2 — output is NOT a complete record of its source
+
+    unparsed input:
+      mixed.echoreplay: 2 line(s) unparsed, 20 frame(s) kept
+
+Tests: `TestConvertReportsSkippedLines` (`pkg/conversion/skipped_lines_test.go`),
+table-driven over partial loss, near-total loss (the GH #31 shape), and no loss.
+
+---
+
 ## OPEN — INDEX-001: `LoadoutChanged`/`GrabChanged` cannot appear in the footer event index
 
 **Severity:** low (index completeness). Not a fidelity bug — the events

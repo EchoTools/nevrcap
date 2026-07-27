@@ -25,6 +25,11 @@ type ConvertResult struct {
 	OutputPath string
 	FrameCount uint32
 	EventCount uint32
+	// SkippedLines counts input lines the reader could not parse and dropped.
+	// Non-zero means the tape is not a complete record of its source: some
+	// recorders emitted formats this reader does not understand (GH #31), and
+	// the loss is otherwise silent.
+	SkippedLines uint32
 }
 
 // ConvertFile converts a legacy capture file (.echoreplay or .nevrcap) to
@@ -68,12 +73,23 @@ type v1Reader interface {
 	Close() error
 }
 
+// lineSkipper is implemented by readers that count input records they could not
+// parse. Declared at the consumer because only the line-oriented echoreplay
+// reader has the notion; the length-delimited legacy reader errors out instead.
+type lineSkipper interface {
+	SkippedFrames() uint32
+}
+
 // echoReplayAdapter wraps EchoReplay to implement v1Reader.
 // EchoReplay doesn't have ReadHeader, so we synthesize one from the first frame.
 type echoReplayAdapter struct {
 	reader     *codec.EchoReplay
 	firstFrame *telemetryv1.LobbySessionStateFrame
 }
+
+// SkippedFrames satisfies lineSkipper, exposing the underlying reader's count of
+// unparseable lines to the conversion pipeline.
+func (a *echoReplayAdapter) SkippedFrames() uint32 { return a.reader.SkippedFrames() }
 
 func (a *echoReplayAdapter) ReadHeader() (*telemetryv1.TelemetryHeader, error) {
 	// EchoReplay files don't have a separate header. Read the first frame
@@ -202,6 +218,12 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 			closeWriter()
 			return nil, err
 		}
+	}
+
+	// Record input the reader could not parse. Counted after the read loop so it
+	// reflects the whole file.
+	if skipper, ok := reader.(lineSkipper); ok {
+		result.SkippedLines = skipper.SkippedFrames()
 	}
 
 	// Close writer (writes footer).
