@@ -1,7 +1,11 @@
 package conversion_test
 
 import (
+	"archive/zip"
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -358,6 +362,16 @@ func runRoundTrip(t *testing.T, src string) *tally {
 	}
 
 	origFrames := readEchoReplay(t, src)
+
+	// Guard the comparison itself: every record physically in the source must
+	// have been surfaced by the reader. Without this the round-trip grades the
+	// survivors — a capture that parses to zero frames yields orig=0, recon=0,
+	// zero mismatches, PASS (BUGS.md READLOSS-001).
+	if sourceRecords := countSourceRecords(t, src); len(origFrames) != sourceRecords {
+		t.Fatalf("reader surfaced %d of %d records in %s — the comparison below "+
+			"would only cover the survivors", len(origFrames), sourceRecords, src)
+	}
+
 	reconFrames := readEchoReplay(t, recon)
 	if len(origFrames) != len(reconFrames) {
 		t.Fatalf("frame count: orig=%d recon=%d (reconstructed %d)", len(origFrames), len(reconFrames), n)
@@ -404,11 +418,68 @@ func readEchoReplay(t *testing.T, path string) []*telemetryv1.LobbySessionStateF
 		t.Fatalf("open %s: %v", path, err)
 	}
 	frames, err := r.ReadFrames()
+	skipped := r.SkippedFrames()
 	_ = r.Close()
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+	if skipped != 0 {
+		t.Fatalf("reader skipped %d unparseable line(s) in %s — those records are absent "+
+			"from this side of the comparison and would score as a match", skipped, path)
+	}
 	return frames
+}
+
+// countSourceRecords counts the records physically present in an echoreplay,
+// without the codec in the path: every non-empty line across every zip member,
+// or every non-empty line of the file when it is not a zip.
+//
+// The round-trip compares parsed originals against parsed reconstructions
+// through the same reader, so anything that reader drops is missing from both
+// sides and scores as a match (BUGS.md READLOSS-001). Comparing frames against
+// this number is what makes reader-level loss visible: it also catches loss the
+// skip counter cannot see, such as a second zip member that initScanner never
+// opens.
+func countSourceRecords(t *testing.T, path string) int {
+	t.Helper()
+
+	countLines := func(r io.Reader) int {
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		n := 0
+		for scanner.Scan() {
+			if len(scanner.Bytes()) > 0 {
+				n++
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatalf("scan %s: %v", path, err)
+		}
+		return n
+	}
+
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		// Not a zip: the recorder wrote raw NDJSON.
+		f, openErr := os.Open(path)
+		if openErr != nil {
+			t.Fatalf("open %s: %v", path, openErr)
+		}
+		defer f.Close() //nolint:errcheck // read-only test fixture
+		return countLines(f)
+	}
+	defer zr.Close() //nolint:errcheck // read-only test fixture
+
+	total := 0
+	for _, member := range zr.File {
+		rc, err := member.Open()
+		if err != nil {
+			t.Fatalf("open member %s of %s: %v", member.Name, path, err)
+		}
+		total += countLines(rc)
+		_ = rc.Close()
+	}
+	return total
 }
 
 // report logs the tally. When strict, any recoverable mismatch fails the test
@@ -454,6 +525,72 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// TestCountSourceRecordsSeesWhatTheReaderDrops proves the guard in runRoundTrip
+// has teeth. It builds a capture whose trailing lines the reader cannot parse
+// and shows the two numbers diverge — which is exactly the condition that used
+// to pass silently, because both sides of the comparison were built from the
+// survivors.
+func TestCountSourceRecordsSeesWhatTheReaderDrops(t *testing.T) {
+	sample := filepath.Join("..", "..", "testdata", "sample.echoreplay")
+	if _, err := os.Stat(sample); err != nil {
+		t.Skipf("no sample: %v", err)
+	}
+
+	zr, err := zip.OpenReader(sample)
+	if err != nil {
+		t.Fatalf("open sample: %v", err)
+	}
+	member, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("open member: %v", err)
+	}
+	body, err := io.ReadAll(member)
+	_ = member.Close()
+	_ = zr.Close()
+	if err != nil {
+		t.Fatalf("read member: %v", err)
+	}
+
+	const (
+		keep    = 20
+		garbage = 2
+	)
+	lines := bytes.SplitN(body, []byte("\r\n"), keep+1)[:keep]
+	corrupt := append(bytes.Join(lines, []byte("\r\n")),
+		[]byte("\r\nNOT A FRAME LINE\r\nALSO NOT A FRAME LINE\r\n")...)
+
+	path := filepath.Join(t.TempDir(), "corrupt.echoreplay")
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatalf("write corrupt capture: %v", err)
+	}
+
+	if got, want := countSourceRecords(t, path), keep+garbage; got != want {
+		t.Fatalf("countSourceRecords = %d, want %d", got, want)
+	}
+
+	r, err := codec.NewEchoReplayReader(path)
+	if err != nil {
+		t.Fatalf("open corrupt capture: %v", err)
+	}
+	frames, err := r.ReadFrames()
+	skipped := r.SkippedFrames()
+	_ = r.Close()
+	if err != nil {
+		t.Fatalf("read corrupt capture: %v", err)
+	}
+
+	if len(frames) != keep {
+		t.Errorf("reader surfaced %d frames, want %d", len(frames), keep)
+	}
+	if skipped != garbage {
+		t.Errorf("SkippedFrames = %d, want %d", skipped, garbage)
+	}
+	if len(frames) == countSourceRecords(t, path) {
+		t.Error("frames equal source records on a capture with unparseable lines; " +
+			"the runRoundTrip guard would not fire")
+	}
 }
 
 // TestRoundTripBAC is the acceptance gate: on the committed sample, every

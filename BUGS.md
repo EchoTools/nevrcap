@@ -34,9 +34,9 @@ now will match post-publish BSR output.
 
 ---
 
-## OPEN — READLOSS-001: the round-trip BAC cannot detect anything the reader drops
+## FIXED — READLOSS-001: the round-trip BAC could not detect anything the reader dropped
 
-**Severity:** high (verification integrity). The gate reports lossless on files
+**Severity:** high (verification integrity). The gate reported lossless on files
 from which nothing survived.
 
 **What:** `runRoundTrip` (`pkg/conversion/roundtrip_v2_test.go`) reads the
@@ -53,15 +53,30 @@ empty, `reconFrames` is empty, lengths match, zero mismatches, **PASS**.
 **Where:** `pkg/conversion/roundtrip_v2_test.go` `runRoundTrip`;
 `pkg/codec/echoreplay.go:504-508` (`skippedFrames++; continue`).
 
-**Partially addressed:** conversion now counts and reports dropped lines
-(`ConvertResult.SkippedLines`, surfaced by `tapedeck convert`) — see
-READLOSS-002 below. That makes the loss visible at convert time but does **not**
-fix the BAC, which still compares parsed-to-parsed.
+**Fix:** two guards in `pkg/conversion/roundtrip_v2_test.go`.
 
-**Fix direction:** the round-trip comparison must count records in the source
-container (raw lines in the zip member / NDJSON file) and assert that number
-against frames read and lines written — three numbers, not one. Required before
-the full-corpus run, or the corpus grades us on the survivors.
+1. `readEchoReplay` now fails if the reader reported any skipped line, on either
+   side of the comparison.
+2. `countSourceRecords` counts records physically present in the container —
+   every non-empty line across **every** zip member, or every non-empty line of
+   the file when it is not a zip — with no codec in the path. `runRoundTrip`
+   asserts frames-read equals that number before comparing anything. Counting
+   all members also catches loss the skip counter cannot see: `initScanner`
+   (`pkg/codec/echoreplay.go:137-166`) opens exactly one member, so a second
+   member is invisible to the reader entirely.
+
+**Evidence the guard bites:** `TestCountSourceRecordsSeesWhatTheReaderDrops`
+builds a 22-record capture whose last 2 lines are unparseable and asserts the
+numbers diverge — 22 records present, 20 frames surfaced, 2 skipped. That is the
+exact condition that used to pass silently.
+
+On the committed sample the guard confirms 1023 of 1023 records surfaced.
+
+**Still required for the corpus run:** the third number. Records-in equals
+frames-read is now checked; frames-read equals lines-written is not, so a
+reconstruction that emits fewer lines than it consumed would still be caught
+only by the existing `len(origFrames) != len(reconFrames)` check, which compares
+parsed output rather than written lines.
 
 ---
 
