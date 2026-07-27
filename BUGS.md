@@ -53,7 +53,7 @@ empty, `reconFrames` is empty, lengths match, zero mismatches, **PASS**.
 **Where:** `pkg/conversion/roundtrip_v2_test.go` `runRoundTrip`;
 `pkg/codec/echoreplay.go:504-508` (`skippedFrames++; continue`).
 
-**Fix:** two guards in `pkg/conversion/roundtrip_v2_test.go`.
+**Status: FIXED** in `e602c0d`. Two guards in `pkg/conversion/roundtrip_v2_test.go`.
 
 1. `readEchoReplay` now fails if the reader reported any skipped line, on either
    side of the comparison.
@@ -82,7 +82,7 @@ parsed output rather than written lines.
 
 ## FIXED — CLOCK-001: `game_clock_display` never round-tripped on any frame
 
-**Status: FIXED** in this commit.
+**Status: FIXED** in `ab0f894`.
 
 **What:** `game_clock_display` was reconstructed from the last
 `ScoreboardUpdated` event (`reconstruct.go`, via `Session.ScoreAt`). That sensor
@@ -121,7 +121,7 @@ full-corpus run is what would surface a real collision.
 
 ## FIXED — READLOSS-002: unparseable input lines were silently discarded
 
-**Status: FIXED** in this commit.
+**Status: FIXED** in `56746bb`.
 
 **What:** `EchoReplay.ReadFrame` counts a line it cannot parse and continues
 (`pkg/codec/echoreplay.go:504-508`). `SkippedFrames()` exposed the count, but
@@ -225,7 +225,7 @@ dumps. Of the nine items listed as having "no slot", **eight now have one**:
 | team-level container | **still true** — no `team_name`, no `TeamStats` |
 
 "There is **no** v2→echoreplay or v2→v1 path, so the loss is irreversible" is
-also stale: `ReconstructFile` (`pkg/conversion/reconstruct.go:441`) and
+also stale: `ReconstructFile` (`pkg/conversion/reconstruct.go:478`) and
 `SessionReconstructor` exist and are exercised by `TestRoundTripBAC`.
 
 The superset work in the DIRECTIVE below landed the proto side; what remains is
