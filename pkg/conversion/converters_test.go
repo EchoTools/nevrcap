@@ -1,6 +1,7 @@
 package conversion
 
 import (
+	"os"
 	"testing"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
@@ -9,7 +10,6 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"os"
 )
 
 // writeLegacyV1File writes a v1-format file (zstd-compressed,
