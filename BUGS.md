@@ -34,6 +34,40 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — INDEX-001: `LoadoutChanged`/`GrabChanged` cannot appear in the footer event index
+
+**Severity:** low (index completeness). Not a fidelity bug — the events
+themselves round-trip correctly.
+
+**What:** `telemetry.v2.EchoEvent` defines **26** oneof variants;
+`telemetry.v2.EventType` defines **24** values, with none for `LoadoutChanged`
+or `GrabChanged`. `classifyEvent` therefore returns `EVENT_TYPE_UNSPECIFIED` for
+both, and `Writer.WriteFrame` (`pkg/codec/tape.go:96`) skips UNSPECIFIED rather
+than indexing it. The events are written into frames and replayed correctly by
+`Session.replay()`, but a consumer scanning `CaptureFooter.event_index` for
+loadout or grab changes finds nothing.
+
+**Where / evidence:**
+- Enum: `nevr-proto/telemetry/v2/capture.proto:130-167` — 24 values.
+- Oneof: `nevr-proto/telemetry/v2/echo_arena.proto:248-288` — 26 variants.
+- Skip: `pkg/codec/tape.go:96` — `if eventType != EVENT_TYPE_UNSPECIFIED`.
+- Pinned by `TestClassifyEventCoversEveryEchoEventVariant` and
+  `TestClassifyEventGapIsStillReal` (`pkg/codec/classify_event_test.go`), which
+  walk the oneof from the descriptor. A new variant added to the proto without a
+  `classifyEvent` case fails there instead of silently vanishing.
+
+**Why it exists:** these are the only two v2-native events — they have no v1
+source and are synthesized by `appendLoadoutGrabEvents`
+(`pkg/conversion/mapping.go:279-305`), so they were never part of the v1→v2
+event-type mapping.
+
+**Fix direction:** add `EVENT_TYPE_LOADOUT_CHANGED` and
+`EVENT_TYPE_GRAB_CHANGED` to `EventType` in `nevr-proto`, publish to BSR, then
+add the two `classifyEvent` cases and remove them from `eventTypeGap`. The tests
+above will tell you when the enum lands. Not fixable in tape alone.
+
+---
+
 ## OPEN — FIDELITY-001: v2 is a lossy projection of v1; echoreplay does not round-trip through v2
 
 **Severity:** design-level. Blocks treating v2 as the archival/anticheat format.
@@ -56,6 +90,65 @@ echoreplay (v1 codec) IS lossless — proven by `TestEchoReplayRoundTripFidelity
 **Root failure:** no ADR justified the v2 scope or the deletion of the v1 writer
 (`1e54c6e`); no BAC/test ever guarded echoreplay→tape→echoreplay fidelity (only
 a 1-frame smoke test, `TestEchoReplayCodec`); the loss is silent (no flag/warn).
+
+**AMENDMENT (2026-07-27) — the field list above is stale.** Measured against
+`nevr-proto/telemetry/v2/echo_arena.proto` rather than the 2026-06-29 struct
+dumps. Of the nine items listed as having "no slot", **eight now have one**:
+
+| Listed as dropped | Actual v2 home |
+|---|---|
+| `weapon`, `ordnance`, `tac_mod` | `LoadoutChanged` (`echo_arena.proto:362-367`) |
+| `packet_loss` | `PlayerState.packet_loss_ratio` (`:218`) |
+| grab state | `GrabChanged` (`:372-376`) |
+| `possession` array | derived — `reconstructPossession` (`reconstruct.go:381`) |
+| payload data | `PayloadState` (`:182-188`) |
+| shoulder inputs | `EchoArenaFrame:14-17`, all four incl. `_2` |
+| team-level container | **still true** — no `team_name`, no `TeamStats` |
+
+"There is **no** v2→echoreplay or v2→v1 path, so the loss is irreversible" is
+also stale: `ReconstructFile` (`pkg/conversion/reconstruct.go:441`) and
+`SessionReconstructor` exist and are exercised by `TestRoundTripBAC`.
+
+The superset work in the DIRECTIVE below landed the proto side; what remains is
+read-side plumbing, tracked as RECONSTRUCT-001, not schema loss.
+
+---
+
+## FIXED — RECONSTRUCT-001: `client_name` and payload state written to v2, never read back
+
+**Status: FIXED** in `e4a6cb4`.
+
+**What:** Six fields with v2 homes were populated by the forward mapper and
+silently absent from reconstruction, so `echoreplay → v2 → echoreplay` dropped
+them:
+
+- `client_name` — `EchoArenaHeader:4`, written `pkg/conversion/mapping.go:153`
+- `payload_multiplier` / `_checkpoint` / `_distance` / `_defenders` / `_speed` —
+  `EchoArenaFrame:13` via `PayloadState`, written `mapping.go:394-400`
+
+`grep -c` in `reconstruct.go` returned 0 for both `ClientName` and `Payload`.
+
+**Why it survived:** the payload block at `mapping.go:391-393` only emits
+`PayloadState` when some payload value is non-zero, and every committed fixture
+is an arena match where all five are 0 — no test ever exercised the path.
+`client_name` had no assertion in the BAC at all.
+
+**Evidence (RED before the fix):** `client_name = "", want "Milkyway"`;
+`payload_multiplier = 0, want 1.5` (and the other four at 0).
+
+**Fix:** `reconstructSession` now assigns `ClientName` from the header and the
+five payload fields from `ea.GetPayload()`. Both are asserted by the acceptance
+gate (`compareSession`) so they cannot regress.
+
+Tests: `TestReconstructPreservesClientName`, `TestReconstructPreservesPayload`
+(`pkg/conversion/reconstruct_gaps_test.go`) — the latter builds a synthetic Echo
+Combat session, since no arena capture can exercise payload.
+
+**Remaining read-side gaps (not fixed here):** `last_throw` / `last_score` are
+absent at *both* ends (`mapFrame` never reads them off the session and
+`reconstruct.go` never writes them); `Team.stats` / `TeamMember.stats` are never
+reconstructed; `Session.replay()` handles 6 of 26 `EchoEvent` variants, which is
+why the stat totals have no accumulator to read from.
 
 ---
 

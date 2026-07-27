@@ -240,6 +240,12 @@ func classifyEvent(evt *capturepb.EchoEvent) capturepb.EventType {
 	case *capturepb.EchoEvent_GenericEvent:
 		return capturepb.EventType_EVENT_TYPE_GENERIC
 	default:
+		// Reached by LoadoutChanged and GrabChanged: EchoEvent defines 26 oneof
+		// variants but EventType defines only 24 values, with none for these
+		// two. WriteFrame skips UNSPECIFIED, so they never enter the footer's
+		// event index. Fixing that needs an enum addition in nevr-proto — see
+		// BUGS.md INDEX-001. TestClassifyEventCoversEveryEchoEventVariant fails
+		// here if any other variant lands in this branch.
 		return capturepb.EventType_EVENT_TYPE_UNSPECIFIED
 	}
 }
