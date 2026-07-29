@@ -34,10 +34,10 @@ now will match post-publish BSR output.
 
 ---
 
-## OPEN — VOCAB-001: an unknown engine string is erased silently
+## FIXED — VOCAB-001: an unknown engine string is erased silently
 
 **Severity:** medium (archival integrity). Not currently triggered by any capture
-measured, but the failure mode is total and silent.
+measured, but the failure mode was total and silent.
 
 **What:** `gameStatusMap`, `matchTypeMap`, `pauseStateMap` and
 `goalTypeStringMap` translate engine strings to enums; an unrecognized string
@@ -68,12 +68,46 @@ lowercase symbol names (`echo_arena_private` @`0x1416d8d07`), while the JSON use
 `Echo_Arena_Private`. The two vocabularies differ, so the mapping table cannot be
 verified against the string table the way GOALTYPE-001 was.
 
-**Fix direction:** count unmapped values during conversion and surface them on
-`ConvertResult` alongside `SkippedLines`, so the loss is visible per file on a
-corpus run. Deliberately *not* "fail the conversion" — one unknown string should
-not abort a 174 GB pass — and deliberately not "guess", since the tables cannot
-be completed from the binary. Andrew's call on whether the CLI should also exit
-non-zero when any are seen.
+**Fix:** `pkg/conversion/vocabulary.go`. A per-conversion `vocabulary`
+accumulator owns the only sanctioned lookups into the four tables; each is a
+plain map hit on the common case and does work only on a miss, so counting costs
+nothing per frame. The result reaches `ConvertResult.UnmappedValues` (field,
+value, count — sorted by field then value so a corpus receipt is diffable) and
+`tapedeck convert` aggregates it across inputs.
+
+Deliberately *not* "fail the conversion" — one unknown string must not abort a
+174 GB pass — and deliberately not "guess", since the tables cannot be completed
+from the binary.
+
+The **empty string is deliberately not counted**. An absent engine field is not
+an unknown vocabulary item: `game_status` is empty in 10 of 25 measured dal1
+captures and round-trips correctly, so counting it would report a loss that is
+not real on nearly half the corpus. This is the one case the counter cannot
+distinguish, and it is called out here rather than papered over.
+
+The exported `MapHeader`, `MapHeaderFromSession`, `MapFrame` and
+`goalTypeStringToEnum` keep their signatures and pass a nil accumulator — they
+have nowhere to report. Conversion goes through the unexported variants.
+
+**Evidence:** the sample with `game_status` patched to an unknown value on 3 of
+40 frames, through the real binary:
+
+    $ tapedeck convert poisoned.echoreplay
+    converted: 1, skipped: 0, failed: 0
+    total frames: 40, total events: 13
+    unmapped engine values: 1 distinct — these convert to UNSPECIFIED and are LOST
+
+    unmapped engine values:
+      game_status = "quantum_overtime" (3 occurrence(s))
+
+**Status: FIXED.** Pinned by `TestVocabularyCountsWhatTheTablesLose`,
+`TestVocabularyIgnoresTheEmptyString`, `TestVocabularyIsSilentOnAKnownCapture`
+(no false positives on the committed sample) and `TestNilVocabularyRecordsNothing`
+(`pkg/conversion/vocabulary_test.go`).
+
+**Still Andrew's call:** whether `tapedeck convert` should also exit non-zero
+when any unmapped value is seen. It currently exits 0 and reports, matching
+`SkippedLines`.
 
 ---
 

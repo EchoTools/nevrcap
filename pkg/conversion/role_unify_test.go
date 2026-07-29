@@ -57,7 +57,7 @@ func TestRoleResolution_BothPathsAgreeOnSpectator(t *testing.T) {
 		if v1evt == nil {
 			break
 		}
-		v2evt := mapEvent(v1evt)
+		v2evt := mapEvent(v1evt, nil)
 		if v2evt == nil {
 			continue
 		}

@@ -867,7 +867,7 @@ func TestMapEvent_AllTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mapEvent(tt.v1evt)
+			got := mapEvent(tt.v1evt, nil)
 			if got == nil {
 				t.Fatal("mapEvent returned nil")
 			}
@@ -900,7 +900,7 @@ func TestMapEvent_DiscThrownWithThrowDetails(t *testing.T) {
 		},
 	}
 
-	got := mapEvent(v1evt)
+	got := mapEvent(v1evt, nil)
 	if got == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -954,7 +954,7 @@ func TestMapEvent_DiscThrownWithoutThrowDetails(t *testing.T) {
 		},
 	}
 
-	got := mapEvent(v1evt)
+	got := mapEvent(v1evt, nil)
 	if got == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -972,7 +972,7 @@ func TestMapEvent_DiscThrownWithoutThrowDetails(t *testing.T) {
 }
 
 func TestMapEvent_Nil(t *testing.T) {
-	if got := mapEvent(nil); got != nil {
+	if got := mapEvent(nil, nil); got != nil {
 		t.Errorf("mapEvent(nil) = %v, want nil", got)
 	}
 }
@@ -1059,7 +1059,7 @@ func TestMapEvent_RoundPausedCarriesPauseState(t *testing.T) {
 			},
 		},
 	}
-	rp := mapEvent(v1e).GetRoundPaused()
+	rp := mapEvent(v1e, nil).GetRoundPaused()
 	if rp.GetPauseState() != capturepb.PauseState_PAUSE_STATE_PAUSED {
 		t.Errorf("pause_state = %v, want PAUSED", rp.GetPauseState())
 	}

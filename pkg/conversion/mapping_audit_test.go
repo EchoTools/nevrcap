@@ -32,7 +32,7 @@ func TestGoalScored_ScorerSlotAndAssistSlotStayZero(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -83,7 +83,7 @@ func TestGoalScored_DisplayNamesDropped(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	gs := v2evt.GetGoalScored()
 	if gs == nil {
 		t.Fatal("expected GoalScored event")
@@ -506,7 +506,7 @@ func TestPlayerJoined_JerseyNumberAndLevelDropped(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -553,7 +553,7 @@ func TestEmotePlayed_EmoteTypePreserved(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -588,7 +588,7 @@ func TestGoalScored_NamesPopulated(t *testing.T) {
 			},
 		},
 	}
-	gs := mapEvent(v1e).GetGoalScored()
+	gs := mapEvent(v1e, nil).GetGoalScored()
 	if gs.GetPersonScored() != "PlayerOne" {
 		t.Errorf("person_scored = %q, want PlayerOne", gs.GetPersonScored())
 	}

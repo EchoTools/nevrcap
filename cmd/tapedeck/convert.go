@@ -2,9 +2,12 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,6 +130,10 @@ Output files are written alongside the input with .tape extension unless
 			// such a file is not a complete record of its source, so it is
 			// called out rather than folded into the frame count.
 			var lossy []string
+			// Engine strings no conversion table recognised, aggregated across
+			// every input so a corpus pass reports the vocabulary gap once
+			// rather than per file (VOCAB-001).
+			unmapped := map[string]uint32{}
 
 			for res := range results {
 				if bar != nil {
@@ -149,6 +156,9 @@ Output files are written alongside the input with .tape extension unless
 					lossy = append(lossy, fmt.Sprintf("  %s: %d line(s) unparsed, %d frame(s) kept",
 						res.item.input, n, res.result.FrameCount))
 				}
+				for _, u := range res.result.UnmappedValues {
+					unmapped[u.Field+" = "+strconv.Quote(u.Value)] += u.Count
+				}
 			}
 
 			if bar != nil {
@@ -168,6 +178,16 @@ Output files are written alongside the input with .tape extension unless
 				println(cmd.ErrOrStderr(), "\nunparsed input:")
 				for _, l := range lossy {
 					println(cmd.ErrOrStderr(), l)
+				}
+			}
+
+			if len(unmapped) > 0 {
+				printf(cmd.OutOrStdout(),
+					"unmapped engine values: %d distinct — these convert to UNSPECIFIED and are LOST\n",
+					len(unmapped))
+				println(cmd.ErrOrStderr(), "\nunmapped engine values:")
+				for _, k := range slices.Sorted(maps.Keys(unmapped)) {
+					println(cmd.ErrOrStderr(), fmt.Sprintf("  %s (%d occurrence(s))", k, unmapped[k]))
 				}
 			}
 

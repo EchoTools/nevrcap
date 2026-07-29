@@ -30,6 +30,13 @@ type ConvertResult struct {
 	// recorders emitted formats this reader does not understand (GH #31), and
 	// the loss is otherwise silent.
 	SkippedLines uint32
+	// UnmappedValues lists engine strings no conversion table recognised, with
+	// occurrence counts, ordered by field then value. Non-empty is the same
+	// class of loss as SkippedLines: the value became *_UNSPECIFIED and renders
+	// back as the empty string, so it is gone without a trace (VOCAB-001).
+	// Conversion deliberately does not fail on these — one unknown string must
+	// not abort a corpus-wide pass.
+	UnmappedValues []UnmappedValue
 }
 
 // ConvertFile converts a legacy capture file (.echoreplay or .nevrcap) to
@@ -151,7 +158,10 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 		return nil, fmt.Errorf("read first frame: %w", err)
 	}
 
-	v2Header := MapHeaderFromSession(v1Header, firstFrame.GetSession())
+	// One vocabulary accumulator per conversion, shared by the header and frame
+	// paths so ConvertResult reports the whole file (VOCAB-001).
+	vocab := &vocabulary{}
+	v2Header := mapHeaderFromSession(v1Header, firstFrame.GetSession(), vocab)
 
 	// A nil protobuf timestamp's AsTime() returns Unix epoch (1970-01-01),
 	// not Go's zero time (year 0001), so IsZero() would never trigger.
@@ -165,7 +175,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	} else {
 		baseTime = createdAt.AsTime()
 	}
-	mapper := &FrameMapper{BaseTime: baseTime}
+	mapper := &FrameMapper{BaseTime: baseTime, vocab: vocab}
 
 	writer, err := codec.NewWriter(outputPath)
 	if err != nil {
@@ -225,6 +235,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	if skipper, ok := reader.(lineSkipper); ok {
 		result.SkippedLines = skipper.SkippedFrames()
 	}
+	result.UnmappedValues = vocab.sorted()
 
 	// Close writer (writes footer).
 	writerClosed = true

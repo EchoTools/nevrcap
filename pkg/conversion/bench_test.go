@@ -209,7 +209,7 @@ func BenchmarkMapEvent(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				v2 := mapEvent(v1e)
+				v2 := mapEvent(v1e, nil)
 				if v2 == nil {
 					b.Fatalf("mapEvent returned nil for %s", name)
 				}

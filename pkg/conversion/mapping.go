@@ -91,16 +91,21 @@ var goalTypeReverse = buildReverse(goalTypeStringMap, capturepb.GoalType_GOAL_TY
 // absent case "none" for the pause sub-fields.
 var teamRoleReverse = buildReverse(teamStringToRoleMap, capturepb.Role_ROLE_UNSPECIFIED, "")
 
-// goalTypeStringToEnum maps a v1 goal_type string to the v2 GoalType enum.
+// goalTypeStringToEnum maps a v1 goal_type string to the v2 GoalType enum,
+// discarding the record of an unrecognised value. Conversion paths use
+// (*vocabulary).goalType instead so the loss is counted.
 func goalTypeStringToEnum(goalType string) capturepb.GoalType {
-	if gt, ok := goalTypeStringMap[goalType]; ok {
-		return gt
-	}
-	return capturepb.GoalType_GOAL_TYPE_UNSPECIFIED
+	return (*vocabulary)(nil).goalType(goalType)
 }
 
-// MapHeader converts a v1 TelemetryHeader to a v2 CaptureHeader.
+// MapHeader converts a v1 TelemetryHeader to a v2 CaptureHeader, discarding
+// the record of any unrecognised engine string. Conversion uses mapHeader so
+// the loss reaches ConvertResult.UnmappedValues.
 func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
+	return mapHeader(v1, nil)
+}
+
+func mapHeader(v1 *telemetryv1.TelemetryHeader, vocab *vocabulary) *capturepb.CaptureHeader {
 	if v1 == nil {
 		return nil
 	}
@@ -125,7 +130,7 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 				eaHeader.MapName = mapName
 			}
 			if matchType, ok := meta["match_type"]; ok {
-				eaHeader.MatchType = matchTypeMap[matchType]
+				eaHeader.MatchType = vocab.matchType(matchType)
 			}
 			if clientName, ok := meta["client_name"]; ok {
 				eaHeader.ClientName = clientName
@@ -140,9 +145,15 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 }
 
 // MapHeaderFromSession creates a CaptureHeader from a v1 TelemetryHeader
-// enriched with data from the first SessionResponse frame.
+// enriched with data from the first SessionResponse frame, discarding the
+// record of any unrecognised engine string. Conversion uses
+// mapHeaderFromSession so the loss reaches ConvertResult.UnmappedValues.
 func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.SessionResponse) *capturepb.CaptureHeader {
-	header := MapHeader(v1hdr)
+	return mapHeaderFromSession(v1hdr, session, nil)
+}
+
+func mapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.SessionResponse, vocab *vocabulary) *capturepb.CaptureHeader {
+	header := mapHeader(v1hdr, vocab)
 	if header == nil {
 		return nil
 	}
@@ -167,7 +178,7 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 		eaHeader.MapName = session.GetMapName()
 	}
 	if eaHeader.MatchType == capturepb.MatchType_MATCH_TYPE_UNSPECIFIED {
-		eaHeader.MatchType = matchTypeMap[session.GetMatchType()]
+		eaHeader.MatchType = vocab.matchType(session.GetMatchType())
 	}
 	if eaHeader.ClientName == "" {
 		eaHeader.ClientName = session.GetClientName()
@@ -263,6 +274,17 @@ type FrameMapper struct {
 	prevGrab    map[int32]grabState
 	prevStats   map[int32]statCounters
 	prevInfo    map[int32]rosterInfo
+	// vocab accumulates engine strings no conversion table recognised
+	// (VOCAB-001). Nil is valid and records nothing.
+	vocab *vocabulary
+}
+
+// Unmapped returns the engine strings this mapper could not translate, ordered
+// by field then value. Non-empty means the tape is not a complete record of its
+// source: an unrecognised value converts to *_UNSPECIFIED and renders back as
+// the empty string, so the loss is otherwise silent (VOCAB-001).
+func (m *FrameMapper) Unmapped() []UnmappedValue {
+	return m.vocab.sorted()
 }
 
 // rosterInfo holds the roster attributes that are session-constant by intent but
@@ -299,6 +321,7 @@ func (m *FrameMapper) Reset() {
 	m.prevGrab = nil
 	m.prevStats = nil
 	m.prevInfo = nil
+	m.vocab = nil
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
@@ -312,7 +335,7 @@ func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capture
 		}
 	}
 
-	frame := mapFrame(v1f, m.BaseTime, m.RoundNumber)
+	frame := mapFrame(v1f, m.BaseTime, m.RoundNumber, m.vocab)
 	m.appendLoadoutGrabEvents(v1f, frame)
 	return frame
 }
@@ -438,13 +461,15 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 	}
 }
 
-// MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame.
-// baseTime is the capture creation time, used to compute timestamp_offset_ms.
+// MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame, discarding the
+// record of any unrecognised engine string. baseTime is the capture creation
+// time, used to compute timestamp_offset_ms. Conversion goes through
+// FrameMapper.MapFrame so the loss reaches ConvertResult.UnmappedValues.
 func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capturepb.Frame {
-	return mapFrame(v1f, baseTime, 0)
+	return mapFrame(v1f, baseTime, 0, nil)
 }
 
-func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32) *capturepb.Frame {
+func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32, vocab *vocabulary) *capturepb.Frame {
 	if v1f == nil {
 		return nil
 	}
@@ -466,7 +491,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	ea := &capturepb.EchoArenaFrame{
-		GameStatus:   gameStatusMap[session.GetGameStatus()],
+		GameStatus:   vocab.gameStatus(session.GetGameStatus()),
 		GameClock:    float32(session.GetGameClock()),
 		BluePoints:   session.GetBluePoints(),
 		OrangePoints: session.GetOrangePoints(),
@@ -475,9 +500,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	// Map pause state. The sub-fields ride a per-frame message that stays nil
 	// unless a pause is actually in progress.
 	if pause := session.GetPause(); pause != nil {
-		if ps, ok := pauseStateMap[pause.GetPausedState()]; ok {
-			ea.PauseState = ps
-		}
+		ea.PauseState = vocab.pauseState(pause.GetPausedState())
 		if detail := mapPauseDetail(pause); detail != nil {
 			ea.PauseDetail = detail
 		}
@@ -519,7 +542,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	// Map events from v1.
-	ea.Events = mapEvents(v1f.GetEvents())
+	ea.Events = mapEvents(v1f.GetEvents(), vocab)
 
 	// Set round number from conversion state.
 	ea.RoundNumber = roundNumber
@@ -805,14 +828,14 @@ func float32SliceToBytes(fs []float32) []byte {
 }
 
 // mapEvents converts v1 LobbySessionEvent list to v2 EchoEvent list.
-func mapEvents(v1Events []*telemetryv1.LobbySessionEvent) []*capturepb.EchoEvent {
+func mapEvents(v1Events []*telemetryv1.LobbySessionEvent, vocab *vocabulary) []*capturepb.EchoEvent {
 	if len(v1Events) == 0 {
 		return nil
 	}
 
 	result := make([]*capturepb.EchoEvent, 0, len(v1Events))
 	for _, v1e := range v1Events {
-		if v2e := mapEvent(v1e); v2e != nil {
+		if v2e := mapEvent(v1e, vocab); v2e != nil {
 			result = append(result, v2e)
 		}
 	}
@@ -822,7 +845,7 @@ func mapEvents(v1Events []*telemetryv1.LobbySessionEvent) []*capturepb.EchoEvent
 // mapEvent converts a single v1 LobbySessionEvent to a v2 EchoEvent.
 // Both packages define the same event sub-message types with the same fields,
 // so we can copy field-by-field.
-func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
+func mapEvent(v1e *telemetryv1.LobbySessionEvent, vocab *vocabulary) *capturepb.EchoEvent {
 	if v1e == nil {
 		return nil
 	}
@@ -839,7 +862,7 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 	case *telemetryv1.LobbySessionEvent_RoundPaused:
 		rp := &capturepb.RoundPaused{}
 		if ps := e.RoundPaused.GetPauseState(); ps != nil {
-			rp.PauseState = pauseStateMap[ps.GetPausedState()]
+			rp.PauseState = vocab.pauseState(ps.GetPausedState())
 			rp.RequestingTeam = teamStringToRole(ps.GetPausedRequestedTeam())
 			rp.PauseTimer = float32(ps.GetPausedTimer())
 		}
@@ -847,7 +870,7 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 	case *telemetryv1.LobbySessionEvent_RoundUnpaused:
 		ru := &capturepb.RoundUnpaused{}
 		if ps := e.RoundUnpaused.GetPauseState(); ps != nil {
-			ru.PauseState = pauseStateMap[ps.GetPausedState()]
+			ru.PauseState = vocab.pauseState(ps.GetPausedState())
 		}
 		evt.Event = &capturepb.EchoEvent_RoundUnpaused{RoundUnpaused: ru}
 	case *telemetryv1.LobbySessionEvent_RoundEnded:
@@ -953,7 +976,7 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 		if sd := e.GoalScored.GetScoreDetails(); sd != nil {
 			gs.DiscSpeed = float32(sd.GetDiscSpeed())
 			gs.Team = teamStringToRole(sd.GetTeam())
-			gs.GoalType = goalTypeStringToEnum(sd.GetGoalType())
+			gs.GoalType = vocab.goalType(sd.GetGoalType())
 			gs.PointAmount = sd.GetPointAmount()
 			gs.DistanceThrown = float32(sd.GetDistanceThrown())
 			gs.PersonScored = sd.GetPersonScored()
