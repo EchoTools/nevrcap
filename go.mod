@@ -8,7 +8,7 @@ require (
 )
 
 require (
-	buf.build/gen/go/echotools/nevr-api/protocolbuffers/go v1.36.11-20260629074123-c89ff774a767.1
+	buf.build/gen/go/echotools/nevr-api/protocolbuffers/go v1.36.11-20260729220401-fc62323fed49.1
 	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/spf13/cobra v1.10.2
 )
@@ -21,6 +21,3 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
-
-// TEMP pre-BSR-publish shim — REMOVE and bump to the published nevr-api version before merge to main
-replace buf.build/gen/go/echotools/nevr-api/protocolbuffers/go => /home/andrew/src/nevr-proto/gen/go/buf.build/gen/go/echotools/nevr-api/protocolbuffers/go

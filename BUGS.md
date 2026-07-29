@@ -5,7 +5,7 @@ status. Check this before idling. (Convention: every repo gets a root BUGS.md.)
 
 ---
 
-## OPEN — RELEASE-001: `feat/obvious-batch-2.1.0` carries a TEMP go.mod replace (pre-merge gate)
+## FIXED — RELEASE-001: `feat/obvious-batch-2.1.0` carried a TEMP go.mod replace
 
 **Severity:** release-blocker for merging `feat/obvious-batch-2.1.0` to main. Not a
 code bug.
@@ -31,6 +31,27 @@ errors (`unknown field FormatMinor…`, `undefined: capturepb.FrameEncoding_…`
 The local codegen harness (`nevr-proto/buf.gen.yaml`, `docs/local-codegen.md`) is
 byte-parity with the BSR SDK plus these additive fields, so the golden regenerated
 now will match post-publish BSR output.
+
+**Status: FIXED.** The nevr-proto changes merged to `main` and the `buf` workflow
+published them:
+
+    Push to BSR: buf.build/echotools/nevr-api:fc62323fed494006ba66869c983ceeb0
+
+tape then dropped the `replace` and pinned the published module, whose version
+string carries that same BSR commit:
+
+    buf.build/gen/go/echotools/nevr-api/protocolbuffers/go
+        v1.36.11-20260629074123-c89ff774a767.1   (was)
+        v1.36.11-20260729220401-fc62323fed49.1   (now)
+
+`go.mod` carries **zero** `replace` directives, and `just` (fmt, vet,
+golangci-lint 0 issues, `go test -race -count=1`) is green across all five
+packages against that pin. The `main`-never-carries-the-replace invariant now
+holds by construction rather than by discipline.
+
+Note the nevr-proto history was rewritten with `git-filter-repo` in the same
+session (455 ever-committed paths -> 43, `.git` 3.3M -> 344K), so every commit
+hash in this entry predating the publish refers to the pre-rewrite history.
 
 ---
 
