@@ -183,6 +183,36 @@ count a bones payload it could not parse.
 
 ---
 
+## FIXED — KEYFRAME-001 (GH #23): a zero keyframe interval panicked the writer
+
+**What:** `NewWriterWithKeyframeInterval(path, 0)` stored the interval
+unvalidated, and the first `WriteFrame` evaluated `frameIndex %
+w.keyframeInterval` — an integer divide by zero. Exported API, so any caller
+passing 0 (plausibly meaning "no keyframes") crashed the process.
+
+**Where:** `pkg/codec/tape.go:85`, constructor at `:53`.
+
+**Evidence:** the guard test panicked before the fix:
+
+    panic: runtime error: integer divide by zero
+    github.com/echotools/tape/pkg/codec.(*Writer).WriteFrame
+        /home/andrew/src/tape/pkg/codec/tape.go:85 +0x2d4
+
+**Fix:** clamp 0 to `DefaultKeyframeInterval` in the constructor. This follows
+the precedent already set for the identical class of bug in this repo —
+`events.WithFrameBufferSize` (`pkg/events/events.go:48-56`) clamps a zero size
+that otherwise divided by zero in `addFrameToBuffer`. Erroring instead would be
+defensible, but no working caller passes 0 today (they panic), so the clamp
+breaks nothing and keeps the two constructors consistent.
+
+**Status: FIXED.** Pinned by `TestNewWriterWithKeyframeInterval_ClampsZero` and
+`TestKeyframeIntervalZeroIndexesLikeTheDefault`
+(`pkg/codec/keyframe_interval_test.go`). The second asserts the clamp picked a
+meaningful value rather than merely dodging the panic: a zero-interval writer
+produces a byte-identical keyframe index to an explicit default-interval one.
+
+---
+
 ## FIXED — GOALTYPE-001: six of eleven goal types collapsed to UNSPECIFIED
 
 **What:** `goalTypeStringMap` covered 5 goal types; the engine has 11. Anything

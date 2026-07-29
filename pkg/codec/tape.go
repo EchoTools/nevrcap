@@ -49,8 +49,16 @@ func NewWriter(filename string) (*Writer, error) {
 	return NewWriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
 }
 
-// NewWriterWithKeyframeInterval creates a writer with a custom keyframe interval.
+// NewWriterWithKeyframeInterval creates a writer with a custom keyframe
+// interval. An interval of zero is clamped to DefaultKeyframeInterval: it
+// reached `frameIndex % keyframeInterval` in WriteFrame and panicked with an
+// integer divide by zero (GH #23). events.WithFrameBufferSize answers the same
+// class of bug the same way.
 func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*Writer, error) {
+	if keyframeInterval == 0 {
+		keyframeInterval = DefaultKeyframeInterval
+	}
+
 	file, err := os.Create(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
