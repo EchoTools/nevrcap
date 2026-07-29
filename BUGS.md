@@ -50,8 +50,12 @@ packages against that pin. The `main`-never-carries-the-replace invariant now
 holds by construction rather than by discipline.
 
 Note the nevr-proto history was rewritten with `git-filter-repo` in the same
-session (455 ever-committed paths -> 43, `.git` 3.3M -> 344K), so every commit
-hash in this entry predating the publish refers to the pre-rewrite history.
+session (455 ever-committed paths -> 38, `.git` 3.3M -> 296K, verified by fresh
+clone), so every commit hash in this entry predating the publish refers to the
+pre-rewrite history. The rewrite did not move the BSR digest: `buf push` on the
+rewritten `main` produced the identical `fc62323fed494006ba66869c983ceeb0`,
+because the schema content was unchanged and only commit hashes moved. tape's
+pin is therefore stable across the rewrite.
 
 ---
 
