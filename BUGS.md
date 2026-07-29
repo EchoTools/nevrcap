@@ -34,6 +34,58 @@ now will match post-publish BSR output.
 
 ---
 
+## OPEN — RELEASE-002: the next tag cannot be `v3.4.0` — the module path lost its `/v3`
+
+**Severity:** release-blocker. Andrew's decision; no code change until it is made.
+
+**What:** the published tags run `v3.0.0`…`v3.3.0`, and `v3.3.0` IS an ancestor
+of `main`, so the obvious next tag is `v3.4.0`. It would be unusable. Go's
+major-version suffix rule means a module path with no `/vN` can only carry v0 and
+v1 tags, and the rename dropped the suffix:
+
+| where | module path |
+|---|---|
+| `git show v3.3.0:go.mod` | `module github.com/echotools/nevr-capture/v3` |
+| `git show main:go.mod` | `module github.com/echotools/tape` |
+
+The rename landed in `369b0e8`, which is on `main`. The v3 tags therefore
+describe a *different module* than the one `main` declares.
+
+**Evidence (measured, not cited from the spec):** a throwaway module named
+`vertest.local/dep` — no `/v3` suffix — tagged both `v1.4.0` and `v3.4.0` and
+served from a filesystem `GOPROXY`:
+
+    $ go get vertest.local/dep@v3.4.0
+    go: downloading vertest.local/dep v3.4.0
+    go: unzip .../v3.4.0.zip: vertest.local/dep@v3.4.0:
+        invalid version: should be v0 or v1, not v3
+
+    $ go get vertest.local/dep@v1.4.0
+    go: added vertest.local/dep v1.4.0
+
+So `go get github.com/echotools/tape@v3.4.0` would fail for every consumer.
+
+**Options:**
+
+1. **Tag `v1.0.0`** and treat the rename as the start of a new module lineage.
+   The v3 tags stay valid for the old path, which is what they always described.
+   Consumers write `require github.com/echotools/tape v1.0.0`. Simplest, honest
+   about the fact that the import path changed.
+2. **Tag `v0.1.0`** if the API should not yet carry a compatibility promise —
+   worth considering given `telemetry/v2` is still moving.
+3. **Move the module to `github.com/echotools/tape/v4`** to keep the major
+   number climbing. Costs a `/v4` suffix in every import in every downstream
+   repo (`nevr-agent`, `nevr-anticheat`, `nevr-profiler`) and does not recover
+   v3.x, since that path never existed.
+
+**Recommendation: option 1.** The import path already changed, so downstreams
+must edit their `go.mod` regardless; making them also write `/v4` buys only a
+cosmetically larger number.
+
+**Interacts with RELEASE-001:** both must be settled before a tag exists at all.
+
+---
+
 ## FIXED — VOCAB-001: an unknown engine string is erased silently
 
 **Severity:** medium (archival integrity). Not currently triggered by any capture
