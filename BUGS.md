@@ -205,15 +205,29 @@ payloads appear in 13 of 3000-line samples across 12 files. This is what
 `TestCanonicalRoundTripAudit` fails on today (`record 0: field count
 canonical=3 via-tape=2`).
 
-Note the zero-length case is also **silently dropped on read**:
-`parseFrameLine` only parses `parts[2]` when non-empty, and a bones payload that
-fails to parse is discarded without incrementing `SkippedFrames`
-(`pkg/codec/echoreplay.go` — `if err := ...Unmarshal(bonesData, userBones); err
-== nil`). So bones loss is invisible to READLOSS-002's counter.
+**The silent-on-read half is FIXED.** `parseFrameLine` discarded a bones payload
+that failed to unmarshal without recording anything: the session parsed, so the
+frame was returned and the line was not skipped, and the loss was invisible to
+every counter the reader exposed. `EchoReplay.DroppedBones()` now counts it, and
+it reaches `ConvertResult.DroppedBones` and `tapedeck convert`.
 
-**Fix direction:** v2 needs to distinguish the three payload forms — a
-`bones_present` flag or an optional empty `PlayerBones` — and the reader should
-count a bones payload it could not parse.
+Measured end-to-end on the sample with two bones payloads truncated:
+
+    $ tapedeck convert badbones.echoreplay
+    converted: 1, skipped: 0, failed: 0
+    total frames: 40, total events: 12
+    unparsed bones payloads: 2 — those frames converted WITHOUT their bone data
+
+Before this, that file reported 40 frames and 0 skipped — a clean conversion, by
+every number the tool printed. Pinned by `TestDroppedBonesAreCounted`
+(`pkg/codec/dropped_bones_test.go`), which also pins that an *absent* payload is
+not a dropped one, and that the reader's deliberate `DiscardUnknown`
+(`echoreplay.go:134`) means an unknown field is tolerated rather than counted.
+
+**Still OPEN — the representability half.** v2 cannot distinguish the three
+payload forms; it needs a `bones_present` flag or an optional empty
+`PlayerBones`. That is a `nevr-proto` addition, so it is gated behind the same
+BSR publish as RELEASE-001.
 
 ---
 

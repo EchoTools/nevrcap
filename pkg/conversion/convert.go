@@ -30,6 +30,11 @@ type ConvertResult struct {
 	// recorders emitted formats this reader does not understand (GH #31), and
 	// the loss is otherwise silent.
 	SkippedLines uint32
+	// DroppedBones counts bones payloads the reader found on a line but could
+	// not parse. The frame still converts, with its session intact and its
+	// bones absent, so this loss appears in neither FrameCount nor
+	// SkippedLines (CANONICAL-001 §3).
+	DroppedBones uint32
 	// UnmappedValues lists engine strings no conversion table recognised, with
 	// occurrence counts, ordered by field then value. Non-empty is the same
 	// class of loss as SkippedLines: the value became *_UNSPECIFIED and renders
@@ -85,6 +90,10 @@ type v1Reader interface {
 // reader has the notion; the length-delimited legacy reader errors out instead.
 type lineSkipper interface {
 	SkippedFrames() uint32
+	// DroppedBones counts bones payloads present but unparseable. Distinct
+	// from SkippedFrames: the frame survives with its session intact, so the
+	// loss shows up in neither the frame count nor the skip count.
+	DroppedBones() uint32
 }
 
 // echoReplayAdapter wraps EchoReplay to implement v1Reader.
@@ -97,6 +106,10 @@ type echoReplayAdapter struct {
 // SkippedFrames satisfies lineSkipper, exposing the underlying reader's count of
 // unparseable lines to the conversion pipeline.
 func (a *echoReplayAdapter) SkippedFrames() uint32 { return a.reader.SkippedFrames() }
+
+// DroppedBones satisfies lineSkipper, exposing the underlying reader's count of
+// bones payloads it could not parse.
+func (a *echoReplayAdapter) DroppedBones() uint32 { return a.reader.DroppedBones() }
 
 func (a *echoReplayAdapter) ReadHeader() (*telemetryv1.TelemetryHeader, error) {
 	// EchoReplay files don't have a separate header. Read the first frame
@@ -234,6 +247,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	// reflects the whole file.
 	if skipper, ok := reader.(lineSkipper); ok {
 		result.SkippedLines = skipper.SkippedFrames()
+		result.DroppedBones = skipper.DroppedBones()
 	}
 	result.UnmappedValues = vocab.sorted()
 

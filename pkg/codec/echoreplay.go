@@ -62,6 +62,10 @@ type EchoReplay struct {
 
 	// skippedFrames counts lines that failed to parse and were skipped.
 	skippedFrames uint32
+	// droppedBones counts bones payloads present on a line but unparseable.
+	// Distinct from skippedFrames: the session parsed, so the frame survives
+	// and the line is not skipped — only the bones are gone.
+	droppedBones uint32
 	// eof is set when ReadFrame encounters io.EOF.
 	eof bool
 
@@ -74,6 +78,14 @@ type EchoReplay struct {
 // SkippedFrames returns the number of frames skipped due to parse errors.
 func (e *EchoReplay) SkippedFrames() uint32 {
 	return e.skippedFrames
+}
+
+// DroppedBones returns the number of bones payloads that were present on a line
+// but could not be parsed. Such a frame is still returned, with its session
+// intact and its bones absent, so this loss is invisible to SkippedFrames.
+// Non-zero means the capture's bone data is incomplete (CANONICAL-001 §3).
+func (e *EchoReplay) DroppedBones() uint32 {
+	return e.droppedBones
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -591,7 +603,12 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 
 		if len(bonesData) > 0 {
 			userBones := &enginev1.PlayerBonesResponse{}
-			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err == nil {
+			// The frame is still returned when its bones do not parse — the
+			// session is intact and the line is not skipped — so the loss is
+			// invisible to skippedFrames. Count it (CANONICAL-001 §3).
+			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err != nil {
+				e.droppedBones++
+			} else {
 				frame.PlayerBones = userBones
 			}
 		}

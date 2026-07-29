@@ -124,7 +124,7 @@ Output files are written alongside the input with .tape extension unless
 			}()
 
 			var converted, skipped, failed atomic.Int32
-			var totalFrames, totalEvents, unparsedLines atomic.Uint32
+			var totalFrames, totalEvents, unparsedLines, droppedBones atomic.Uint32
 			var errs []string
 			// Inputs whose lines the reader could not parse. A tape built from
 			// such a file is not a complete record of its source, so it is
@@ -156,6 +156,11 @@ Output files are written alongside the input with .tape extension unless
 					lossy = append(lossy, fmt.Sprintf("  %s: %d line(s) unparsed, %d frame(s) kept",
 						res.item.input, n, res.result.FrameCount))
 				}
+				if n := res.result.DroppedBones; n > 0 {
+					droppedBones.Add(n)
+					lossy = append(lossy, fmt.Sprintf("  %s: %d bones payload(s) unparsed",
+						res.item.input, n))
+				}
 				for _, u := range res.result.UnmappedValues {
 					unmapped[u.Field+" = "+strconv.Quote(u.Value)] += u.Count
 				}
@@ -171,6 +176,11 @@ Output files are written alongside the input with .tape extension unless
 				converted.Load(), skipped.Load(), failed.Load())
 			printf(cmd.OutOrStdout(), "total frames: %d, total events: %d\n",
 				totalFrames.Load(), totalEvents.Load())
+
+			if n := droppedBones.Load(); n > 0 {
+				printf(cmd.OutOrStdout(),
+					"unparsed bones payloads: %d — those frames converted WITHOUT their bone data\n", n)
+			}
 
 			if n := unparsedLines.Load(); n > 0 {
 				printf(cmd.OutOrStdout(),
