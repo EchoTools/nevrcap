@@ -7,7 +7,7 @@ import (
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 
-	"github.com/echotools/tape/pkg/events"
+	"github.com/echotools/tape/v4/pkg/events"
 )
 
 // TestRoleResolution_BothPathsAgreeOnSpectator locks the two role-resolution

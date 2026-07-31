@@ -12,8 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/conversion"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )

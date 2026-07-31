@@ -6,7 +6,7 @@ import (
 	"maps"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // Loadout is a player's combat loadout (weapon/ordnance/tactical-mod) at a

@@ -12,7 +12,7 @@ import (
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // EchoReplay.ReadFrame counts a line it cannot parse and continues

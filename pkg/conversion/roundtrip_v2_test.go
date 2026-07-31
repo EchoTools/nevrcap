@@ -15,8 +15,8 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/conversion"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 )
 
 // Two float tolerances, by error mechanism:

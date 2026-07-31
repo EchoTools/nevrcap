@@ -10,7 +10,7 @@ write or change.
 ## What `tape` is (read this — it's how you make good calls, not just blind edits)
 
 `tape` is a **high-performance telemetry codec library + CLI (`tapedeck`) for
-Echo VR session data**. Module `github.com/echotools/tape`. It is a **core
+Echo VR session data**. Module `github.com/echotools/tape/v4`. It is a **core
 dependency of `nevr-agent`, `nevr-anticheat`, and `nevr-profiler`.** The
 anticheat is the live cheater investigation — if the capture isn't a faithful
 record of the match, the anticheat is reasoning over a lie. Faithfulness is

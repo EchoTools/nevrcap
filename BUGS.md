@@ -59,55 +59,68 @@ pin is therefore stable across the rewrite.
 
 ---
 
-## OPEN — RELEASE-002: the next tag cannot be `v3.4.0` — the module path lost its `/v3`
+## FIXED — RELEASE-002: the module path needed a `/vN` suffix; `/v3` is unusable
 
-**Severity:** release-blocker. Andrew's decision; no code change until it is made.
+**Severity:** was a release-blocker. Resolved by moving to
+`github.com/echotools/tape/v4`.
 
-**What:** the published tags run `v3.0.0`…`v3.3.0`, and `v3.3.0` IS an ancestor
-of `main`, so the obvious next tag is `v3.4.0`. It would be unusable. Go's
-major-version suffix rule means a module path with no `/vN` can only carry v0 and
-v1 tags, and the rename dropped the suffix:
+**What:** the published tags run to `v3.3.0` and `v3.3.0` is an ancestor of
+`main`, so `v3.4.0` looked like the next tag. Go requires any major >= 2 to end
+the module path in `/vN`, and the rename in `369b0e8` dropped the suffix, so a
+v3 tag on the bare path is rejected outright.
 
-| where | module path |
-|---|---|
-| `git show v3.3.0:go.mod` | `module github.com/echotools/nevr-capture/v3` |
-| `git show main:go.mod` | `module github.com/echotools/tape` |
+**The part the first version of this entry got wrong.** It asserted "the next
+tag cannot be `v3.4.0`" and recommended `v1.0.0`. Both were wrong, and the
+reasoning under them ("the import path already changed, so downstreams must edit
+their go.mod regardless") was false. `github.com/echotools/tape` has been the
+module path since v1.2.0 and resolves today at `@latest = v1.2.1`. The tag list
+was never read before recommending against it — `v1.0.0` and `v0.1.0` both
+already exist.
 
-The rename landed in `369b0e8`, which is on `main`. The v3 tags therefore
-describe a *different module* than the one `main` declares.
+**Measured — every path variant on proxy.golang.org:**
 
-**Evidence (measured, not cited from the spec):** a throwaway module named
-`vertest.local/dep` — no `/v3` suffix — tagged both `v1.4.0` and `v3.4.0` and
-served from a filesystem `GOPROXY`:
+| path | HTTP | @latest | versions |
+|---|---|---|---|
+| `tape` | 200 | v1.2.1 | v0.1.0 v1.0.0 v1.1.0 v1.2.0 v1.2.1 |
+| `tape/v2` | 404 | — | free |
+| `tape/v3` | 200 | v3.3.0 | v3.0.0 v3.1.0 v3.2.0 v3.3.0 — **all four fail** |
+| `tape/v4` | 404 | — | free |
+| `tape/v5` | 404 | — | free |
 
-    $ go get vertest.local/dep@v3.4.0
-    go: downloading vertest.local/dep v3.4.0
-    go: unzip .../v3.4.0.zip: vertest.local/dep@v3.4.0:
-        invalid version: should be v0 or v1, not v3
+`tape/v3` is registered and entirely broken. Each version's `go.mod` declares a
+different path (`nevrcap`, `nevrcap/v3`, `nevr-capture/v3`):
 
-    $ go get vertest.local/dep@v1.4.0
-    go: added vertest.local/dep v1.4.0
+    $ go get github.com/echotools/tape/v3@v3.3.0
+    module declares its path as: github.com/echotools/nevr-capture/v3
+            but was required as: github.com/echotools/tape/v3
 
-So `go get github.com/echotools/tape@v3.4.0` would fail for every consumer.
+**Why `/v3` could not be salvaged.** `tape/v3@v3.1.0` and `@v3.3.0` are in the
+**checksum database** and have cached `.info`/`.zip` on the proxy — permanent and
+unfixable. `@latest` for `tape/v3` is therefore pinned to a broken v3.3.0
+forever. And `go` does **not** fall back past an invalid `@latest`; measured
+against `github.com/echotools/nevrcap`, whose `@latest` (v1.2.1) is invalid while
+v1.0.0/v1.1.0 are valid:
 
-**Options:**
+    $ go get github.com/echotools/nevrcap
+    go: github.com/echotools/nevrcap@upgrade (v1.2.1) requires ...
+        module declares its path as: github.com/echotools/tape
+                but was required as: github.com/echotools/nevrcap
 
-1. **Tag `v1.0.0`** and treat the rename as the start of a new module lineage.
-   The v3 tags stay valid for the old path, which is what they always described.
-   Consumers write `require github.com/echotools/tape v1.0.0`. Simplest, honest
-   about the fact that the import path changed.
-2. **Tag `v0.1.0`** if the API should not yet carry a compatibility promise —
-   worth considering given `telemetry/v2` is still moving.
-3. **Move the module to `github.com/echotools/tape/v4`** to keep the major
-   number climbing. Costs a `/v4` suffix in every import in every downstream
-   repo (`nevr-agent`, `nevr-anticheat`, `nevr-profiler`) and does not recover
-   v3.x, since that path never existed.
+Hard failure, no fallback. So a bare `go get github.com/echotools/tape/v3` could
+never work regardless of what else was tagged on it.
 
-**Recommendation: option 1.** The import path already changed, so downstreams
-must edit their `go.mod` regardless; making them also write `/v4` buys only a
-cosmetically larger number.
+**Fix: `github.com/echotools/tape/v4`.** The path is virgin — proxy 404, and
+`v4.0.0`/`v4.0.1`/`v4.1.0` all absent from the checksum database. It inherits no
+broken versions, and the number tracks the project's real lineage (v1 `nevrcap`
+-> v3 `nevr-capture` -> v4 `tape`) rather than claiming continuity with a module
+path this was never published under.
 
-**Interacts with RELEASE-001:** both must be settled before a tag exists at all.
+**Status: FIXED.** `go.mod` declares `module github.com/echotools/tape/v4`; 28
+files rewritten across 4 import lines; `README.md`, `CLAUDE.md` and the primer
+updated. `just` green — fmt, vet, golangci-lint 0 issues, `go test -race
+-count=1` across all five packages, now reported under `github.com/echotools/tape/v4/...`.
+
+**Remaining, and it is Andrew's:** cutting the `v4.0.0` tag itself.
 
 ---
 

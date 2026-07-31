@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestPossessionProbe characterizes the session-level possession[] array on a

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestLoadoutGrabReconstruct proves the LoadoutChanged/GrabChanged events the

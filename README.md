@@ -2,12 +2,12 @@
 
 High-performance telemetry codec library and CLI for Echo VR session data.
 
-Module: `github.com/echotools/tape`
+Module: `github.com/echotools/tape/v4`
 
 ## Installation
 
 ```bash
-go get github.com/echotools/tape
+go get github.com/echotools/tape/v4
 ```
 
 ## tapedeck CLI
@@ -15,7 +15,7 @@ go get github.com/echotools/tape
 `tapedeck` is the command-line tool for working with tape files.
 
 ```bash
-go install github.com/echotools/tape/cmd/tapedeck@latest
+go install github.com/echotools/tape/v4/cmd/tapedeck@latest
 ```
 
 ### Commands

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )

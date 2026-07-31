@@ -7,7 +7,7 @@ import (
 	"time"
 
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestSupersetFieldsPopulate proves the v1->v2 converter copies the new superset

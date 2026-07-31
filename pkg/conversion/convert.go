@@ -8,9 +8,9 @@ import (
 	"time"
 
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/events"
-	"github.com/echotools/tape/pkg/processing"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/events"
+	"github.com/echotools/tape/v4/pkg/processing"
 )
 
 const (

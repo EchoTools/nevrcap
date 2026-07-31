@@ -3,7 +3,7 @@
 Go codec library and CLI for reading and writing `.tape` telemetry capture files.
 Core dependency of nevr-agent, nevr-anticheat, and nevr-profiler.
 
-Module: `github.com/echotools/tape`
+Module: `github.com/echotools/tape/v4`
 
 **Before touching the format, the converter, or fidelity questions, read
 [`docs/format-design.md`](docs/format-design.md)** — the authoritative reference

@@ -1,4 +1,4 @@
-module github.com/echotools/tape
+module github.com/echotools/tape/v4
 
 go 1.26.0
 

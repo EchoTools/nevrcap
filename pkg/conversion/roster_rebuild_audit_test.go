@@ -5,8 +5,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/events"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/events"
 )
 
 // TestRosterRebuildAudit answers: can the slot->identity roster be rebuilt from

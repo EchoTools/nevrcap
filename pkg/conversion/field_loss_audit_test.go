@@ -5,7 +5,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestFieldLossAudit measures, on a real echoreplay, which v1 fields that the
