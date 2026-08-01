@@ -150,6 +150,11 @@ type SessionReconstructor struct {
 	session  *Session
 	baseTime time.Time
 	frames   []*capturepb.Frame
+	// hasBones is true if any frame in the capture carries player_bones.
+	// Used at reconstruction to distinguish "bones never recorded" (emit
+	// bare 2-field lines) from "bones recorded but this frame was a poll
+	// gap" (emit a 3-field line with err_code).
+	hasBones bool
 }
 
 // NewSessionReconstructor reads a full v2 capture from r and prepares a
@@ -180,12 +185,27 @@ func NewSessionReconstructor(r *codec.Reader) (*SessionReconstructor, error) {
 		frames = append(frames, frame)
 	}
 
+	// Determine whether any frame in this capture carries bones.
+	// Spark records bones as a per-file toggle (213 all-bare, 1 all-bones
+	// in 215 measured captures); nevr-agent always polls and gaps produce
+	// {"err_code":0}. A gap frame is not the same as a never-recorded
+	// frame, and the distinction is preserved at reconstruction by
+	// emitting an empty PlayerBonesResponse (CANONICAL-001 §3).
+	hasBones := false
+	for _, f := range frames {
+		if ea := f.GetEchoArena(); ea != nil && len(ea.GetPlayerBones()) > 0 {
+			hasBones = true
+			break
+		}
+	}
+
 	return &SessionReconstructor{
 		header:   hdr,
 		ea:       hdr.GetEchoArena(),
 		session:  NewSession(hdr.GetEchoArena(), frames),
 		frames:   frames,
 		baseTime: hdr.GetCreatedAt().AsTime(),
+		hasBones: hasBones,
 	}, nil
 }
 
@@ -571,10 +591,21 @@ func discHolder(ea *capturepb.EchoArenaFrame) (int32, bool) {
 
 // reconstructBones rebuilds the v1 PlayerBonesResponse from v2 PlayerBones.
 // Bones are float32 in both formats, so the transform/orientation data is
-// exact. The top-level err_code has no v2 home and is left zero.
+// exact.
+//
+// When this capture has bones on ANY frame (rc.hasBones), a frame whose v2
+// representation carries none was a poll gap — the bones endpoint was
+// active but returned nothing. The gap is represented as an empty
+// PlayerBonesResponse, which protojson with EmitUnpopulated marshals to
+// {"user_bones":[],"err_code":0}. When no frame in the capture has bones,
+// the endpoint was never polled and reconstruction emits a bare 2-field
+// line (nil), matching Spark's per-file toggle (CANONICAL-001 §3).
 func (rc *SessionReconstructor) reconstructBones(ea *capturepb.EchoArenaFrame) *enginev1.PlayerBonesResponse {
 	pbs := ea.GetPlayerBones()
 	if len(pbs) == 0 {
+		if rc.hasBones {
+			return &enginev1.PlayerBonesResponse{}
+		}
 		return nil
 	}
 	userBones := make([]*enginev1.UserBones, 0, len(pbs))

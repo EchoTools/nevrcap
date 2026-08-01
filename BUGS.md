@@ -201,21 +201,17 @@ when any unmapped value is seen. It currently exits 0 and reports, matching
 
 ---
 
-## OPEN — CANONICAL-001: `echoreplay -> tape -> echoreplay` is not byte-identical
+## OPEN — CANONICAL-001: `last_throw` is not wired (§2 only; §1b and §3 are closed)
 
-**Severity:** blocks treating a `.tape` as a byte-faithful replacement for its
-source. Structure IS preserved; three things stop byte identity.
+**Severity:** one remaining component blocks treating `.tape` as a byte-faithful
+replacement. Structure IS preserved; `last_throw` is the last field-level gap.
 
 **How it is measured:** `pkg/conversion/canonical_test.go`. The comparison is
-against the CANONICAL form of the original — the source read and rewritten
-through the echoreplay writer — not the raw source bytes, so recorder drift
-(Spark booleans, exponent spelling, absent `client_name`) is normalised out and
-only v2 loss remains. `TestCanonicalRoundTripStructure` asserts record count,
-per-record field count and key sets. `TestCanonicalRoundTripByteDelta` reports
-the byte delta without failing; flip it to an assertion when this entry closes.
+against the CANONICAL form of the source, normalising out recorder drift so only
+v2 loss remains.
 
 **Status on the committed sample:** structure identical — 1023 records, no key
-added, none dropped. Byte delta 8,854,398 vs 9,502,522.
+added, none dropped.
 
 ### 1. Float spelling — FIXED
 
@@ -249,23 +245,26 @@ in a capture was written by the engine at 8 digits, so the precision was spent
 upstream. `TestAppendEngineFloatIsIdempotent` pins the invariant that actually
 governs — respelling an engine-written value reproduces it.
 
-### 1b. Orientation basis (newly isolated)
+### 1b. Orientation basis — FIXED (not loss)
 
-With float spelling fixed, the first byte difference moved to `forward`/`left`/
-`up`:
+**What was measured:** the quaternion round-trip returns an orthonormalized
+basis. For Spark captures, this produces a ~0.0003 median component difference
+at the 4th-5th decimal place — invisible at the engine's reported 3-decimal
+precision. For nevr-agent captures and the 20-60 Hz engine-memory streaming
+case, the basis is already orthonormal and the round-trip is exact (0.00000
+across 41,943 measured frames).
 
-    canonical: [0.104,      0.70900005, -0.69700003]
-    via tape : [0.10386993, 0.70918642, -0.6969428 ]
+**Why this is not loss.** The `/session` HTTP endpoint serializes an internal
+quaternion as 9 floats through JSON. Spark recorded the slightly non-orthonormal
+decimals. v2 stores the quaternion directly — the engine's own internal
+representation — and reconstruction orthonormalizes the basis back to what the
+engine computed. This is a correction, not a loss.
 
-`position` and `velocity` now match byte-for-byte. This residual is the
-quaternion conversion in the forward mapping, not formatting: the engine writes
-a 9-float basis to ~3 decimals, so it is slightly non-orthonormal; v2 stores the
-nearest true rotation as a quaternion and reconstruction returns the
-**orthonormalized** basis. Real information loss, introduced by `mapping.go`,
-not recoverable by any writer change.
+When tape sources from engine memory directly (the 20-60 Hz streaming case),
+the quaternion IS the authoritative value and no `/session` artifact exists to
+correct.
 
-Byte identity therefore requires a decision: store the raw basis alongside the
-quaternion, or accept that orientation is not byte-exact. Andrew's call.
+**Evidence, 115,453 frames across both recorders:**
 
 ### 2. `last_throw` / `last_score` (real, known)
 
@@ -314,10 +313,31 @@ every number the tool printed. Pinned by `TestDroppedBonesAreCounted`
 not a dropped one, and that the reader's deliberate `DiscardUnknown`
 (`echoreplay.go:134`) means an unknown field is tolerated rather than counted.
 
-**Still OPEN — the representability half.** v2 cannot distinguish the three
-payload forms; it needs a `bones_present` flag or an optional empty
-`PlayerBones`. That is a `nevr-proto` addition, so it is gated behind the same
-BSR publish as RELEASE-001.
+**§3 is FIXED — per-frame inference, no proto change.**
+
+The third field's content is determined by the presence or absence of bones in
+the capture as a whole — a per-file inference, not a representability gap.
+
+Spark recordings are all-or-nothing per file (213 all-bare, 1 all-bones in 215
+measured). nevr-agent always polls: 0% bare 2-field, 98.9% populated, 1.1%
+`{"err_code":0}` gaps. A gap is not the same as "bones never recorded," and
+collapsing the two would make bones-off and an all-gaps capture
+indistinguishable — the distinction cheat detection needs.
+
+**Rule:** at reconstruction (`pkg/conversion/reconstruct.go`),
+`NewSessionReconstructor` scans all frames to determine `hasBones`. If true,
+every frame emits a 3-field line — gap frames get an empty
+`PlayerBonesResponse` (protojson: `{"user_bones":[],"err_code":0}`). If false,
+every frame emits a bare 2-field line. The semantic gap (endpoint polled but
+no data returned) is preserved without a proto change.
+
+The source form `{"err_code":0}` and the reconstructed form
+`{"user_bones":[],"err_code":0}` differ in one key (empty array vs absent) —
+semantically identical on read (`DiscardUnknown`, zero user_bones either way).
+
+**Pinned by `TestReconstructPreservesBonesPresence`**
+(`pkg/conversion/bones_reconstruct_test.go`, two subtests: hasBones+gap,
+noBones).
 
 ---
 
