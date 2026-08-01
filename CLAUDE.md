@@ -5,6 +5,11 @@ Core dependency of nevr-agent, nevr-anticheat, and nevr-profiler.
 
 Module: `github.com/echotools/tape/v4`
 
+**Agents start at [`AGENTS.md`](AGENTS.md).** It governs commit identity,
+branch discipline, evidence standards, and the closed-loop gate. Violating a
+rule means the commit is rejected by a hook or the push is blocked. Read it
+first — it is the mechanical contract, not advice.
+
 **Before touching the format, the converter, or fidelity questions, read
 [`docs/format-design.md`](docs/format-design.md)** — the authoritative reference
 for what v2 keeps/drops and why, the delta design (constants→header,
