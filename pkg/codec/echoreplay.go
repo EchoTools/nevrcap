@@ -335,65 +335,79 @@ func FixProtojsonUint64Encoding(data []byte) []byte {
 
 // fixStringEncodedNumber finds pattern (e.g. `"userid":"`) and removes the quotes around the following number.
 // Transforms: "userid":"123" -> "userid":123
+//
+// A single pass over data: each unchanged run is appended to the output once,
+// and each valid match removes exactly two bytes (the quote before the digits,
+// the last byte of pattern, and the quote after the digits). The output slice is
+// allocated lazily on the first valid match with cap len(data), so a full fix is
+// one allocation and no reallocation; input with no valid match is returned
+// unchanged. This is linear in len(data) where the previous implementation
+// re-copied the whole buffer per match (O(n^2)).
 func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
-	result := data
-	offset := 0
+	lastCopied := 0 // start of the next unchanged run to append
+	searchFrom := 0 // where to resume the pattern search
+	var out []byte
 
 	for {
-		// Find the pattern starting from current offset
-		idx := bytes.Index(result[offset:], pattern)
+		// Find the pattern starting from the current search position.
+		idx := bytes.Index(data[searchFrom:], pattern)
 		if idx == -1 {
 			break
 		}
-		idx += offset // Adjust to absolute position
+		idx += searchFrom
 
 		// Position after the pattern (start of the number string)
 		numStart := idx + len(pattern)
-		if numStart >= len(result) {
+		if numStart >= len(data) {
 			break
 		}
 
 		// Find the closing quote of the number
 		numEnd := numStart
-		for numEnd < len(result) && result[numEnd] >= '0' && result[numEnd] <= '9' {
+		for numEnd < len(data) && data[numEnd] >= '0' && data[numEnd] <= '9' {
 			numEnd++
 		}
 
 		// Skip empty strings (zero digits between quotes)
 		if numEnd == numStart {
-			offset = numEnd
+			searchFrom = numEnd
 			continue
 		}
 
 		// Verify the number ends with a quote
-		if numEnd >= len(result) || result[numEnd] != '"' {
-			offset = numEnd
+		if numEnd >= len(data) || data[numEnd] != '"' {
+			searchFrom = numEnd
 			continue
 		}
 
-		// We found: pattern + digits + quote
-		// Remove: the quote before digits (last char of pattern) and the quote after digits
+		// We found: pattern + digits + quote.
+		// Remove: the quote before digits (last char of pattern) and the quote after digits.
 		// Before: "userid":"123"
 		// After:  "userid":123
-
-		// Create new slice without the two quotes around the number
-		// Pattern ends with `:"` so we keep everything up to the last quote of pattern
 		patternEndQuote := idx + len(pattern) - 1 // Position of quote before number
 		closingQuote := numEnd                    // Position of quote after number
 
-		newLen := len(result) - 2 // Removing 2 quotes
-		newData := make([]byte, newLen)
+		if out == nil {
+			// First valid match: allocate the output once. The result is
+			// strictly shorter than the input, so cap at len(data) and append
+			// without reallocating.
+			out = make([]byte, 0, len(data))
+		}
+		out = append(out, data[lastCopied:patternEndQuote]...)
+		out = append(out, data[numStart:closingQuote]...)
 
-		// Copy: [0, patternEndQuote) + [numStart, closingQuote) + [closingQuote+1, end)
-		n := copy(newData, result[:patternEndQuote])
-		n += copy(newData[n:], result[numStart:closingQuote])
-		copy(newData[n:], result[closingQuote+1:])
-
-		result = newData
-		offset = patternEndQuote + (numEnd - numStart) // Move past the fixed number
+		// Resume after the closing quote. The unchanged suffix from
+		// closingQuote+1 onward is exactly the search region the original
+		// loop continued from after its offset advance.
+		lastCopied = closingQuote + 1
+		searchFrom = numEnd + 1
 	}
 
-	return result
+	if out == nil {
+		return data
+	}
+	out = append(out, data[lastCopied:]...)
+	return out
 }
 
 func isEscaped(data []byte, i int) bool {
