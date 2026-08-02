@@ -15,7 +15,9 @@ first — it is the mechanical contract, not advice.
 for what v2 keeps/drops and why, the delta design (constants→header,
 changes→events, per-frame only for per-frame data), round-trip semantics, and
 identity reconstruction. It exists so this is never re-derived from scratch.
-Open work + bugs live in [`BUGS.md`](BUGS.md).
+Open work + bugs live in the **GitHub issue tracker** (`gh issue list --state
+open`). The root `BUGS.md` ledger was retired 2026-08-02 in favor of gh issues;
+resolved-bug identifiers cited elsewhere refer to fixes in git history.
 
 ## Build & Test
 

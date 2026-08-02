@@ -98,7 +98,7 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
     `ScoreboardUpdated` sample, which fires only on a score change, so it was
     stale between goals and empty before the first — wrong on 100% of frames in
     both available recordings. Same reasoning as `possession[]`: redundant and
-    reconstructable, so reconstruct it. See BUGS.md CLOCK-001.
+    reconstructable, so reconstruct it. See CLOCK-001.
 
 ## 4. Round-trip
 
@@ -114,7 +114,7 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
     (local-player-only), so the value in a Spark recording is one player's
     perspective. v2 carries throws as `DiscThrown` events; reconstructing
     `last_throw` from them would fabricate data for every other player. See
-    BUGS.md CANONICAL-001 §2 — a known limitation, not a fixable defect, until
+    gh #35 (CANONICAL-001 §2) — a known limitation, not a fixable defect, until
     the local-player identity problem is solved upstream.
 - **Goal:** v2 is a working superset for the recoverable lane (kinematics +
   identity + loadout + grab + disc + scores). `last_score` (LASTSCORE-001),
@@ -172,7 +172,7 @@ assumed, per §2's rule:
 | `EVENT_TYPE_LOADOUT_CHANGED` / `_GRAB_CHANGED` / `_PLAYER_STATS_UPDATED` | enum | without them those events never reached the footer index |
 
 **Still needed:** nothing for the fields above. What remains is `last_throw`
-(CANONICAL-001 §2 — local-player-only; see BUGS.md). `last_score` (LASTSCORE-001),
+(gh #35, CANONICAL-001 §2 — local-player-only). `last_score` (LASTSCORE-001),
 per-frame `jersey_number` / `level` (ROSTER-001), and the scoreboard seed
 (CLOCK-001) all ship.
 
@@ -182,7 +182,7 @@ the BSR module → `go get` the new version in tape (or `buf generate` + a local
 read it back → round-trip test. **Both directions in the same change** — a field
 written but never read is the failure mode this repo keeps repeating.
 
-## 7. Open work (also tracked in `BUGS.md`)
+## 7. Open work (also tracked as GitHub issues)
 
 - ~~Build the v2→echoreplay reconstructor~~ — **done** (`reconstruct.go`, §1).
 - ~~Build GH #34 `Session`~~ — **done**: `OpenSession` / `RosterAt` / `LoadoutAt` /

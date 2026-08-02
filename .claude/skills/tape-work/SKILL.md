@@ -24,7 +24,7 @@ gate before passing it.
 
 - A replacement for `CLAUDE.md`, `docs/format-design.md`, or the GO addendum. It
   CITES them; it never overrides them. On conflict THOSE WIN — note the conflict,
-  file it in `BUGS.md`, continue under their reading.
+  file it as a GitHub issue, continue under their reading.
 - Optional for "small" tasks. A one-line reconstructor omission is how
   `client_name` survived conversion and vanished on the way out for months. A
   silent `continue` on a parse error is how a 450-line capture round-trips to
@@ -34,8 +34,8 @@ gate before passing it.
 
 **Do:** read `~/src/metis-core/GO-ADDENDUM-GENERIC.md` IN FULL before editing any
 `.go`, `go.mod`, `justfile`, or `.golangci.yml`. Its "Never Use" and "Code Review
-Hard Stops" are enforced, not advisory. There is no `AGENTS.md` in this repo, so
-nothing overrides the addendum.
+Hard Stops" are enforced, not advisory. The repo's `AGENTS.md` applies on top of
+the addendum.
 
 **Verification action:** your plan names the Hard Stops in scope for this change
 (typically: `%w` wrapping with a function-scoped prefix on every boundary, no
@@ -53,11 +53,9 @@ hand back a Decision-line. Do not relax the constraint "just here."
 2. **`docs/format-design.md`** — mandated by `CLAUDE.md` before touching the
    format, the converter, or any fidelity question. Read it knowing it has drifted
    before (see Gate 2).
-3. `BUGS.md` — the work ledger. Note it mixes states: `OPEN`, `DONE`, `FIXED`, and
-   a `DIRECTIVE` section whose "Still OPEN" list is a standing task queue.
+3. `gh issue list --state open` — the repo's bug + work tracker. The root
+   `BUGS.md` ledger was retired 2026-08-02; bugs and open work live here.
 4. `git log --oneline -20`, `git status`, `git branch -a`.
-5. `gh issue list --state open` — a large share of this repo's known defects live
-   only in GitHub issues and are absent from `BUGS.md`.
 
 **Verification action:** your plan names the files you oriented on and states, in
 one line, the current state you took from them (what builds, what is red, which
@@ -187,21 +185,21 @@ to Gate 3.
    private match; it does not exercise payload, spectators, or multi-round play.
 4. **Never commit a red suite.** A previous effort landed 27 deliberate failures
    "pending a ruling" and was reverted wholesale. If a finding is out of scope, it
-   goes in `BUGS.md` and the suite stays green.
+   goes in a GitHub issue and the suite stays green.
 
 **Abort if:** `just` is red for a reason you did not introduce — report it as a
 finding with its measurement and a Decision-line; do NOT fake green.
 
 ## Gate 7 — Record and commit
 
-- **Ledger:** record findings in `BUGS.md`. Shape: What (measured) → Where
-  (`file:line`) → Evidence → Impact → Fix direction → Status. Amend, never
-  rewrite; closed entries live in git history. When a fix lands, move the entry to
-  `FIXED` with the commit hash and the test names that pin it.
-- **Docs ship with the code.** If behavior changes, `docs/format-design.md` and
-  the relevant `BUGS.md` entry change in the **same commit**. Doc drift here is
-  not cosmetic — it is what caused a 4,545-line effort to be built on a schema
-  that no longer existed, and reverted.
+- **Tracker:** record findings as GitHub issues. Shape: title = severity + What;
+  body = What (measured) → Where (`file:line`) → Evidence → Impact → Fix
+  direction → Status. When a fix lands, close the issue with a comment citing the
+  commit hash and the test names that pin it.
+- **Docs ship with the code.** If behavior changes, `docs/format-design.md`
+  changes in the **same commit**. Doc drift here is not cosmetic — it is what
+  caused a 4,545-line effort to be built on a schema that no longer existed, and
+  reverted.
 - **Commit identity:** author name *and* email both `agents@sprock.io`,
   `--no-gpg-sign`, trailer `Co-authored-by: Andrew Bates <a@sprock.io>`;
   conventional prefix (`feat:`/`fix:`/`docs:`/`test:`/`build:`/`style:`). Commit

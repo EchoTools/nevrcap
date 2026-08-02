@@ -8,7 +8,12 @@ This is the mechanical contract — not advice, not aspiration. Read it before
 touching any file, then read `CLAUDE.md`, then read `docs/format-design.md` if
 the change touches format, conversion, or fidelity.
 
-Orientation chain: **AGENTS.md → CLAUDE.md → format-design.md → BUGS.md**
+Orientation chain: **AGENTS.md → CLAUDE.md → format-design.md → GitHub issues**
+
+Bugs and open work live in the **GitHub issue tracker** (`gh issue list`), not a
+repo ledger. The root `BUGS.md` was retired 2026-08-02; resolved-bug
+identifiers in docs (CLOCK-001, ROSTER-001, CANONICAL-001, …) refer to fixes
+preserved in git history.
 
 ---
 
@@ -47,8 +52,8 @@ This is `gofmt`, `goimports`, `go vet`, `golangci-lint run ./...`,
 - CI (`pr.yml`, `main.yml`) runs the same gates on every push.
 
 Do not fake green. If `just` is red for a reason you did not introduce, file it
-in `BUGS.md` and keep the suite green. A previous effort landed 27 deliberate
-failures "pending a ruling" and was reverted wholesale.
+as a GitHub issue and keep the suite green. A previous effort landed 27
+deliberate failures "pending a ruling" and was reverted wholesale.
 
 ## 4. Code standards
 
@@ -93,7 +98,7 @@ Additional rules specific to this codec library:
   `testdata/README.md` (SHA256, frame count, event count) in the same commit
   and state what changed it.
 - **Never commit a red suite.** A finding that cannot be fixed in the same
-  change goes in `BUGS.md`.
+  change goes in a GitHub issue.
 
 ## 6. Evidence
 
