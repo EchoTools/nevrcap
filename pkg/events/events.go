@@ -85,7 +85,9 @@ type AsyncDetector struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	startOnce  sync.Once
 	stopOnce   sync.Once
+	stopped    atomic.Bool
 
 	// Reusable buffer for events to reduce allocations
 	eventBuffer []*telemetry.LobbySessionEvent
@@ -114,7 +116,8 @@ func (ed *AsyncDetector) DroppedEvents() uint64 {
 
 var _ Detector = (*AsyncDetector)(nil)
 
-// New creates a new event detector with goroutine-based processing
+// New creates a new event detector. In async mode it starts the background
+// processing goroutine immediately, so a caller never needs to call Start.
 func New(opts ...Option) *AsyncDetector {
 	ctx, cancel := context.WithCancel(context.Background())
 	ed := &AsyncDetector{
@@ -137,10 +140,19 @@ func New(opts ...Option) *AsyncDetector {
 	return ed
 }
 
-// Start launches the background processing goroutine
+// Start launches the background processing goroutine. It is idempotent: the
+// loop is started at most once, so calling Start more than once cannot spawn a
+// second worker racing on the shared detector state. In synchronous mode there
+// is no background loop, so Start is a no-op. A detector that has been Stop()ed
+// cannot be restarted; Start after Stop has no effect.
 func (ed *AsyncDetector) Start() {
-	ed.wg.Add(1)
-	go ed.processLoop()
+	ed.startOnce.Do(func() {
+		if ed.synchronous || ed.stopped.Load() {
+			return
+		}
+		ed.wg.Add(1)
+		go ed.processLoop()
+	})
 }
 
 // Stop gracefully shuts down the event detector.
@@ -152,6 +164,7 @@ func (ed *AsyncDetector) Start() {
 // different goroutines.
 func (ed *AsyncDetector) Stop() {
 	ed.stopOnce.Do(func() {
+		ed.stopped.Store(true)
 		ed.cancel()
 		if !ed.synchronous {
 			ed.wg.Wait()
