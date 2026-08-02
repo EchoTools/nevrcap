@@ -521,12 +521,16 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	// Map players from teams.
 	ea.Players = mapPlayers(session.GetTeams())
 
-	// Find disc holder.
+	// Find disc holder. First possessor wins, matching findPossessorSlot
+	// (pkg/events/sensor_disc.go) so the frame's disc_holder_slot never
+	// disagrees with the DiscPossessionChanged events for the same frame.
+possessor:
 	for _, team := range session.GetTeams() {
 		for _, p := range team.GetPlayers() {
 			if p.GetHasPossession() {
 				slot := p.GetSlotNumber()
 				ea.DiscHolderSlot = &slot
+				break possessor
 			}
 		}
 	}

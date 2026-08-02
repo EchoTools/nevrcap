@@ -2,7 +2,9 @@ package conversion
 
 import (
 	"testing"
+	"time"
 
+	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 )
 
@@ -172,5 +174,34 @@ func TestMapEvent_DiscPossessionChanged_PartialFreeDisc(t *testing.T) {
 
 	if dp.HasPreviousPlayerSlot() {
 		t.Errorf("HasPreviousPlayerSlot() = true, want false — -1 sentinel should map to absent")
+	}
+}
+
+// TestMapFrame_DiscHolderFirstPossessorWins proves the F-4 consistency fix:
+// when more than one player carries has_possession in a single frame (never
+// observed from the engine, but possible in crafted input), the frame's
+// disc_holder_slot must be the FIRST possessor, matching findPossessorSlot
+// (pkg/events/sensor_disc.go:173-182), so the frame and the
+// DiscPossessionChanged events cannot disagree within a frame.
+func TestMapFrame_DiscHolderFirstPossessorWins(t *testing.T) {
+	t.Parallel()
+
+	v1f := &telemetryv1.LobbySessionStateFrame{
+		Session: &enginev1.SessionResponse{
+			Teams: []*enginev1.Team{
+				{Players: []*enginev1.TeamMember{
+					{SlotNumber: 3, HasPossession: true},
+					{SlotNumber: 5, HasPossession: true},
+				}},
+			},
+		},
+	}
+
+	ea := mapFrame(v1f, time.Time{}, 0, nil).GetEchoArena()
+	if ea == nil {
+		t.Fatal("expected EchoArena frame")
+	}
+	if got := ea.GetDiscHolderSlot(); got != 3 {
+		t.Fatalf("DiscHolderSlot = %d, want 3 (first possessor, not the last)", got)
 	}
 }
