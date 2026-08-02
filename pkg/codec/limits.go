@@ -67,6 +67,16 @@ var (
 	// non-frame, non-footer envelope (e.g. a stray header or an empty envelope)
 	// before the footer — a malformed or truncated-and-concatenated capture.
 	ErrUnexpectedEnvelope = errors.New("unexpected non-frame envelope before footer")
+
+	// ErrUnsupportedVersion is returned by ReadHeader when the capture's
+	// format_version is not 2 (or 0 for pre-2.1 captures). A future reader
+	// might understand additional versions, but this one does not.
+	ErrUnsupportedVersion = errors.New("unsupported format_version; this reader understands version 2")
+
+	// ErrFrameCountOverflow is returned by WriteFrame or Close when the
+	// capture would exceed the format's uint32 frame count limit
+	// (~4.29 billion frames, >82 days at 600 Hz).
+	ErrFrameCountOverflow = errors.New("frame count would exceed uint32 max; split the capture")
 )
 
 // Limits bounds the resources a reader will spend on a single capture, so a

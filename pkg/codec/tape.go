@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"sync"
@@ -125,6 +126,12 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 		return err
 	}
 
+	// The format stores frame_count as uint32 in the footer (and frame
+	// indices in keyframe/event entries as uint32).  Over 4 billion frames
+	// in one capture (~82 days at 600 Hz) cannot be represented.
+	if w.frameCount == math.MaxUint32 {
+		return fmt.Errorf("tape: %w", ErrFrameCountOverflow)
+	}
 	w.frameCount++
 	w.lastTimestampMs = frame.GetTimestampOffsetMs()
 	return nil
@@ -340,6 +347,10 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 func (r *Reader) Limits() Limits { return r.limits }
 
 // ReadHeader reads the first envelope, which must be a CaptureHeader.
+//
+// The header's format_version is validated against the versions this reader
+// understands: 0 (pre-2.1 captures, treated as 2) and 2. Any other version
+// returns ErrUnsupportedVersion.
 func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
@@ -349,6 +360,11 @@ func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 	header := env.GetHeader()
 	if header == nil {
 		return nil, io.ErrUnexpectedEOF
+	}
+
+	ver := header.GetFormatVersion()
+	if ver != 0 && ver != 2 {
+		return nil, fmt.Errorf("tape: header declares format_version=%d: %w", ver, ErrUnsupportedVersion)
 	}
 	return header, nil
 }

@@ -820,6 +820,37 @@ states "Writer is safe for concurrent use."
 
 ---
 
+## FIXED — FORMAT-VERSION-001 (GH #30): Reader accepted any format_version silently
+
+**Severity:** low (forward-compatibility). `Reader.ReadHeader` (`pkg/codec/tape.go:343-353`)
+accepted any `CaptureHeader` without checking `format_version`. A future tape with
+`format_version=3` would be read without error, producing a header that downstream
+code cannot interpret.
+
+**Fix:** `ReadHeader` now validates `format_version` is 0 (pre-2.1) or 2. Any other
+value returns `ErrUnsupportedVersion`. The sentinel is defined in `limits.go`
+alongside the other reader errors.
+
+**Status: FIXED.** Pinned by `TestReader_ReadHeader_RejectsUnknownFormatVersion`
+and `TestReader_ReadHeader_AcceptsVersion2` (`pkg/codec/format_version_test.go`).
+
+---
+
+## FIXED — FRAMECOUNT-001 (GH #21): uint32 frame count wraps silently
+
+**Severity:** low (only reached at ~4.3B frames, >82 days at 600 Hz). `Writer.frameCount`
+(`pkg/codec/tape.go:47`) was uint32 with no overflow check. At `math.MaxUint32 + 1`
+frames it wrapped to 0, corrupting the footer and all subsequent index entries.
+
+**Fix:** `WriteFrame` now checks `w.frameCount == math.MaxUint32` before incrementing
+and returns `ErrFrameCountOverflow` when the format limit is reached. The sentinel
+is defined in `limits.go`.
+
+**Status: FIXED.** Pinned by `TestWriter_WriteFrame_OverflowErrors` and
+`TestWriter_WriteFrame_BelowMaxSucceeds` (`pkg/codec/frame_count_overflow_test.go`).
+
+---
+
 ## FIXED — STOP-RACE-001 (F-14): sync-mode Stop() closes eventsChan without waiting for in-flight ProcessFrame
 
 **Severity:** medium (crash risk). `AsyncDetector.Stop()` (`pkg/events/events.go:142-149`)
