@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"sync"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
@@ -32,7 +33,11 @@ const (
 // stream, keyframe and event indexes. Because the stream is Zstd-compressed,
 // byte-offset seeking requires decompressing from the start; true random
 // access would need Zstd seekable frames (future work).
+//
+// Writer is safe for concurrent use: WriteHeader, WriteFrame, and Close are
+// serialized by an internal mutex.
 type Writer struct {
+	mu         sync.Mutex
 	file       *os.File
 	encoder    *zstd.Encoder
 	eventIndex map[capturepb.EventType][]uint32
@@ -79,6 +84,9 @@ func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*W
 
 // WriteHeader writes the capture header as the first envelope.
 func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	env := &capturepb.Envelope{
 		Message: &capturepb.Envelope_Header{Header: header},
 	}
@@ -87,6 +95,9 @@ func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
 
 // WriteFrame writes a frame envelope and updates indexes.
 func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	frameIndex := w.frameCount
 
 	// Track keyframe offset before writing.
@@ -121,6 +132,9 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 
 // Close writes the footer, closes the zstd encoder, and closes the file.
 func (w *Writer) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	// Build event index entries in deterministic order.
 	types := make([]capturepb.EventType, 0, len(w.eventIndex))
 	for t := range w.eventIndex {

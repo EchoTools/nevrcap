@@ -770,7 +770,7 @@ stats.
 
 ---
 
-## OPEN — SENTINEL-OPTIONAL-001 (F-4): v1 −1 sentinel stored as present −1 pointer in v2 optionals
+## FIXED — SENTINEL-OPTIONAL-001 (F-4): v1 −1 sentinel stored as present −1 pointer in v2 optionals
 
 **Severity:** medium (format correctness). Three `mapEvent` sites always take the
 address of the local variable and set the `optional int32` pointer, even when the
@@ -789,37 +789,38 @@ contract "absent when free/unknown." A reader that honours the absence contract
 (e.g. checking `HasPlayerSlot()` before reading) sees `true` for a free disc and
 reads −1.
 
-**Measured:** `TestMapEvent_DiscPossessionChanged_FreeDiscMapsToAbsentOptional`
-(`pkg/conversion/sentinel_optional_test.go`) — currently RED: `HasPlayerSlot()=true`,
-`GetPlayerSlot()=-1`, not absent-with-zero-default.
+**Fix:** check for −1 before setting the pointer in both `mapEvent` cases.
+`pkg/conversion/mapping.go`:
+- `DiscPossessionChanged`: only set `PlayerSlot`/`PreviousPlayerSlot` pointers
+  when the value is non-negative.
+- `PlayerSteal`: only set `VictimPlayerSlot` pointer when non-negative.
 
-**Fix direction:** check for −1 before setting the pointer; only set it when the
-value is non-negative.
-
-**Status: OPEN.** RED tests committed in the TDD phase; fix pending.
+**Status: FIXED.** Pinned by `TestMapEvent_DiscPossessionChanged_FreeDiscMapsToAbsentOptional`,
+`TestMapEvent_DiscPossessionChanged_OccupiedDiscKeepsSlot`,
+`TestMapEvent_DiscPossessionChanged_PartialFreeDisc`,
+`TestMapEvent_PlayerSteal_NoVictimMapsToAbsentOptional`,
+`TestMapEvent_PlayerSteal_WithVictimKeepsSlot`
+(`pkg/conversion/sentinel_optional_test.go`).
 
 ---
 
-## OPEN — WRITER-RACE-001 (GH #29): Writer carries shared mutable state with no synchronization
+## FIXED — WRITER-RACE-001 (GH #29): Writer carries shared mutable state with no synchronization
 
 **Severity:** medium (concurrency safety). The `Writer` struct (`pkg/codec/tape.go:35-45`)
 carries `frameCount`, `keyframes`, `eventIndex`, `bytesWritten`, `lastTimestampMs`,
 the `zstd.Encoder`, and the `*os.File` — all mutated by `WriteFrame` with no mutex.
 Concurrent `WriteFrame` calls race on every field.
 
-**Measured:** `TestWriter_ConcurrentWriteFrameRace` (`pkg/codec/writer_race_test.go`)
-— 8 concurrent goroutines, `-race` detects DATA RACE at `tape.go:94`
-(`w.keyframes` append, concurrent read+write) plus further races on `eventIndex`,
-`frameCount`, and `bytesWritten`.
+**Fix:** added `sync.Mutex` to the `Writer` struct. `WriteHeader`, `WriteFrame`,
+and `Close` each acquire it at entry and release it on return. The doc comment
+states "Writer is safe for concurrent use."
 
-**Fix direction:** add `sync.Mutex` to the Writer, or document it as
-not-goroutine-safe (the Go convention for `bufio.Writer` / `json.Encoder`).
-
-**Status: OPEN.** RED test committed; fix pending.
+**Status: FIXED.** Pinned by `TestWriter_ConcurrentWriteFrameRace`
+(`pkg/codec/writer_race_test.go`) — 8 concurrent goroutines, `-race` clean.
 
 ---
 
-## OPEN — STOP-RACE-001 (F-14): sync-mode Stop() closes eventsChan without waiting for in-flight ProcessFrame
+## FIXED — STOP-RACE-001 (F-14): sync-mode Stop() closes eventsChan without waiting for in-flight ProcessFrame
 
 **Severity:** medium (crash risk). `AsyncDetector.Stop()` (`pkg/events/events.go:142-149`)
 in synchronous mode calls `cancel()` then immediately `close(ed.eventsChan)` without
@@ -831,16 +832,15 @@ The conversion path (`pkg/conversion/convert.go:260,269`) is single-threaded and
 safe, but a library caller using `ProcessFrame` from one goroutine while tearing
 down from another hits the panic on every run.
 
-**Measured:** `TestSyncDetector_StopDuringProcessFrameDoesNotPanic`
-(`pkg/events/stop_race_test.go`) — 200 iterations, `-race` detected DATA RACE
-between `chansend` (ProcessFrame) and `closechan` (Stop);
-`"panic during ProcessFrame: send on closed channel"` fired on ~60% of iterations.
+**Fix:** added `syncMu sync.Mutex` to `AsyncDetector`. `Stop()` acquires it after
+`cancel()` (in sync mode only), blocking until any in-flight `processFrameSync`
+completes, then closes the channel. `processFrameSync` acquires it before the
+channel send and checks `ctx.Done()` first, so it returns without touching the
+channel when Stop has been called.
 
-**Fix direction:** add a `sync.Mutex` protecting the stop transition so that
-`Stop()` blocks until any in-flight `processFrameSync` completes, or use a
-`sync.WaitGroup` tracking in-flight sync calls.
-
-**Status: OPEN.** RED test committed; fix pending.
+**Status: FIXED.** Pinned by `TestSyncDetector_StopDuringProcessFrameDoesNotPanic`
+(`pkg/events/stop_race_test.go`) — 200 concurrent Stop+ProcessFrame iterations,
+`-race` clean, zero panics.
 
 ---
 

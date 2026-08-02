@@ -92,6 +92,11 @@ type AsyncDetector struct {
 
 	synchronous bool
 
+	// syncMu serializes the close(eventsChan) in Stop() with sends in
+	// processFrameSync so a concurrent ProcessFrame cannot panic on a
+	// channel that was closed between the ctx.Done() check and the send.
+	syncMu sync.Mutex
+
 	// Drop counters for monitoring channel back-pressure.
 	droppedFrames uint64
 	droppedEvents uint64
@@ -138,12 +143,24 @@ func (ed *AsyncDetector) Start() {
 	go ed.processLoop()
 }
 
-// Stop gracefully shuts down the event detector
+// Stop gracefully shuts down the event detector.
+//
+// In synchronous mode Stop first cancels the context so any in-flight
+// ProcessFrame sees ctx.Done(), then acquires syncMu to wait for that
+// ProcessFrame to finish before closing the events channel. This prevents
+// a send-on-closed-channel panic when ProcessFrame and Stop are called from
+// different goroutines.
 func (ed *AsyncDetector) Stop() {
 	ed.stopOnce.Do(func() {
 		ed.cancel()
 		if !ed.synchronous {
 			ed.wg.Wait()
+		} else {
+			// In sync mode there is no background goroutine, but a
+			// concurrent ProcessFrame may still be sending. Wait for it
+			// to finish, then close the channel.
+			ed.syncMu.Lock()
+			defer ed.syncMu.Unlock()
 		}
 		close(ed.eventsChan)
 	})
@@ -206,6 +223,20 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		eventsToSend := make([]*telemetry.LobbySessionEvent, len(ed.eventBuffer))
 		copy(eventsToSend, ed.eventBuffer)
 
+		// Serialize with Stop() so close(eventsChan) cannot interleave
+		// with the send. stopOnce guarantees cancel() fires before
+		// Stop acquires syncMu, so ctx.Done() is already ready when
+		// Stop holds the lock.
+		ed.syncMu.Lock()
+		defer ed.syncMu.Unlock()
+
+		select {
+		case <-ed.ctx.Done():
+			// Detector is stopping; return without sending.
+			return
+		default:
+		}
+
 		// In synchronous mode, use non-blocking send to avoid blocking ProcessFrame.
 		// This ensures ProcessFrame completes immediately in the caller's goroutine.
 		// Events are dropped if the channel is full, which is acceptable since
@@ -213,9 +244,6 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		select {
 		case ed.eventsChan <- eventsToSend:
 			// Events sent successfully
-		case <-ed.ctx.Done():
-			// Detector is stopping
-			return
 		default:
 			// Channel is full, drop events rather than blocking.
 			// This maintains the synchronous processing guarantee.

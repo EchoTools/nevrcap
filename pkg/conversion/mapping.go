@@ -935,11 +935,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent, vocab *vocabulary) *capturepb.
 	case *telemetryv1.LobbySessionEvent_DiscPossessionChanged:
 		playerSlot := e.DiscPossessionChanged.GetPlayerSlot()
 		prevSlot := e.DiscPossessionChanged.GetPreviousPlayerSlot()
+		dc := &capturepb.DiscPossessionChanged{}
+		if playerSlot != -1 {
+			dc.PlayerSlot = &playerSlot
+		}
+		if prevSlot != -1 {
+			dc.PreviousPlayerSlot = &prevSlot
+		}
 		evt.Event = &capturepb.EchoEvent_DiscPossessionChanged{
-			DiscPossessionChanged: &capturepb.DiscPossessionChanged{
-				PlayerSlot:         &playerSlot,
-				PreviousPlayerSlot: &prevSlot,
-			},
+			DiscPossessionChanged: dc,
 		}
 	case *telemetryv1.LobbySessionEvent_DiscThrown:
 		dt := &capturepb.DiscThrown{
@@ -1020,12 +1024,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent, vocab *vocabulary) *capturepb.
 		}
 	case *telemetryv1.LobbySessionEvent_PlayerSteal:
 		victimSlot := e.PlayerSteal.GetVictimPlayerSlot()
+		ps := &capturepb.PlayerSteal{
+			PlayerSlot:  e.PlayerSteal.GetPlayerSlot(),
+			TotalSteals: e.PlayerSteal.GetTotalSteals(),
+		}
+		if victimSlot != -1 {
+			ps.VictimPlayerSlot = &victimSlot
+		}
 		evt.Event = &capturepb.EchoEvent_PlayerSteal{
-			PlayerSteal: &capturepb.PlayerSteal{
-				PlayerSlot:       e.PlayerSteal.GetPlayerSlot(),
-				TotalSteals:      e.PlayerSteal.GetTotalSteals(),
-				VictimPlayerSlot: &victimSlot,
-			},
+			PlayerSteal: ps,
 		}
 	case *telemetryv1.LobbySessionEvent_PlayerBlock:
 		evt.Event = &capturepb.EchoEvent_PlayerBlock{
