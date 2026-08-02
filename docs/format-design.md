@@ -64,11 +64,12 @@ rotation) → `float32` (~1e-7 rad). **There is no meaningful precision loss in
 v1→v2.** The loss is dropped *fields*, never resolution.
 
 **The writer enforces the stream contract.** `Writer` (`pkg/codec/tape.go`)
-rejects any call outside exactly-one-header → sequential frames (each carrying
-the `frame_index` its position implies) → one Close: a frame before the header,
-a duplicate header, a call after Close, a nil or payload-less frame, and a
-non-sequential `frame_index` are all errors (WRITER-ORDER-001). This keeps the
-footer's keyframe/event indexes consistent with the frames on the wire.
+rejects any call outside exactly-one-header → frames → one Close: a frame
+before the header, a duplicate header, a call after Close, a nil or
+payload-less frame are all errors (WRITER-ORDER-001). The footer's keyframe and
+event indexes record each frame's own `frame_index` — the value serialized on
+the wire — so they stay consistent even for legacy captures whose stored
+indices are not sequential (frame_count is the count, not the last index).
 
 ## 3. What v2 keeps vs. drops (measured, not asserted)
 
