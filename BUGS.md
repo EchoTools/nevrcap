@@ -899,6 +899,58 @@ channel when Stop has been called.
 
 ---
 
+## FIXED — WRITER-ORDER-001 (release-audit R2): Writer accepts invalid order and inconsistent indexes
+
+**Severity:** medium (stream integrity). The v2 tape Writer enforced no stream
+contract, so a caller could produce a capture the reader refuses, or one whose
+footer indexes disagree with the frames on the wire.
+
+**What:** three defects in the same call path:
+1. `WriteFrame` before `WriteHeader` wrote a frame into a headerless stream that
+   `ReadHeader` then refuses.
+2. Duplicate `WriteHeader`, and any call after `Close`, were accepted; a second
+   header or a post-close frame corrupts the stream (or writes into a closed
+   encoder/file).
+3. `WriteFrame` never looked at the caller-supplied `frame.frame_index`; the
+   footer's keyframe/event indexes were built from the internal `frameCount`
+   ordinal. A caller writing `FrameIndex: 42` as its first frame produced a
+   footer keyframe entry of 0 — inconsistent with the wire. A nil `*Frame` or a
+   payload-less frame was also written (a payload-less frame round-trips as an
+   empty envelope every consumer reads as absent game state).
+
+**Where:** `pkg/codec/tape.go` — `WriteHeader` (`:111`), `WriteFrame` (`:136`),
+`Close` (`:193`); sentinels in `pkg/codec/limits.go:81-100`.
+
+**Evidence:** RED before the fix — the guard tests in `pkg/codec/tape_order_test.go`
+did not compile (no sentinels existed) and `TestWriter_NonSequentialFrameIndex_Errors`
+documents the exact R2 shape: `FrameIndex: 42` at stream position 0 was written
+and the footer then indexed keyframe 0 while the wire said 42.
+
+**Fix:** the Writer tracks a three-state machine (new → header written →
+closed). `WriteHeader` succeeds once, `WriteFrame` requires a header, a game
+payload, and a `frame_index` equal to the stream position, and `Close` requires
+a header and runs once. Out-of-sequence calls return `ErrWriteOrder`; a nil
+frame `ErrNilFrame`; a payload-less frame `ErrEmptyFrame`; a non-sequential
+`frame_index` `ErrFrameIndexOutOfOrder` (all new sentinels in `limits.go`). The
+footer indexes are unchanged — validation now guarantees they equal the wire.
+Concurrent misuse (the GH #29 race test) now errors cleanly instead of writing
+an inconsistent stream.
+
+**Status: FIXED.** Pinned by `TestWriter_WriteFrameBeforeHeader_Errors`,
+`TestWriter_DuplicateWriteHeader_Errors`, `TestWriter_WriteAfterClose_Errors`,
+`TestWriter_NilFrame_Errors`, `TestWriter_EmptyPayloadFrame_Errors`,
+`TestWriter_NonSequentialFrameIndex_Errors`,
+`TestWriter_ValidSequence_FooterMatchesWire` (`pkg/codec/tape_order_test.go`);
+`TestGoldenConvert` passes unchanged (normal-path bytes identical). Existing
+Writer tests that wrote degenerate frames (nil payload / no header / stale
+index) were updated to the valid stream shape: `tape_test.go`,
+`keyframe_interval_test.go`, `frame_count_overflow_test.go`,
+`uncompressed_test.go`, `sec001_bomb_test.go`, `pkg/conversion/sec001_budget_test.go`,
+and `writer_race_test.go` (rewritten as one producer + concurrent invalid-call
+hammers).
+
+---
+
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
 
 Every item below needs a **test** and a **BAC** it traces to. No feature ships

@@ -20,10 +20,18 @@ func TestWriter_WriteFrame_OverflowErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
 	// Force the counter to just below overflow so we don't write 4B frames.
 	w.frameCount = math.MaxUint32
 
-	frame := &capturepb.Frame{FrameIndex: 0}
+	frame := &capturepb.Frame{
+		FrameIndex: math.MaxUint32,
+		Payload: &capturepb.Frame_EchoArena{
+			EchoArena: &capturepb.EchoArenaFrame{},
+		},
+	}
 	err = w.WriteFrame(frame)
 	if !errors.Is(err, ErrFrameCountOverflow) {
 		t.Fatalf("WriteFrame at MaxUint32: want ErrFrameCountOverflow, got %v", err)
@@ -42,11 +50,17 @@ func TestWriter_WriteFrame_BelowMaxSucceeds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
+		t.Fatalf("WriteHeader: %v", err)
+	}
 	w.frameCount = math.MaxUint32 - 1
 
-	frame := &capturepb.Frame{FrameIndex: 0, Payload: &capturepb.Frame_EchoArena{
-		EchoArena: &capturepb.EchoArenaFrame{},
-	}}
+	frame := &capturepb.Frame{
+		FrameIndex: math.MaxUint32 - 1,
+		Payload: &capturepb.Frame_EchoArena{
+			EchoArena: &capturepb.EchoArenaFrame{},
+		},
+	}
 	if err := w.WriteFrame(frame); err != nil {
 		t.Fatalf("WriteFrame at MaxUint32-1: %v", err)
 	}

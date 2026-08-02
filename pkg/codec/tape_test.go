@@ -218,6 +218,9 @@ func TestTapeCustomKeyframeInterval(t *testing.T) {
 		if err := w.WriteFrame(&capturepb.Frame{
 			FrameIndex:        i,
 			TimestampOffsetMs: i * 16,
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{},
+			},
 		}); err != nil {
 			t.Fatalf("WriteFrame: %v", err)
 		}

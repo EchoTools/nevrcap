@@ -23,7 +23,7 @@ func TestNewWriterWithKeyframeInterval_ClampsZero(t *testing.T) {
 			t.Fatalf("interval %d: write header: %v", interval, err)
 		}
 		// The panic landed here, before any frame was encoded.
-		if err := w.WriteFrame(&capturepb.Frame{}); err != nil {
+		if err := w.WriteFrame(testFrame(0)); err != nil {
 			t.Fatalf("interval %d: write frame: %v", interval, err)
 		}
 		if err := w.Close(); err != nil {
@@ -47,9 +47,9 @@ func TestKeyframeIntervalZeroIndexesLikeTheDefault(t *testing.T) {
 		if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
 			t.Fatalf("write header: %v", err)
 		}
-		for range DefaultKeyframeInterval * 2 {
-			if err := w.WriteFrame(&capturepb.Frame{}); err != nil {
-				t.Fatalf("write frame: %v", err)
+		for i := range uint32(DefaultKeyframeInterval * 2) {
+			if err := w.WriteFrame(testFrame(i)); err != nil {
+				t.Fatalf("write frame %d: %v", i, err)
 			}
 		}
 		if err := w.Close(); err != nil {

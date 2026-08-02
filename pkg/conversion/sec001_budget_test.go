@@ -26,8 +26,13 @@ func writeBombTapeV2(t *testing.T, path string, n int) {
 	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
 	}
-	frame := &capturepb.Frame{}
-	for range n {
+	for i := range n {
+		frame := &capturepb.Frame{
+			FrameIndex: uint32(i), //nolint:gosec // loop bound is a small test constant
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{},
+			},
+		}
 		if err := w.WriteFrame(frame); err != nil {
 			t.Fatalf("WriteFrame: %v", err)
 		}

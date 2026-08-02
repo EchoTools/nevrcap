@@ -72,6 +72,9 @@ func writeTape(t *testing.T, frames int) (string, int) {
 		if err := w.WriteFrame(&capturepb.Frame{
 			FrameIndex:        uint32(i), //nolint:gosec // loop bound is a small test constant
 			TimestampOffsetMs: uint32(i) * 16,
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{},
+			},
 		}); err != nil {
 			t.Fatalf("WriteFrame %d: %v", i, err)
 		}
