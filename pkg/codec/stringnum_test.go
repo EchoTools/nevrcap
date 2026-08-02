@@ -98,6 +98,21 @@ func TestFixStringEncodedNumberByteIdentityEdgeCases(t *testing.T) {
 			input:    `{"userid":"123a","rules_changed_at":"456"}`,
 			expected: `{"userid":"123a","rules_changed_at":456}`,
 		},
+		{
+			name:     "leading zero multi-digit unchanged (GH #37)",
+			input:    `{"rules_changed_at":"00"}`,
+			expected: `{"rules_changed_at":"00"}`,
+		},
+		{
+			name:     "leading zero with more digits unchanged (GH #37)",
+			input:    `{"rules_changed_at":"0123"}`,
+			expected: `{"rules_changed_at":"0123"}`,
+		},
+		{
+			name:     "single zero still fixed (not leading-zero)",
+			input:    `{"userid":"0"}`,
+			expected: `{"userid":0}`,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

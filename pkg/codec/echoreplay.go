@@ -380,6 +380,16 @@ func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
 			continue
 		}
 
+		// RFC 8259 forbids leading zeros in numbers. If the digit run
+		// has more than one digit and starts with '0', skip this match
+		// — the input is either a non-numeric string (already correct
+		// with quotes) or adversarial input that would produce invalid
+		// JSON if unquoted (GH #37).
+		if numEnd-numStart > 1 && data[numStart] == '0' {
+			searchFrom = numEnd + 1
+			continue
+		}
+
 		// We found: pattern + digits + quote.
 		// Remove: the quote before digits (last char of pattern) and the quote after digits.
 		// Before: "userid":"123"
