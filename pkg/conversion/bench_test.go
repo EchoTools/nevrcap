@@ -139,7 +139,10 @@ func BenchmarkMapFrame(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		v2 := MapFrame(frame, baseTime)
+		v2, err := MapFrame(frame, baseTime)
+		if err != nil {
+			b.Fatal(err)
+		}
 		if v2 == nil {
 			b.Fatal("MapFrame returned nil")
 		}
@@ -276,7 +279,9 @@ func BenchmarkFullPipeline(b *testing.B) {
 			}
 		done:
 			// Map to v2.
-			_ = mapper.MapFrame(frame)
+			if _, err := mapper.MapFrame(frame); err != nil {
+				b.Fatal(err)
+			}
 			// Reset events for reuse in next iteration.
 			frame.Events = frame.Events[:0]
 		}

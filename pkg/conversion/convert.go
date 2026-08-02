@@ -291,8 +291,14 @@ func processAndWriteFrame(
 	// Drain any detected events and attach them to the frame.
 	drainEvents(processor, v1Frame)
 
-	// Map v1 frame to v2 using the stateful mapper (tracks round number).
-	v2Frame := mapper.MapFrame(v1Frame)
+	// Map v1 frame to v2 using the stateful mapper (tracks round number). An
+	// error means the frame cannot be represented in v2 (e.g. a timestamp offset
+	// past the uint32 range, R5) — abort rather than write a silently-corrupted
+	// tape.
+	v2Frame, err := mapper.MapFrame(v1Frame)
+	if err != nil {
+		return fmt.Errorf("map frame %d: %w", result.FrameCount, err)
+	}
 
 	// Count events on the mapped frame.
 	if ea := v2Frame.GetEchoArena(); ea != nil {

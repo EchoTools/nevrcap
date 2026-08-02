@@ -249,7 +249,10 @@ func TestMapFrame_SessionFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -312,7 +315,10 @@ func TestMapFrame_TeamFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -366,7 +372,10 @@ func TestMapFrame_TeamMemberFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -422,7 +431,10 @@ func TestMapFrame_AdditionalSessionFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -463,7 +475,10 @@ func TestMapFrame_DiscWithPartialOrientation(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")

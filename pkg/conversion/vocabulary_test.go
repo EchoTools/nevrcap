@@ -38,9 +38,15 @@ func TestVocabularyCountsWhatTheTablesLose(t *testing.T) {
 	}
 
 	// Two frames carrying the same unknown status, one carrying known values.
-	mapper.MapFrame(frame("quantum_overtime", "paused", "SLAM DUNK"))
-	mapper.MapFrame(frame("quantum_overtime", "hyperpaused", "MOON SHOT"))
-	mapper.MapFrame(frame("playing", "paused", "SLAM DUNK"))
+	if _, err := mapper.MapFrame(frame("quantum_overtime", "paused", "SLAM DUNK")); err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
+	if _, err := mapper.MapFrame(frame("quantum_overtime", "hyperpaused", "MOON SHOT")); err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
+	if _, err := mapper.MapFrame(frame("playing", "paused", "SLAM DUNK")); err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 
 	got := mapper.Unmapped()
 	want := []UnmappedValue{
@@ -66,10 +72,12 @@ func TestVocabularyIgnoresTheEmptyString(t *testing.T) {
 	t.Parallel()
 
 	mapper := &FrameMapper{BaseTime: time.Now(), vocab: &vocabulary{}}
-	mapper.MapFrame(&telemetryv1.LobbySessionStateFrame{
+	if _, err := mapper.MapFrame(&telemetryv1.LobbySessionStateFrame{
 		Timestamp: timestamppb.New(mapper.BaseTime),
 		Session:   &enginev1.SessionResponse{GameStatus: ""},
-	})
+	}); err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 
 	if got := mapper.Unmapped(); len(got) != 0 {
 		t.Errorf("empty game_status recorded as unmapped: %+v", got)

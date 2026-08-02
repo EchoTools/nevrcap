@@ -94,7 +94,10 @@ func TestMapFrame_Basic(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if got == nil {
 		t.Fatal("MapFrame returned nil")
 	}
@@ -124,8 +127,8 @@ func TestMapFrame_Basic(t *testing.T) {
 }
 
 func TestMapFrame_Nil(t *testing.T) {
-	if got := MapFrame(nil, time.Now()); got != nil {
-		t.Errorf("MapFrame(nil) = %v, want nil", got)
+	if got, err := MapFrame(nil, time.Now()); err != nil || got != nil {
+		t.Errorf("MapFrame(nil) = (%v, %v), want (nil, nil)", got, err)
 	}
 }
 
@@ -134,7 +137,10 @@ func TestMapFrame_NilSession(t *testing.T) {
 		FrameIndex: 0,
 		Timestamp:  timestamppb.Now(),
 	}
-	got := MapFrame(v1f, time.Now())
+	got, err := MapFrame(v1f, time.Now())
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if got == nil {
 		t.Fatal("MapFrame returned nil for nil session")
 	}
@@ -194,7 +200,10 @@ func TestMapFrame_WithPlayers(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -263,7 +272,10 @@ func TestMapFrame_WithDisc(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -321,7 +333,10 @@ func TestMapFrame_WithBones(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -413,7 +428,10 @@ func TestMapFrame_WithEvents(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -488,7 +506,10 @@ func TestMapFrame_NilFields(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -521,7 +542,10 @@ func TestMapFrame_EmptyEvents(t *testing.T) {
 		Session:    &enginev1.SessionResponse{GameStatus: "playing"},
 		Events:     []*telemetryv1.LobbySessionEvent{},
 	}
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if len(ea.Events) != 0 {
 		t.Errorf("expected 0 events, got %d", len(ea.Events))

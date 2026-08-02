@@ -18,7 +18,10 @@ func TestMapFrame_NegativeOffsetClampedToZero(t *testing.T) {
 		Timestamp:  timestamppb.New(frameTime),
 	}
 
-	v2f := MapFrame(v1f, baseTime)
+	v2f, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if v2f == nil {
 		t.Fatal("MapFrame returned nil")
 	}
@@ -39,7 +42,10 @@ func TestMapFrame_PositiveOffsetUnchanged(t *testing.T) {
 		Timestamp:  timestamppb.New(frameTime),
 	}
 
-	v2f := MapFrame(v1f, baseTime)
+	v2f, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if v2f == nil {
 		t.Fatal("MapFrame returned nil")
 	}

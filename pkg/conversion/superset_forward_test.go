@@ -45,7 +45,11 @@ func TestSupersetFieldsPopulate(t *testing.T) {
 		if sess == nil {
 			continue
 		}
-		ea := mapper.MapFrame(v1f).GetEchoArena()
+		v2f, err := mapper.MapFrame(v1f)
+		if err != nil {
+			t.Fatalf("MapFrame frame %d: %v", v1f.GetFrameIndex(), err)
+		}
+		ea := v2f.GetEchoArena()
 
 		// Shoulder input copied exactly (frame-level, capture client).
 		if ea.GetLeftShoulderPressed() != float32(sess.GetLeftShoulderPressed()) ||
