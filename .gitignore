@@ -61,3 +61,4 @@ _local/
 .serena/
 .opencode/
 .mcp.json
+.claude/agent-memory-local/
