@@ -125,6 +125,7 @@ Output files are written alongside the input with .tape extension unless
 
 			var converted, skipped, failed atomic.Int32
 			var totalFrames, totalEvents, unparsedLines, droppedBones atomic.Uint32
+			var droppedFrames, droppedEvents atomic.Uint64
 			var errs []string
 			// Inputs whose lines the reader could not parse. A tape built from
 			// such a file is not a complete record of its source, so it is
@@ -163,6 +164,12 @@ Output files are written alongside the input with .tape extension unless
 				}
 				for _, u := range res.result.UnmappedValues {
 					unmapped[u.Field+" = "+strconv.Quote(u.Value)] += u.Count
+				}
+				if n := res.result.DroppedFrames; n > 0 {
+					droppedFrames.Add(n)
+				}
+				if n := res.result.DroppedEvents; n > 0 {
+					droppedEvents.Add(n)
 				}
 			}
 

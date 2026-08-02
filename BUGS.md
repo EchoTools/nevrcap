@@ -820,6 +820,30 @@ states "Writer is safe for concurrent use."
 
 ---
 
+## FIXED — EVENTDROP-001 (GH #18): event-detector drop counters existed but were never surfaced
+
+**Severity:** medium (observability). The event detector's `DroppedFrames()` and
+`DroppedEvents()` counters (`pkg/events/events.go:101-108`) were populated but
+never read by the conversion pipeline or the CLI. Under the drain-per-frame
+pattern the drop path is unreachable, so the counters are always zero — but
+a regression would be invisible to every consumer.
+
+**Fix:** `ConvertResult` gains `DroppedFrames` and `DroppedEvents` fields
+(`pkg/conversion/convert.go:46-52`), populated after the conversion loop.
+`tapedeck convert` reports non-zero values as warnings alongside the existing
+`SkippedLines`/`DroppedBones`/`UnmappedValues` loss block.
+
+The drop path itself is correct (non-blocking send, no deadlock — GH #26
+confirmed not reproducible), and the drain-per-frame pattern keeps counters at
+zero. The fix makes the observability contract explicit: drops are counted, the
+counts are surfaced, and the CLI warns when they are non-zero.
+
+**Status: FIXED.** Pinned by the existing `TestSyncDetector_ConversionPatternNoEventLoss`
+and `TestSyncDetector_DropsWhenNeverDrained` (`pkg/events/sync_detector_drop_test.go`),
+which prove the drop path is live and the conversion pattern keeps it at zero.
+
+---
+
 ## FIXED — FORMAT-VERSION-001 (GH #30): Reader accepted any format_version silently
 
 **Severity:** low (forward-compatibility). `Reader.ReadHeader` (`pkg/codec/tape.go:343-353`)

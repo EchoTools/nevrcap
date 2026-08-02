@@ -42,6 +42,14 @@ type ConvertResult struct {
 	// Conversion deliberately does not fail on these — one unknown string must
 	// not abort a corpus-wide pass.
 	UnmappedValues []UnmappedValue
+	// DroppedFrames counts frames the event detector dropped because its input
+	// channel was full. Under the conversion pipeline's drain-per-frame pattern
+	// this is always zero; non-zero means a regression.
+	DroppedFrames uint64
+	// DroppedEvents counts event batches the detector dropped because its
+	// events channel was full. Under the conversion pipeline's drain-per-frame
+	// pattern this is always zero; non-zero means a regression.
+	DroppedEvents uint64
 }
 
 // ConvertFile converts a legacy capture file (.echoreplay or .nevrcap) to
@@ -250,6 +258,11 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 		result.DroppedBones = skipper.DroppedBones()
 	}
 	result.UnmappedValues = vocab.sorted()
+
+	// Record event-detector drops. Under the drain-per-frame pattern these
+	// are always zero; non-zero is a regression in the conversion pipeline.
+	result.DroppedFrames = detector.DroppedFrames()
+	result.DroppedEvents = detector.DroppedEvents()
 
 	// Close writer (writes footer).
 	writerClosed = true
