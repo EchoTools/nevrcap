@@ -2,6 +2,8 @@ package conversion
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -13,6 +15,13 @@ import (
 
 	"github.com/echotools/tape/v4/pkg/events"
 )
+
+// ErrTimestampOffsetOverflow is returned by MapFrame and FrameMapper.MapFrame
+// when a frame's timestamp is more than math.MaxUint32 milliseconds after
+// baseTime. TimestampOffsetMs is a uint32 delta from created_at, so an offset
+// past ~49.7 days cannot be represented; the frame is not mapped rather than
+// silently wrapping to an unrelated offset (release-audit finding R5).
+var ErrTimestampOffsetOverflow = errors.New("timestamp offset exceeds uint32 max (~49.7 days from created_at); cannot represent in TimestampOffsetMs")
 
 // gameStatusMap maps v1 string game_status to v2 GameStatus enum.
 var gameStatusMap = map[string]capturepb.GameStatus{
@@ -326,8 +335,11 @@ func (m *FrameMapper) Reset() {
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
 // mapper's accumulated state. It updates RoundNumber when a RoundStarted
-// event is present on the frame.
-func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capturepb.Frame {
+// event is present on the frame. It returns an error wrapping
+// ErrTimestampOffsetOverflow when the frame's timestamp offset from BaseTime
+// exceeds the v2 TimestampOffsetMs uint32 range, so the conversion pipeline can
+// abort instead of writing a tape with silently wrapped offsets (R5).
+func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) (*capturepb.Frame, error) {
 	// Scan events for RoundStarted to update round number.
 	for _, evt := range v1f.GetEvents() {
 		if rs, ok := evt.GetEvent().(*telemetryv1.LobbySessionEvent_RoundStarted); ok {
@@ -335,9 +347,12 @@ func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capture
 		}
 	}
 
-	frame := mapFrame(v1f, m.BaseTime, m.RoundNumber, m.vocab)
+	frame, err := mapFrame(v1f, m.BaseTime, m.RoundNumber, m.vocab)
+	if err != nil {
+		return nil, fmt.Errorf("FrameMapper.MapFrame: %w", err)
+	}
 	m.appendLoadoutGrabEvents(v1f, frame)
-	return frame
+	return frame, nil
 }
 
 // appendLoadoutGrabEvents detects per-player loadout (weapon/ordnance/tac-mod)
@@ -464,21 +479,35 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame, discarding the
 // record of any unrecognised engine string. baseTime is the capture creation
 // time, used to compute timestamp_offset_ms. Conversion goes through
-// FrameMapper.MapFrame so the loss reaches ConvertResult.UnmappedValues.
-func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capturepb.Frame {
-	return mapFrame(v1f, baseTime, 0, nil)
+// FrameMapper.MapFrame so the loss reaches ConvertResult.UnmappedValues. It
+// returns an error wrapping ErrTimestampOffsetOverflow when the frame's
+// timestamp offset from baseTime exceeds the v2 TimestampOffsetMs uint32 range
+// (R5).
+func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) (*capturepb.Frame, error) {
+	frame, err := mapFrame(v1f, baseTime, 0, nil)
+	if err != nil {
+		return nil, fmt.Errorf("MapFrame: %w", err)
+	}
+	return frame, nil
 }
 
-func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32, vocab *vocabulary) *capturepb.Frame {
+func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32, vocab *vocabulary) (*capturepb.Frame, error) {
 	if v1f == nil {
-		return nil
+		return nil, nil
 	}
 
 	frameTime := v1f.GetTimestamp().AsTime()
 	// Clamp to zero if frame predates baseTime — prevents uint32 wrap from
 	// a negative Sub() result.
 	diffMs := max(frameTime.Sub(baseTime).Milliseconds(), 0)
-	offsetMs := uint32(diffMs) //nolint:gosec // duration fits uint32 for game sessions
+	// A positive offset past the uint32 field's range cannot be represented.
+	// Erroring rather than wrapping makes the loss loud (R5); the frame is not
+	// mapped because any offset we wrote would be silently wrong.
+	if diffMs > math.MaxUint32 {
+		return nil, fmt.Errorf("mapFrame: frame %d timestamp offset %d ms exceeds uint32 max (~49.7 days): %w",
+			v1f.GetFrameIndex(), diffMs, ErrTimestampOffsetOverflow)
+	}
+	offsetMs := uint32(diffMs)
 
 	frame := &capturepb.Frame{
 		FrameIndex:        v1f.GetFrameIndex(),
@@ -487,7 +516,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 
 	session := v1f.GetSession()
 	if session == nil {
-		return frame
+		return frame, nil
 	}
 
 	ea := &capturepb.EchoArenaFrame{
@@ -568,7 +597,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	frame.Payload = &capturepb.Frame_EchoArena{EchoArena: ea}
-	return frame
+	return frame, nil
 }
 
 // mapPauseDetail carries the PauseState sub-fields the per-frame enum cannot

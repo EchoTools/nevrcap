@@ -899,6 +899,68 @@ channel when Stop has been called.
 
 ---
 
+## FIXED — TIMESTAMP-001 (release-audit R5): a timestamp offset past the v2 uint32 range wrapped silently
+
+**Severity:** medium (silent data corruption). A frame whose timestamp is more
+than `math.MaxUint32` ms after the capture's `created_at` (~49.7 days) mapped to
+a wrong-but-valid offset, producing a corrupt tape with no error.
+
+**What:** `mapFrame` clamped a negative delta to 0 but cast a positive delta to
+`uint32` without a range check. Measured: a 2100-era timestamp against a
+Unix-epoch baseTime became an unrelated 8.69-day offset
+(`source_offset_ms=4102444800000` → `mapped_offset_ms=751032320`).
+
+**Where:** `pkg/conversion/mapping.go` `mapFrame` — `diffMs :=
+max(frameTime.Sub(baseTime).Milliseconds(), 0)` then `offsetMs := uint32(diffMs)`
+with no `diffMs > math.MaxUint32` guard. The reverse path
+(`reconstruct.go:224`) widens uint32→int64 and is unaffected.
+
+**Evidence (RED before the fix):** `TestMapFrame_TimestampOffsetOverflowErrors`
+— an offset of MaxUint32+1 ms returned `err=<nil>` (wrapped); 
+`TestConvertTimestampOffsetOverflowSurfaces` — the conversion pipeline reported
+success (`got <nil>`) while writing the wrapped offset.
+
+**Fix:** `mapFrame`, `FrameMapper.MapFrame` and the package-level `MapFrame`
+now return `(*capturepb.Frame, error)`. `mapFrame` validates
+`diffMs <= math.MaxUint32` and returns an error wrapping the sentinel
+`ErrTimestampOffsetOverflow` on overflow. The conversion path
+(`processAndWriteFrame` → `convertFromV1Reader` → `ConvertFile` → `tapedeck
+convert`) propagates it, so a capture that cannot be represented aborts with a
+descriptive error instead of writing wrapped offsets.
+
+**Plumbing note:** this deliberately breaks VOCAB-001's "the exported `MapFrame`
+keeps its signature" carve-out. That carve-out was for soft vocabulary loss
+(report-and-continue so a corpus pass is not aborted); an offset past the
+representable range is a hard failure — the frame cannot be stored at all — so
+every path that computes the offset now errors rather than wraps.
+
+**Status: FIXED.** Pinned by `TestMapFrame_TimestampOffsetAtMaxUint32`
+(MaxUint32 passes), `TestMapFrame_TimestampOffsetOverflowErrors` (MaxUint32+1
+errors), `TestConvertTimestampOffsetOverflowSurfaces` (the conversion boundary
+returns the error, so the loss is loud) (`pkg/conversion/timestamp_overflow_test.go`).
+`TestGoldenConvert` is byte-identical — the committed sample's offsets are far
+below the limit.
+
+---
+
+## OPEN — GO-FIX-001: `go fix ./...` is not clean at HEAD
+
+**What:** `go fix ./...` (Go 1.26 modernizers) rewrites two files this worktree
+did not touch, so the "go fix zero changes" gate cannot hold on a clean checkout:
+- `pkg/events/stop_race_test.go` — `wg.Add(1)` + `go func`/`defer wg.Done()` →
+  `wg.Go(...)`
+- `pkg/codec/engine_float_test.go` — `bytes.Split` range → `bytes.SplitSeq`
+
+**Measured:** `git checkout HEAD --` both files, `go fix ./...`, `git status`
+shows exactly those two files modified again. Not caused by TIMESTAMP-001 (the
+fix's files are go-fix-clean).
+
+**Fix direction:** a `style`/`refactor` commit running `go fix ./...` and
+committing the two rewrites. Until then the `go fix` cleanliness gate is red at
+HEAD for unrelated files.
+
+---
+
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
 
 Every item below needs a **test** and a **BAC** it traces to. No feature ships
