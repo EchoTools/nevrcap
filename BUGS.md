@@ -897,7 +897,7 @@ is observability, not back-pressure.
 **Status: FIXED.** Pinned by `TestProcessor_DroppedFramesReceipt`,
 `TestProcessor_DroppedEventsReceipt`, and
 `TestProcessor_DropCountersZeroForNonCountingDetector`
-(`pkg/processing/frame_processor_test.go`), in commit `TBD`.
+(`pkg/processing/frame_processor_test.go`).
 
 ---
 
