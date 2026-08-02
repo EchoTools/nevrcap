@@ -41,13 +41,11 @@ func TestSyncDetector_StopDuringProcessFrameDoesNotPanic(t *testing.T) {
 		det.ProcessFrame(stopRaceFrame(0))
 
 		var wg sync.WaitGroup
-		wg.Add(1)
 
 		// ProcessFrame in a goroutine — this is the realistic misuse: a library
 		// caller processing frames from one goroutine while tearing down from
 		// another.
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			// Recover from a possible panic so the test reports it cleanly.
 			defer func() {
 				if r := recover(); r != nil {
@@ -55,7 +53,7 @@ func TestSyncDetector_StopDuringProcessFrameDoesNotPanic(t *testing.T) {
 				}
 			}()
 			det.ProcessFrame(stopRaceFrame(1))
-		}()
+		})
 
 		// Stop from the calling goroutine — no synchronization with ProcessFrame.
 		det.Stop()

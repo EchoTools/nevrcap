@@ -156,7 +156,7 @@ func TestAppendEngineFloatMatchesTheEngine(t *testing.T) {
 	// (9.6339078e-5), so applying it would diverge. appendEngineFloat owns the
 	// engine's exponent spelling directly.
 	var tokens, mismatches int
-	for _, line := range bytes.Split(body, []byte("\n")) {
+	for line := range bytes.SplitSeq(body, []byte("\n")) {
 		fields := bytes.Split(bytes.TrimRight(line, "\r"), []byte("\t"))
 		for _, field := range fields[1:] {
 			for _, tok := range floatLiteralsOutsideStrings(field) {
