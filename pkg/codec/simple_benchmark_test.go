@@ -42,7 +42,7 @@ func BenchmarkFixProtojsonUint64Encoding(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = FixProtojsonUint64Encoding(input)
 	}
 }

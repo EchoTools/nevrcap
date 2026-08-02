@@ -1278,3 +1278,80 @@ memory pressure / OOM.
 **Fix direction:** cap the eager allocation (e.g. allocate `min(length, sane
 cap)` and grow, or bound `length` against remaining input) so buffer size is
 tied to bytes actually present, not to an attacker's claimed length.
+
+---
+
+## FIXED — STRINGNUM-001 (GH #24): `fixStringEncodedNumber` is O(n²) — reallocates the whole buffer per match
+
+**Severity:** medium (perf). `fixStringEncodedNumber` (`pkg/codec/echoreplay.go:338`)
+allocated a brand-new `[]byte` and copied the entire remaining buffer for every
+valid match (`make([]byte, newLen)` then prefix + digits + suffix, per match).
+With one `userid` per player per frame — hundreds per frame — total copying and
+allocation were quadratic in buffer length. `FixProtojsonUint64Encoding` sits on
+the reconstruction/write path, so this is a conversion hot path.
+
+**Fix:** single-pass rewrite. Unchanged runs are appended once; each valid match
+removes exactly two bytes (the quote before the digits — the last byte of the
+pattern — and the quote after the digits), so the output is strictly shorter
+than the input. The output slice is allocated lazily on the first valid match
+with `cap(len(data))` and appended to, giving exactly one allocation per pattern
+pass and no reallocation; input with no valid match is returned unchanged (zero
+allocations). The skip/offset semantics are preserved exactly — including the
+offset advance that resumes after `closingQuote+1`, so a pattern whose opening
+quote sits on a prior match's closing quote is not reprocessed, and empty or
+non-quote-terminated runs are skipped.
+
+**Measured (400 matches — 200 `userid` + 200 `rules_changed_at`):**
+- Before: 894,000 ns/op, 3,742,732 B/op, 400 allocs/op.
+- After: 25,711 ns/op, 18,944 B/op, 2 allocs/op.
+- Small benchmark (4 matches): 1,070 → 808 ns/op; 4 → 2 allocs/op.
+- Byte-identical output verified by differential testing against the pre-fix
+  implementation over 200k random inputs plus a crafted adversarial corpus, and
+  by `TestGoldenConvert` passing byte-for-byte.
+
+**Status: FIXED.** Pinned by `TestFixProtojsonUint64EncodingMultipleMatches`,
+`TestFixStringEncodedNumberByteIdentityEdgeCases`,
+`TestFixStringEncodedNumberBoundedAllocations`, and
+`BenchmarkFixProtojsonUint64EncodingManyMatches` (`pkg/codec/stringnum_test.go`).
+
+---
+
+## OPEN — STRINGNUM-002: `FixProtojsonUint64Encoding` can emit a leading-zero number (`"00"` → `00`), which is invalid JSON
+
+**What:** `fixStringEncodedNumber` strips the quotes around any run of digits
+without normalizing them, so the string `"00"` becomes the number `00` — not
+valid JSON (RFC 8259 forbids leading zeros). Input `{"rules_changed_at":"00"}`
+is valid JSON; the output `{"rules_changed_at":00}` is not.
+
+**Evidence:** found by `FuzzFixProtojsonUint64Encoding`
+(`pkg/codec/echoreplay_fuzz_test.go:65`, `json.Valid` invariant). Reproduced
+with `go test -run=FuzzFixProtojsonUint64Encoding`; the stored corpus entry was
+removed so the committed suite stays green. Byte-identical between the legacy
+and single-pass implementations — not a regression of STRINGNUM-001.
+
+**Impact:** none on real data — `protojson` marshals uint64 as canonical decimal
+(never `"00"`), so the string-encoded inputs this fix consumes cannot carry
+leading zeros. Only adversarial/corrupt input reaches this path.
+
+**Fix direction:** optionally reject or normalize leading-zero digit runs in
+`fixStringEncodedNumber`. Not fixed here: changing the bytes would alter output
+for degenerate input, and the byte-compat contract (matching the game engine,
+which also emits canonical numbers) makes it moot. Re-run the fuzz target after
+any change.
+
+---
+
+## OPEN — FIXDEBT-001: `go fix ./...` proposes pre-existing modernizations in two test files
+
+**What:** running `go fix ./...` with a Go 1.26 toolchain rewrites two files that
+this change does not touch: `pkg/codec/engine_float_test.go` (`bytes.Split` →
+`bytes.SplitSeq`) and `pkg/events/stop_race_test.go` (manual `wg.Add(1)` +
+`go func(){ defer wg.Done() }` → `sync.WaitGroup.Go`). CI pins Go 1.25
+(`.github/workflows/*.yml` `go-version: '1.25'`), so the `wg.Go` modernizer does
+not apply there; both files are pre-existing and unrelated to STRINGNUM-001.
+
+**Impact:** none at runtime — pure modernizer debt. The STRINGNUM-001 change
+itself is `go fix`-clean (the only `go fix` diffs are these two files).
+
+**Fix direction:** a dedicated `style:` commit applying the modernizers, out of
+scope for the GH #24 work to keep it a single logical piece.
