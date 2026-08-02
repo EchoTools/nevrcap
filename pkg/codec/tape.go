@@ -36,17 +36,18 @@ const (
 // access would need Zstd seekable frames (future work).
 //
 // Stream contract: exactly one WriteHeader, then any number of WriteFrame
-// calls, then one Close. Each frame must carry the sequential frame_index its
-// stream position implies (0, 1, 2, ...); WriteFrame rejects any other value
-// so the footer's keyframe/event indexes stay consistent with the frames on
-// the wire. Any call outside this order (a frame before the header, a
-// duplicate header, or any call after Close) returns ErrWriteOrder, and a
-// nil or payload-less frame is rejected rather than written.
+// calls, then one Close. Any call outside this order (a frame before the
+// header, a duplicate header, or any call after Close) returns ErrWriteOrder,
+// and a nil or payload-less frame is rejected rather than written.
+//
+// The footer's keyframe and event indexes record each frame's own frame_index
+// (the value serialized on the wire), so the indexes are always consistent with
+// the frames regardless of whether the caller's indices are sequential.
+// frame_count in the footer is the number of frames written, not the last
+// index.
 //
 // Writer is safe for concurrent use: WriteHeader, WriteFrame, and Close are
-// serialized by an internal mutex. Because frame_index is validated against
-// the stream position, concurrent producers must coordinate index assignment
-// — in practice the caller drives one sequential stream.
+// serialized by an internal mutex.
 type Writer struct {
 	mu         sync.Mutex
 	file       *os.File
@@ -130,9 +131,10 @@ func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
 }
 
 // WriteFrame writes a frame envelope and updates indexes. The frame must
-// arrive after WriteHeader, carry a game payload, and declare the sequential
-// frame_index its stream position implies; anything else is rejected so the
-// footer indexes can never disagree with the frames on the wire.
+// arrive after WriteHeader and carry a game payload. The footer's keyframe and
+// event indexes record the frame's own frame_index, so they stay consistent
+// with the wire even for legacy captures whose stored indices are not
+// sequential.
 func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -146,11 +148,8 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	if frame.Payload == nil {
 		return fmt.Errorf("tape: WriteFrame: %w", ErrEmptyFrame)
 	}
-	if got := frame.GetFrameIndex(); got != w.frameCount {
-		return fmt.Errorf("tape: WriteFrame: frame_index %d: %w (expected %d)", got, ErrFrameIndexOutOfOrder, w.frameCount)
-	}
 
-	frameIndex := w.frameCount
+	frameIndex := frame.GetFrameIndex()
 
 	// Track keyframe offset before writing.
 	if frameIndex%w.keyframeInterval == 0 {

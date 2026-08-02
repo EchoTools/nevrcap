@@ -81,7 +81,7 @@ var (
 	// ErrWriteOrder is returned by the Writer when calls arrive out of the
 	// stream contract: a frame before the header, a duplicate header, a call
 	// after Close, or Close before any header. The format is exactly one
-	// header, then sequential frames, then one footer.
+	// header, then frames, then one footer.
 	ErrWriteOrder = errors.New("writer call out of order; exactly one header, then frames, then one Close")
 
 	// ErrNilFrame is returned by WriteFrame when passed a nil *Frame.
@@ -92,12 +92,6 @@ var (
 	// payload-less frame every consumer reads as absent data — so it is refused
 	// rather than written.
 	ErrEmptyFrame = errors.New("frame has no payload; a tape frame must carry game state")
-
-	// ErrFrameIndexOutOfOrder is returned by WriteFrame when the caller-supplied
-	// frame_index is not the next expected sequential value (0, 1, 2, ...). The
-	// footer's keyframe and event indexes are built from the same sequence, so a
-	// non-sequential frame would make them disagree with the frames on the wire.
-	ErrFrameIndexOutOfOrder = errors.New("frame_index is not sequential")
 )
 
 // Limits bounds the resources a reader will spend on a single capture, so a

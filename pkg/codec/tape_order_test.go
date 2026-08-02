@@ -154,31 +154,68 @@ func TestWriter_EmptyPayloadFrame_Errors(t *testing.T) {
 	}
 }
 
-// TestWriter_NonSequentialFrameIndex_Errors pins R2 item 5 — the core of the
-// finding. The footer's keyframe/event indexes are built from the writer's
-// stream position, so a caller-supplied frame_index that is not the next
-// sequential value would make those indexes disagree with the frames on the
-// wire. The Writer rejects any frame whose index skips ahead or repeats.
-func TestWriter_NonSequentialFrameIndex_Errors(t *testing.T) {
+// TestWriter_NonSequentialFrameIndex_Accepted_FooterMatchesWire pins R2's
+// consistency goal the way legacy input actually demands it. A legacy nevrcap
+// can carry gapped frame_index values (its first stored frame is not
+// necessarily 0), so the Writer must NOT reject non-sequential indices: it
+// records each frame's own frame_index in the footer indexes, keeping them
+// consistent with the wire, and keeps frame_count as the count of frames
+// written.
+func TestWriter_NonSequentialFrameIndex_Accepted_FooterMatchesWire(t *testing.T) {
 	t.Parallel()
 
-	w, err := NewWriter(filepath.Join(t.TempDir(), "order.tape"))
+	path := filepath.Join(t.TempDir(), "gapped.tape")
+	w, err := NewWriterWithKeyframeInterval(path, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer w.Close() //nolint:errcheck // test teardown
 	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := w.WriteFrame(testFrame(0)); err != nil {
-		t.Fatalf("first frame: %v", err)
+	// Gapped indices, skipping 1 — accepted, not rejected.
+	for _, idx := range []uint32{0, 2} {
+		if err := w.WriteFrame(testFrame(idx)); err != nil {
+			t.Fatalf("frame %d: %v", idx, err)
+		}
 	}
-	if err := w.WriteFrame(testFrame(2)); !errors.Is(err, ErrFrameIndexOutOfOrder) {
-		t.Fatalf("skipped index: want ErrFrameIndexOutOfOrder, got %v", err)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
-	if err := w.WriteFrame(testFrame(0)); !errors.Is(err, ErrFrameIndexOutOfOrder) {
-		t.Fatalf("repeated index: want ErrFrameIndexOutOfOrder, got %v", err)
+
+	r, err := NewReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close() //nolint:errcheck // test teardown
+	if _, err := r.ReadHeader(); err != nil {
+		t.Fatal(err)
+	}
+	wire := make(map[uint32]struct{}, 2)
+	for {
+		f, err := r.ReadFrame()
+		if err != nil {
+			break
+		}
+		wire[f.GetFrameIndex()] = struct{}{}
+	}
+	footer, err := r.ReadFooter()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := footer.GetFrameCount(); got != 2 {
+		t.Fatalf("footer.frame_count = %d, want 2 (the count of frames, not the last index)", got)
+	}
+	// With keyframe interval 2, indices 0 and 2 are both keyframes; each footer
+	// entry must reference a frame index that is actually on the wire.
+	if got := len(footer.GetKeyframeIndex()); got != 2 {
+		t.Fatalf("keyframe index has %d entries, want 2 (frames 0 and 2)", got)
+	}
+	for _, kf := range footer.GetKeyframeIndex() {
+		if _, ok := wire[kf.GetFrameIndex()]; !ok {
+			t.Errorf("keyframe index %d not present on the wire", kf.GetFrameIndex())
+		}
 	}
 }
 

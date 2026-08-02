@@ -18,10 +18,10 @@ import (
 // the stream position, so only one producer can drive the valid stream. The
 // test therefore runs a single producer goroutine writing the sequential
 // stream while N hammer goroutines concurrently attempt invalid calls
-// (duplicate WriteHeader, out-of-order WriteFrame, nil frame). Those must all
+// (duplicate WriteHeader, payload-less frame, nil frame). Those must all
 // return clean errors without corrupting the stream. Under `-race`, removing
-// the mutex would be detected on frameCount (written by the producer, read by
-// the out-of-order hammers) and on the encoder.
+// the mutex would be detected on writer state (read by every hammer, written
+// by the producer) and on the encoder.
 func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 	t.Parallel()
 
@@ -51,14 +51,9 @@ func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 				// Duplicate header: always out of order.
 				errs[idx] = w.WriteHeader(&capturepb.CaptureHeader{})
 			case 1:
-				// Out-of-order frame_index: never matches the producer's
-				// stream position, and never matches another hammer's index.
-				errs[idx] = w.WriteFrame(&capturepb.Frame{
-					FrameIndex: uint32(idx + 1000),
-					Payload: &capturepb.Frame_EchoArena{
-						EchoArena: &capturepb.EchoArenaFrame{},
-					},
-				})
+				// Payload-less frame: always invalid (a tape frame must carry
+				// game state), rejected without mutating the stream.
+				errs[idx] = w.WriteFrame(&capturepb.Frame{FrameIndex: uint32(idx + 1000)})
 			case 2:
 				// Nil frame: rejected, no state mutated.
 				errs[idx] = w.WriteFrame(nil)
@@ -119,7 +114,7 @@ func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 		t.Errorf("read %d frames, want %d", read, producerFrames)
 	}
 
-	if !errors.Is(errs[0], ErrWriteOrder) || !errors.Is(errs[1], ErrFrameIndexOutOfOrder) || !errors.Is(errs[2], ErrNilFrame) {
+	if !errors.Is(errs[0], ErrWriteOrder) || !errors.Is(errs[1], ErrEmptyFrame) || !errors.Is(errs[2], ErrNilFrame) {
 		t.Errorf("hammer errors did not match the expected sentinels: %v", errs)
 	}
 }
