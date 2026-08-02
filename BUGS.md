@@ -203,8 +203,19 @@ when any unmapped value is seen. It currently exits 0 and reports, matching
 
 ## OPEN — CANONICAL-001: `last_throw` is not wired (§2 only; §1b and §3 are closed)
 
-**Severity:** one remaining component blocks treating `.tape` as a byte-faithful
-replacement. Structure IS preserved; `last_throw` is the last field-level gap.
+**Severity:** known limitation, not a fixable defect. `last_throw` is
+**local-player-only** in the engine's `/session` endpoint — each client reports
+only its own last throw, so a Spark recording (one client's perspective) has
+throw data for exactly one player. Reconstructing it from `DiscThrown` events
+would fabricate data for every other player. The field stays absent until the
+local-player identity problem is solved upstream.
+
+Everything else in CANONICAL-001 is FIXED: float spelling (§1), orientation
+basis orthonormalization (§1b), bones payload representation (§3). The only
+remaining field-level gap is `last_throw`, and it is by design, not omission.
+
+**Status on the committed sample:** structure identical — 1023 records, no key
+added, none dropped.
 
 **How it is measured:** `pkg/conversion/canonical_test.go`. The comparison is
 against the CANONICAL form of the source, normalising out recorder drift so only
@@ -728,6 +739,17 @@ also stale: `ReconstructFile` (`pkg/conversion/reconstruct.go:478`) and
 The superset work in the DIRECTIVE below landed the proto side; what remains is
 read-side plumbing, tracked as RECONSTRUCT-001, not schema loss.
 
+**FINAL STATUS (2026-08-02):** RECONSTRUCT-001 is FIXED, the reconstructor
+round-trips every field the v2 format carries, and the DIRECTIVE's "Still OPEN"
+items are all resolved except `last_throw` / `last_score` (CANONICAL-001 §2,
+tracked separately as a known limitation — local-player-only in source). v2 is
+a working round-trip format for the recoverable lane (kinematics + identity +
+loadout + grab + disc + scores). FIDELITY-001's original claim ("no
+v2→echoreplay path") is incorrect — the path exists and `TestRoundTripBAC`
+exercises it on every commit.
+
+This entry is kept OPEN as a design reference, not an active bug.
+
 ---
 
 ## FIXED — RECONSTRUCT-001: `client_name` and payload state written to v2, never read back
@@ -960,6 +982,22 @@ not-round-tripping; Andrew's call on which matter):**
 - `pause` sub-state (`paused_state` narrowing, `unpaused_team`, timers).
 - per-frame `team.stats` / `player.stats`; empty-team structural case.
 - still: fix GH #18 (silent event loss); then v1 deprecation + v1→v2 importer.
+
+**Status as of 2026-08-02 — the DIRECTIVE is effectively complete.** Every
+"Still OPEN" item except `last_throw` / `last_score` has been shipped and tested:
+
+| Was OPEN | Resolution |
+|---|---|
+| `rules_changed_by` / `rules_changed_at` | FIXED — header fields, `TestReconstructPreservesSupersetFields` |
+| `game_clock_display` | FIXED — CLOCK-001, derived from `game_clock` |
+| `blue/orange_round_score` | FIXED — `TestReconstructPreservesInitialRoundScores` |
+| `team_name` | FIXED — header field, round-trips |
+| `jersey_number` / `level` | FIXED — ROSTER-001, `PlayerInfoUpdated` |
+| `pause` sub-state | FIXED — full `PauseState` round-trips |
+| `team.stats` / `player.stats` | FIXED — STATS-001, event + per-frame |
+| GH #18 (silent event loss) | FIXED — EVENTDROP-001, drop counters surfaced |
+| **`last_throw` / `last_score`** | **REMAINING** — CANONICAL-001 §2; `last_throw` is local-player-only in the source, so wiring it without solving identity would fabricate data. Tracked as a known limitation. |
+| v1 deprecation + v1→v2 importer | Deferred — v1 codec still used as the intermediate layer in conversion. Not blocking the v4.0.0 tag. |
 
 ---
 
