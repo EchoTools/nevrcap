@@ -1,6 +1,6 @@
 // Hostile-input resource guards for the tape decoders.
 //
-// BUGS.md SEC-001 (decompression bomb) and SEC-002 (allocate-before-verify)
+// SEC-001 (decompression bomb) and SEC-002 (allocate-before-verify)
 // document the attacks these guards close. The principle is audit-not-restrict:
 // every limit is documented, configurable, and disableable, so a legitimate
 // giant capture stays readable by explicit opt-in — but a crafted few-KB file

@@ -16,7 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// BUGS.md SEC-001 — decompression bomb.
+// SEC-001 — decompression bomb.
 //
 // BAC: a tiny (few-KB) capture file whose decompressed stream contains a huge
 // number of minimal valid frames must NOT be readable to exhaustion by

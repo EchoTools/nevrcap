@@ -268,8 +268,8 @@ func TestReconstructPreservesSupersetFields(t *testing.T) {
 	})
 }
 
-// TestReconstructPreservesInitialRoundScores covers the frame-0 seed bug named
-// in BUGS.md: ScoreboardSensor.AddFrame records the first frame's scores and
+// TestReconstructPreservesInitialRoundScores covers the frame-0 seed bug:
+// ScoreboardSensor.AddFrame records the first frame's scores and
 // returns nil (sensor_scoreboard.go:36-43), so a capture that starts mid-match
 // with a non-zero round score has no ScoreboardUpdated to replay and
 // reconstructs as 0-0 until the next goal.

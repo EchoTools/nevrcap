@@ -1,6 +1,6 @@
 ---
 name: tape-work
-description: Execution harness for any implementation, investigation, or format task in the tape repo (Go 1.26 codec library + tapedeck CLI for .tape/.echoreplay telemetry captures). Walks the repo's discipline gate by gate — GO-addendum pre-read, orient on the format reference, measure-before-assert against protos and real captures, decision gates on the fidelity invariants, spec-before-code, `just` as the closed-loop gate, and BUGS.md ledger + commit hygiene — with a verification action and an abort condition at every gate. Invoke BEFORE starting any task in this repository.
+description: Execution harness for any implementation, investigation, or format task in the tape repo (Go 1.26 codec library + tapedeck CLI for .tape/.echoreplay telemetry captures). Walks the repo's discipline gate by gate — GO-addendum pre-read, orient on the format reference, measure-before-assert against protos and real captures, decision gates on the fidelity invariants, spec-before-code, `just` as the closed-loop gate, and the GitHub issue tracker for bugs — with a verification action and an abort condition at every gate. Invoke BEFORE starting any task in this repository.
 ---
 
 # /tape-work — the execution harness for this repository
@@ -121,8 +121,7 @@ most expensive artifact an agent can hand back.
   `newBudgetReader`.
 - **Proto changes are not made here.** `telemetry/v2` lives in `nevr-proto` and
   ships via the BSR. Never edit generated Go.
-- **`main`'s `go.mod` never carries the dev-local `replace`** (BUGS.md
-  RELEASE-001).
+- **`main`'s `go.mod` never carries the dev-local `replace`** (RELEASE-001).
 - **File extensions:** `.tape` is canonical; `.nevrcap` is accepted legacy input
   and is read-only (the v1 writer was deliberately deleted in `1e54c6e`).
 
@@ -222,7 +221,7 @@ Before declaring done, produce the unit report: deliverable + every
 - **CANDIDATE line** — any integrity check you invented ad-hoc: the predicate it
   tests + yes/no on graduation into a persistent checker.
 - **USAGE line** — any `--help`/recipe-doc gap you touched.
-- **DOC-DRIFT line** — any stale claim you found in `format-design.md`, `BUGS.md`,
+- **DOC-DRIFT line** — any stale claim you found in `format-design.md`,
   `SCHEMA-GAPS.md`, `testdata/README.md`, or `docs/browser-integration.md`,
   whether or not you fixed it.
 

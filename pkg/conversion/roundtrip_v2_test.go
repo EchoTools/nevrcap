@@ -414,7 +414,7 @@ func runRoundTrip(t *testing.T, src string) *tally {
 	// Guard the comparison itself: every record physically in the source must
 	// have been surfaced by the reader. Without this the round-trip grades the
 	// survivors — a capture that parses to zero frames yields orig=0, recon=0,
-	// zero mismatches, PASS (BUGS.md READLOSS-001).
+	// zero mismatches, PASS (READLOSS-001).
 	if sourceRecords := countSourceRecords(t, src); len(origFrames) != sourceRecords {
 		t.Fatalf("reader surfaced %d of %d records in %s — the comparison below "+
 			"would only cover the survivors", len(origFrames), sourceRecords, src)
@@ -484,7 +484,7 @@ func readEchoReplay(t *testing.T, path string) []*telemetryv1.LobbySessionStateF
 //
 // The round-trip compares parsed originals against parsed reconstructions
 // through the same reader, so anything that reader drops is missing from both
-// sides and scores as a match (BUGS.md READLOSS-001). Comparing frames against
+// sides and scores as a match (READLOSS-001). Comparing frames against
 // this number is what makes reader-level loss visible: it also catches loss the
 // skip counter cannot see, such as a second zip member that initScanner never
 // opens.

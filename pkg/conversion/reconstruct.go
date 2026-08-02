@@ -265,7 +265,8 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 
 	// Round scores survive only as event samples; carry the last
 	// ScoreboardUpdated forward (any value before the first sample is not
-	// recoverable — see BUGS.md, the score sensor emits no seed at frame 0).
+	// recoverable — the scoreboard sensor seeds the first frame's scores, so
+	// pre-first-change round scores round-trip).
 	score := rc.session.ScoreAt(i)
 	s.BlueRoundScore = score.BlueRoundScore
 	s.OrangeRoundScore = score.OrangeRoundScore

@@ -13,7 +13,7 @@ import (
 //
 // Empty as of 2.1.0: EventType gained EVENT_TYPE_LOADOUT_CHANGED,
 // EVENT_TYPE_GRAB_CHANGED and EVENT_TYPE_PLAYER_STATS_UPDATED, closing
-// BUGS.md INDEX-001. Every variant is now mappable — keep it that way.
+// INDEX-001. Every variant is now mappable — keep it that way.
 var eventTypeGap = map[string]bool{}
 
 // TestClassifyEventCoversEveryEchoEventVariant walks the EchoEvent oneof from
@@ -46,7 +46,7 @@ func TestClassifyEventCoversEveryEchoEventVariant(t *testing.T) {
 			switch {
 			case eventTypeGap[name] && !unspecified:
 				t.Errorf("%s now classifies as %v — EventType gained a value for it; "+
-					"remove it from eventTypeGap and drop the BUGS.md INDEX-001 entry", name, got)
+					"remove it from eventTypeGap and drop the INDEX-001 entry", name, got)
 			case !eventTypeGap[name] && unspecified:
 				t.Errorf("%s classifies as EVENT_TYPE_UNSPECIFIED, so Writer.WriteFrame "+
 					"(tape.go:96) drops it from the footer event index; add a case to classifyEvent", name)

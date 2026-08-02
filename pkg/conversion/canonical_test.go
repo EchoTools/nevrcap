@@ -181,14 +181,13 @@ func compareStructure(t *testing.T, canonical, viaTape []byte) {
 // TestCanonicalRoundTripStructure is the assertion that holds today: the
 // canonical round-trip preserves every record and every key.
 //
-// Full BYTE identity does not hold yet, for two reasons, both tracked as
-// BUGS.md CANONICAL-001 and reported (not asserted) by
+// Full BYTE identity does not hold yet, for one reason, tracked as gh #35
+// (CANONICAL-001) and reported (not asserted) by
 // TestCanonicalRoundTripByteDelta below:
 //
-//  1. last_throw / last_score are not wired through v2 at all.
-//  2. The engine spells floats with %.8g, trailing zeros trimmed to one decimal
-//     place; protojson spells them with shortest-round-trip float64. Every
-//     engine float is exactly a float32, so this is formatting, not lost data.
+//  1. last_throw is not wired through v2 (local-player-only in the source).
+//     last_score is wired (LASTSCORE-001) and float spelling matches the
+//     engine exactly (FixEngineFloatFormatting), so those are not gaps.
 func TestCanonicalRoundTripStructure(t *testing.T) {
 	t.Parallel()
 
@@ -202,8 +201,8 @@ func TestCanonicalRoundTripStructure(t *testing.T) {
 }
 
 // TestCanonicalRoundTripByteDelta reports how far the round-trip is from byte
-// identity. It does not fail: it is the measurement that tells you when
-// CANONICAL-001 is closed, at which point it should become an assertion.
+// identity. It does not fail: it is the measurement that tells you when gh #35
+// (CANONICAL-001) is closed, at which point it should become an assertion.
 func TestCanonicalRoundTripByteDelta(t *testing.T) {
 	t.Parallel()
 
@@ -214,13 +213,13 @@ func TestCanonicalRoundTripByteDelta(t *testing.T) {
 
 	canonical, viaTape := canonicalRoundTrip(t, src)
 	if bytes.Equal(canonical, viaTape) {
-		t.Log("CANONICAL BYTE-IDENTICAL — close BUGS.md CANONICAL-001 and make " +
+		t.Log("CANONICAL BYTE-IDENTICAL — close gh #35 and make " +
 			"TestCanonicalRoundTripStructure assert bytes.Equal instead")
 		return
 	}
 
 	offset, lineA, lineB := firstDifference(canonical, viaTape)
-	t.Logf("not yet byte-identical (BUGS.md CANONICAL-001)\n"+
+	t.Logf("not yet byte-identical (gh #35)\n"+
 		"  canonical: %d bytes\n  via tape : %d bytes\n"+
 		"  first difference at byte %d\n    canonical: %s\n    via tape : %s",
 		len(canonical), len(viaTape), offset, lineA, lineB)
@@ -246,7 +245,7 @@ func TestCanonicalRoundTripAudit(t *testing.T) {
 	}
 
 	offset, lineA, lineB := firstDifference(canonical, viaTape)
-	t.Logf("structure identical; not yet byte-identical for %s (BUGS.md CANONICAL-001)\n"+
+	t.Logf("structure identical; not yet byte-identical for %s (gh #35)\n"+
 		"  canonical: %d bytes\n  via tape : %d bytes\n"+
 		"  first difference at byte %d\n    canonical: %s\n    via tape : %s",
 		src, len(canonical), len(viaTape), offset, lineA, lineB)

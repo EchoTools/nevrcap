@@ -9,7 +9,7 @@ import (
 	"github.com/echotools/tape/v4/pkg/codec"
 )
 
-// BUGS.md SEC-001 — decompression bomb, accumulation sites.
+// SEC-001 — decompression bomb, accumulation sites.
 //
 // BAC: the frame-accumulating entry points (OpenSession,
 // NewSessionReconstructor) must respect the reader's configured budgets and

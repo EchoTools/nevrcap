@@ -414,8 +414,7 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 		// reports jersey/level as 0 for the first frames after a join, so the
 		// value PlayerJoined captured is not necessarily final. Seeded on first
 		// sighting (the join value is already on PlayerJoined, so the seed
-		// emits nothing); afterwards any change becomes a delta. See BUGS.md
-		// ROSTER-001.
+		// emits nothing); afterwards any change becomes a delta. See ROSTER-001.
 		ri := rosterInfo{jersey: e.tm.GetJerseyNumber(), level: e.tm.GetLevel()}
 		if prev, ok := m.prevInfo[e.slot]; !ok {
 			m.prevInfo[e.slot] = ri

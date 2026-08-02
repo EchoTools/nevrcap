@@ -24,7 +24,7 @@ func TestScoreboardSensor_DetectsScoreChange(t *testing.T) {
 	}
 	// The first frame emits a seed. Without it the opening scoreboard is never
 	// recorded, so a capture starting mid-match reconstructs as 0-0 until the
-	// next goal (BUGS.md DIRECTIVE, "the score sensor seeds frame 0 silently").
+	// next goal (DIRECTIVE, "the score sensor seeds frame 0 silently").
 	event := sensor.AddFrame(frame1)
 	if event == nil {
 		t.Fatal("expected a seed ScoreboardUpdated on the first frame")

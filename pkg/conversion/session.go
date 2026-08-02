@@ -144,7 +144,7 @@ func (s *Session) GrabAt(frame int) map[int32]Grab {
 //
 // These are the engine's own counters, which carry a pre-capture baseline and
 // are not the same quantity as tape's PlayerGoal/PlayerSave/... sensor events —
-// see BUGS.md STATS-001. possession_time is not here: it is per-frame on
+// see STATS-001. possession_time is not here: it is per-frame on
 // PlayerState.
 func (s *Session) StatsAt(frame int) map[int32]*capturepb.PlayerStatsUpdated {
 	if frame < 0 || frame >= len(s.stats) {
