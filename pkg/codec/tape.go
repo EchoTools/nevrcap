@@ -35,20 +35,43 @@ const (
 // byte-offset seeking requires decompressing from the start; true random
 // access would need Zstd seekable frames (future work).
 //
+// Stream contract: exactly one WriteHeader, then any number of WriteFrame
+// calls, then one Close. Each frame must carry the sequential frame_index its
+// stream position implies (0, 1, 2, ...); WriteFrame rejects any other value
+// so the footer's keyframe/event indexes stay consistent with the frames on
+// the wire. Any call outside this order (a frame before the header, a
+// duplicate header, or any call after Close) returns ErrWriteOrder, and a
+// nil or payload-less frame is rejected rather than written.
+//
 // Writer is safe for concurrent use: WriteHeader, WriteFrame, and Close are
-// serialized by an internal mutex.
+// serialized by an internal mutex. Because frame_index is validated against
+// the stream position, concurrent producers must coordinate index assignment
+// — in practice the caller drives one sequential stream.
 type Writer struct {
 	mu         sync.Mutex
 	file       *os.File
 	encoder    *zstd.Encoder
 	eventIndex map[capturepb.EventType][]uint32
 	keyframes  []*capturepb.KeyframeEntry
+	// state tracks the stream contract (see writerState).
+	state writerState
 	// bytesWritten tracks uncompressed bytes for footer_offset.
 	bytesWritten     uint64
 	frameCount       uint32
 	lastTimestampMs  uint32
 	keyframeInterval uint32
 }
+
+// writerState tracks where the Writer sits in the stream contract: a new
+// writer is writerStateNew until WriteHeader succeeds, then
+// writerStateHeaderWritten, and finally writerStateClosed after Close.
+type writerState uint8
+
+const (
+	writerStateNew writerState = iota
+	writerStateHeaderWritten
+	writerStateClosed
+)
 
 // NewWriter creates a writer for tape files.
 func NewWriter(filename string) (*Writer, error) {
@@ -83,21 +106,49 @@ func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*W
 	}, nil
 }
 
-// WriteHeader writes the capture header as the first envelope.
+// WriteHeader writes the capture header as the first envelope. It is an error
+// to call it twice, to call it after Close, or to call WriteFrame before it.
 func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	if w.state == writerStateClosed {
+		return fmt.Errorf("tape: WriteHeader: %w (writer already closed)", ErrWriteOrder)
+	}
+	if w.state == writerStateHeaderWritten {
+		return fmt.Errorf("tape: WriteHeader: %w (header already written)", ErrWriteOrder)
+	}
+
 	env := &capturepb.Envelope{
 		Message: &capturepb.Envelope_Header{Header: header},
 	}
-	return w.writeEnvelope(env)
+	if err := w.writeEnvelope(env); err != nil {
+		return err
+	}
+	w.state = writerStateHeaderWritten
+	return nil
 }
 
-// WriteFrame writes a frame envelope and updates indexes.
+// WriteFrame writes a frame envelope and updates indexes. The frame must
+// arrive after WriteHeader, carry a game payload, and declare the sequential
+// frame_index its stream position implies; anything else is rejected so the
+// footer indexes can never disagree with the frames on the wire.
 func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.state != writerStateHeaderWritten {
+		return fmt.Errorf("tape: WriteFrame: %w (header not yet written, or writer closed)", ErrWriteOrder)
+	}
+	if frame == nil {
+		return fmt.Errorf("tape: WriteFrame: %w", ErrNilFrame)
+	}
+	if frame.Payload == nil {
+		return fmt.Errorf("tape: WriteFrame: %w", ErrEmptyFrame)
+	}
+	if got := frame.GetFrameIndex(); got != w.frameCount {
+		return fmt.Errorf("tape: WriteFrame: frame_index %d: %w (expected %d)", got, ErrFrameIndexOutOfOrder, w.frameCount)
+	}
 
 	frameIndex := w.frameCount
 
@@ -137,10 +188,18 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	return nil
 }
 
-// Close writes the footer, closes the zstd encoder, and closes the file.
+// Close writes the footer, closes the zstd encoder, and closes the file. It is
+// an error to call it before WriteHeader or more than once.
 func (w *Writer) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+
+	if w.state == writerStateClosed {
+		return fmt.Errorf("tape: Close: %w (writer already closed)", ErrWriteOrder)
+	}
+	if w.state != writerStateHeaderWritten {
+		return fmt.Errorf("tape: Close: %w (no header written)", ErrWriteOrder)
+	}
 
 	// Build event index entries in deterministic order.
 	types := make([]capturepb.EventType, 0, len(w.eventIndex))
@@ -184,6 +243,9 @@ func (w *Writer) Close() error {
 		firstErr = err
 	}
 
+	// Mark the stream closed even when the footer write failed: the encoder and
+	// file are released, so no later call may be accepted.
+	w.state = writerStateClosed
 	return firstErr
 }
 

@@ -37,8 +37,13 @@ func writeBombTape(t *testing.T, path string, n int) int64 {
 	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
 	}
-	frame := &capturepb.Frame{}
-	for range n {
+	for i := range n {
+		frame := &capturepb.Frame{
+			FrameIndex: uint32(i), //nolint:gosec // loop bound is a small test constant
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{},
+			},
+		}
 		if err := w.WriteFrame(frame); err != nil {
 			t.Fatalf("WriteFrame: %v", err)
 		}
@@ -73,7 +78,11 @@ func readAllFrames(t *testing.T, r *Reader) (int, error) {
 
 func TestReader_SEC001_FrameCountBudget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bomb.tape")
-	size := writeBombTape(t, path, 200_000)
+	// Frames now carry a sequential frame_index (R2 writer contract), so a
+	// bomb built through the Writer is slightly less compressible than the
+	// all-identical-frames version; 50k frames still fit under the tiny-file
+	// ceiling while vastly exceeding every budget tested here.
+	size := writeBombTape(t, path, 50_000)
 	if size > 64<<10 {
 		t.Fatalf("bomb tape is %d bytes on disk; expected a tiny (<64 KiB) file", size)
 	}
@@ -95,7 +104,7 @@ func TestReader_SEC001_FrameCountBudget(t *testing.T) {
 
 func TestReader_SEC001_DecodedBytesBudget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "bomb.tape")
-	size := writeBombTape(t, path, 200_000)
+	size := writeBombTape(t, path, 50_000)
 
 	r, err := NewReader(path, WithMaxDecodedBytes(64<<10))
 	if err != nil {

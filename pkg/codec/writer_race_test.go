@@ -1,7 +1,7 @@
 package codec
 
 import (
-	"os"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -11,17 +11,17 @@ import (
 
 // TestWriter_ConcurrentWriteFrameRace proves GH #29: the Writer carries shared
 // mutable state (frameCount, keyframes, eventIndex, bytesWritten, the zstd
-// encoder) with no synchronization. Concurrent WriteFrame calls race on those
-// fields.
+// encoder) that concurrent calls must not race on.
 //
-// The test spawns N goroutines each writing a frame and verifies no panic. Under
-// `-race` the unsynchronized reads and writes to frameCount (line 90, 117),
-// eventIndex (line 105), keyframes (line 94), bytesWritten (line 96, generated
-// writeEnvelope), and lastTimestampMs (line 118) are detected.
-//
-// Currently RED under -race: the Writer has no mutex. The dedicated test is
-// designed to trigger the race detector on every field that is read in one
-// goroutine while another writes it.
+// The writer's stream contract is one header, then sequential frames, then one
+// Close (tape.go, R2 release-audit finding): frame_index is validated against
+// the stream position, so only one producer can drive the valid stream. The
+// test therefore runs a single producer goroutine writing the sequential
+// stream while N hammer goroutines concurrently attempt invalid calls
+// (duplicate WriteHeader, out-of-order WriteFrame, nil frame). Those must all
+// return clean errors without corrupting the stream. Under `-race`, removing
+// the mutex would be detected on frameCount (written by the producer, read by
+// the out-of-order hammers) and on the encoder.
 func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 	t.Parallel()
 
@@ -36,33 +36,57 @@ func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const concurrentWriters = 8
+	const producerFrames = 500
+	const hammers = 8
+
+	errs := make([]error, hammers)
 
 	var wg sync.WaitGroup
-	wg.Add(concurrentWriters)
-
-	errs := make([]error, concurrentWriters)
-	for i := range concurrentWriters {
+	wg.Add(hammers)
+	for i := range hammers {
 		go func(idx int) {
 			defer wg.Done()
-			frame := &capturepb.Frame{
-				FrameIndex:        uint32(idx),
-				TimestampOffsetMs: uint32(idx * 16),
-				Payload: &capturepb.Frame_EchoArena{
-					EchoArena: &capturepb.EchoArenaFrame{
-						GameClock: float32(idx) * 10.0,
+			switch idx % 3 {
+			case 0:
+				// Duplicate header: always out of order.
+				errs[idx] = w.WriteHeader(&capturepb.CaptureHeader{})
+			case 1:
+				// Out-of-order frame_index: never matches the producer's
+				// stream position, and never matches another hammer's index.
+				errs[idx] = w.WriteFrame(&capturepb.Frame{
+					FrameIndex: uint32(idx + 1000),
+					Payload: &capturepb.Frame_EchoArena{
+						EchoArena: &capturepb.EchoArenaFrame{},
 					},
-				},
+				})
+			case 2:
+				// Nil frame: rejected, no state mutated.
+				errs[idx] = w.WriteFrame(nil)
 			}
-			errs[idx] = w.WriteFrame(frame)
 		}(i)
 	}
 
+	// The single producer drives the valid sequential stream while the hammers
+	// contend for the mutex.
+	for i := range uint32(producerFrames) {
+		frame := &capturepb.Frame{
+			FrameIndex:        i,
+			TimestampOffsetMs: i * 16,
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{
+					GameClock: float32(i) * 0.5,
+				},
+			},
+		}
+		if err := w.WriteFrame(frame); err != nil {
+			t.Fatalf("producer WriteFrame %d: %v", i, err)
+		}
+	}
 	wg.Wait()
 
 	for i, err := range errs {
-		if err != nil {
-			t.Errorf("goroutine %d: WriteFrame: %v", i, err)
+		if err == nil {
+			t.Errorf("hammer %d: expected an error, got nil", i)
 		}
 	}
 
@@ -70,8 +94,8 @@ func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The resulting file should at least be readable: a header plus however many
-	// frames survived the race.
+	// The resulting file is a valid sequential stream: a header plus exactly
+	// the producer's frames, each carrying its stream position as frame_index.
 	r, err := NewReader(path)
 	if err != nil {
 		t.Fatal(err)
@@ -82,14 +106,20 @@ func TestWriter_ConcurrentWriteFrameRace(t *testing.T) {
 	}
 	read := 0
 	for {
-		_, err := r.ReadFrame()
+		f, err := r.ReadFrame()
 		if err != nil {
 			break
 		}
+		if f.GetFrameIndex() != uint32(read) {
+			t.Fatalf("frame %d read with frame_index %d", read, f.GetFrameIndex())
+		}
 		read++
 	}
-	if read == 0 {
-		t.Error("read 0 frames from concurrent output — data likely corrupted")
+	if read != producerFrames {
+		t.Errorf("read %d frames, want %d", read, producerFrames)
 	}
-	_ = os.Remove(path)
+
+	if !errors.Is(errs[0], ErrWriteOrder) || !errors.Is(errs[1], ErrFrameIndexOutOfOrder) || !errors.Is(errs[2], ErrNilFrame) {
+		t.Errorf("hammer errors did not match the expected sentinels: %v", errs)
+	}
 }

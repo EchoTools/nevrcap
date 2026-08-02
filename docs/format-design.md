@@ -63,6 +63,13 @@ not signal. Orientation goes 9-float basis → quaternion (exact for a real
 rotation) → `float32` (~1e-7 rad). **There is no meaningful precision loss in
 v1→v2.** The loss is dropped *fields*, never resolution.
 
+**The writer enforces the stream contract.** `Writer` (`pkg/codec/tape.go`)
+rejects any call outside exactly-one-header → sequential frames (each carrying
+the `frame_index` its position implies) → one Close: a frame before the header,
+a duplicate header, a call after Close, a nil or payload-less frame, and a
+non-sequential `frame_index` are all errors (WRITER-ORDER-001). This keeps the
+footer's keyframe/event indexes consistent with the frames on the wire.
+
 ## 3. What v2 keeps vs. drops (measured, not asserted)
 
 Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
