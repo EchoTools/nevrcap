@@ -133,7 +133,8 @@ measured, but the failure mode was total and silent.
 `goalTypeStringMap` translate engine strings to enums; an unrecognized string
 falls through to `*_UNSPECIFIED`, and the reverse map renders `UNSPECIFIED` as
 `""`. So a value the tables do not know converts cleanly and is simply gone.
-This is `docs/fable-audit.md` F-9.
+This is the fable-audit finding F-9 (the audit doc is removed; F-1..F-16
+resolution is recorded under AUDIT-001 below).
 
 **GOALTYPE-001 was an instance of exactly this** — six of eleven goal types were
 missing and were being discarded on real captures. That one is fixed; the class
