@@ -1087,8 +1087,6 @@ returns the error, so the loss is loud) (`pkg/conversion/timestamp_overflow_test
 `TestGoldenConvert` is byte-identical — the committed sample's offsets are far
 below the limit.
 
->>>>>>> house/ws-d-timestamp
-
 ---
 
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
