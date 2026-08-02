@@ -899,6 +899,60 @@ channel when Stop has been called.
 
 ---
 
+## FIXED — START-RACE-001 (R3): public double Start races detector state
+
+**Severity:** high (concurrency safety). `events.New` calls `Start`
+(`pkg/events/events.go:138`), and the public `Start`
+(`pkg/events/events.go:141-144` before the fix) unconditionally started a
+second background `processLoop`. With the loop already running from `New`, a
+library caller's `detector.Start()` spawned a second worker; both then pulled
+frames from the same `inputChan` and mutated the same shared state —
+`writeIndex`, `frameCount`, `frameBuffer` (`addFrameToBuffer`,
+`pkg/events/events.go:331-338`) and the reused `eventBuffer` (events.go:283)
+— with no synchronization.
+
+**Evidence (measured):** `TestAsyncDetector_DoubleStartDoesNotRace`
+(`pkg/events/double_start_test.go`) is RED pre-fix under
+`go test -race -count=1 -run TestAsyncDetector_DoubleStartDoesNotRace
+./pkg/events/`: 38 `WARNING: DATA RACE` reports across the two workers
+(greater than the 11 reported by the release audit for the same pattern).
+
+**Fix:** `Start` is now idempotent via a `sync.Once startOnce` — the loop is
+started at most once, so a redundant `Start` cannot spawn a second worker. It
+is a no-op in synchronous mode (no background loop exists) and a no-op after
+`Stop` (a stopped detector cannot be restarted; guarded by an `atomic.Bool
+stopped` set in `Stop`). `New`'s doc comment now states it auto-starts in async
+mode.
+
+**Status: FIXED.** Pinned by `TestAsyncDetector_DoubleStartDoesNotRace`
+(New-then-Start under `-race`, green) and
+`TestAsyncDetector_StartAfterStopIsNoop` (`pkg/events/double_start_test.go`),
+which pins the documented no-restart-after-Stop semantics.
+
+---
+
+## FIXED — STOP-DEADLOCK-001 (GH #26): Stop() deadlock with slow event consumer — not reproducible in current code
+
+**Severity:** was medium (shutdown hang). GH #26 claimed `processLoop` blocks on
+a full `eventsChan` send while `Stop()` `wg.Wait()`s, deadlocking shutdown. The
+issue's evidence describes an older `stopChan`-based design; in the current code
+the `eventsChan` send in `processLoop` is non-blocking — a full channel takes the
+`default` branch and drops the batch (`pkg/events/events.go:300-303`), so
+`Stop()`'s `wg.Wait()` cannot wait on a blocked send.
+
+**Evidence (measured):** `TestAsyncDetector_StopWithFullUndrainedEventsChanReturns`
+(`pkg/events/stop_full_eventschan_test.go`) feeds more event-producing frames
+than the 10-buffered `eventsChan` can hold, never drains, and requires `Stop()`
+to return within a 2s deadline. Green on the pre-fix code — the non-blocking
+send design already resolved the claimed deadlock.
+
+**Status: FIXED.** Resolved by the existing non-blocking send, confirmed by
+`TestAsyncDetector_StopWithFullUndrainedEventsChanReturns`
+(`pkg/events/stop_full_eventschan_test.go`), committed alongside the START-RACE-001
+fix.
+
+---
+
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
 
 Every item below needs a **test** and a **BAC** it traces to. No feature ships
