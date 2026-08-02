@@ -142,8 +142,9 @@ func vec3ToSlice(v *spatialv1.Vec3) []float64 {
 // per-frame identity, loadout, grab, and team-role come from the replayed
 // Session; the rest is read straight off each EchoArenaFrame.
 //
-// Fields with no v2 home (see SCHEMA-GAPS.md) are NOT fabricated: they are left
-// at their zero value. The round-trip BAC measures and reports them.
+// Fields with no v2 home (the remaining one is last_throw, gh #35) are NOT
+// fabricated: they are left at their zero value. The round-trip BAC measures
+// and reports them.
 type SessionReconstructor struct {
 	header   *capturepb.CaptureHeader
 	ea       *capturepb.EchoArenaHeader

@@ -222,8 +222,8 @@ Before declaring done, produce the unit report: deliverable + every
   tests + yes/no on graduation into a persistent checker.
 - **USAGE line** — any `--help`/recipe-doc gap you touched.
 - **DOC-DRIFT line** — any stale claim you found in `format-design.md`,
-  `SCHEMA-GAPS.md`, `testdata/README.md`, or `docs/browser-integration.md`,
-  whether or not you fixed it.
+  `testdata/README.md`, or `docs/browser-integration.md`, whether or not you
+  fixed it.
 
 **Same failure twice → STOP and hand back a Decision-line.** Do not grind; do not
 fake a green.

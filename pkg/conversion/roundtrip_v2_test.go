@@ -38,7 +38,8 @@ const (
 
 // tally accumulates the round-trip comparison: recoverable mismatches (which
 // must be zero for the gate to pass) and findings (fields v2 does not preserve,
-// measured and reported but not asserted — see SCHEMA-GAPS.md).
+// measured and reported but not asserted — the remaining gap is last_throw,
+// gh #35).
 type tally struct {
 	exactMismatch  map[string]int
 	exactExample   map[string]string
@@ -325,8 +326,8 @@ func compareHandPart(ta *tally, name string, a, b *enginev1.HandPart) {
 }
 
 // measureFindings counts SessionResponse fields that v2 does not preserve. These
-// are reported, never asserted: per SCHEMA-GAPS.md they have no v2 home (or only
-// an event sample), so a non-zero count here is the round-trip's true loss.
+// are reported, never asserted: the remaining one is last_throw (gh #35), so a
+// non-zero count here is the round-trip's true loss.
 func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("rules_changed_by", orig.GetRulesChangedBy() != recon.GetRulesChangedBy(), fmt.Sprintf("orig=%q recon=%q", orig.GetRulesChangedBy(), recon.GetRulesChangedBy()))
 	ta.found("rules_changed_at", orig.GetRulesChangedAt() != recon.GetRulesChangedAt(), fmt.Sprintf("orig=%d recon=%d", orig.GetRulesChangedAt(), recon.GetRulesChangedAt()))
@@ -560,7 +561,7 @@ func report(t *testing.T, src string, ta *tally, strict bool) {
 		t.Logf("FINDINGS: none — this file round-trips losslessly.")
 		return
 	}
-	t.Logf("FINDINGS (fields v2 does not preserve; reported, not asserted — see SCHEMA-GAPS.md):")
+	t.Logf("FINDINGS (fields v2 does not preserve; reported, not asserted — remaining gap: last_throw, gh #35):")
 	for _, f := range sortedKeys(ta.finding) {
 		t.Logf("  %-32s does NOT round-trip in %d frames/teams/players; e.g. %s", f, ta.finding[f], ta.findingExample[f])
 	}
