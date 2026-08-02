@@ -6,6 +6,7 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // TestMapEvent_DiscPossessionChanged_FreeDiscMapsToAbsentOptional proves F-4:
@@ -186,7 +187,9 @@ func TestMapEvent_DiscPossessionChanged_PartialFreeDisc(t *testing.T) {
 func TestMapFrame_DiscHolderFirstPossessorWins(t *testing.T) {
 	t.Parallel()
 
+	baseTime := time.Unix(1_700_000_000, 0)
 	v1f := &telemetryv1.LobbySessionStateFrame{
+		Timestamp: timestamppb.New(time.Unix(1_700_000_001, 0)),
 		Session: &enginev1.SessionResponse{
 			Teams: []*enginev1.Team{
 				{Players: []*enginev1.TeamMember{
@@ -197,7 +200,11 @@ func TestMapFrame_DiscHolderFirstPossessorWins(t *testing.T) {
 		},
 	}
 
-	ea := mapFrame(v1f, time.Time{}, 0, nil).GetEchoArena()
+	mapped, err := mapFrame(v1f, baseTime, 0, nil)
+	if err != nil {
+		t.Fatalf("mapFrame: %v", err)
+	}
+	ea := mapped.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArena frame")
 	}
