@@ -108,17 +108,19 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
   recoverable field — `TestRoundTripBAC`, 0 mismatches on the committed sample
   (max magnitude deviation 5e-6, max orientation 2.4e-3, both inside tolerance).
   The reconstructor **is** built (§1).
-- **What still does not round-trip** (measured; `TestRoundTripBAC` reports these
-  as findings, and the audit lane confirms them on a 12,817-frame capture):
-  - `last_throw` / `last_score` — `ThrowDetails` and `GoalScored` carry every
-    field, but neither is read off the session on the way in nor written on the
-    way out. Note `last_throw` is **local-player-only** in the source; see
-    BUGS.md before wiring it.
-  - per-frame `jersey_number` / `level` — vary per frame (12,572 frames on the
-    audit capture); v2 stores only a join snapshot.
-- **Goal:** make v2 a **superset** so the round-trip is field-identical. What
-  remains is the proto additions for the genuinely-absent fields above, plus
-  read-side plumbing for the ones that already have homes.
+- **What still does not round-trip** (measured; `TestRoundTripBAC` reports this as
+  a finding):
+  - `last_throw` — the engine reports only the **local player's** last throw
+    (local-player-only), so the value in a Spark recording is one player's
+    perspective. v2 carries throws as `DiscThrown` events; reconstructing
+    `last_throw` from them would fabricate data for every other player. See
+    BUGS.md CANONICAL-001 §2 — a known limitation, not a fixable defect, until
+    the local-player identity problem is solved upstream.
+- **Goal:** v2 is a working superset for the recoverable lane (kinematics +
+  identity + loadout + grab + disc + scores). `last_score` (LASTSCORE-001),
+  per-frame `jersey_number` / `level` (ROSTER-001), and the scoreboard seed
+  round-trip; `last_throw` is the one remaining field-level gap and is by
+  design.
 
 ## 5. Identity / roster reconstruction (the per-frame state is anonymized)
 
@@ -134,9 +136,10 @@ from events:
   (`TestRosterRebuildAudit`: 12 joins + 7 leaves recover all 234,482
   player-frames, 0 wrong, 0 missing). This is what GH #34 (`Session.RosterAt`)
   formalizes.
-- **Risk:** GH issue #18 (silent event loss on a full channel). If a join is
-  dropped during conversion, that slot goes anonymous. Did not occur on alienq
-  (19 events total). Fix #18 before relying on roster reconstruction at scale.
+- **Risk (addressed):** GH #18 (silent event loss on a full channel) is FIXED
+  (EVENTDROP-001) — the detector's drop counters are surfaced in `ConvertResult`
+  and warned on by `tapedeck convert`, and conversion drains the events channel
+  every frame, so a join cannot be dropped. Roster reconstruction is safe.
 
 ## 6. The superset plan (proto change in `nevr-proto/telemetry/v2/echo_arena.proto`)
 
@@ -168,8 +171,10 @@ assumed, per §2's rule:
 | `PlayerStatsUpdated` (11 counters) | event | 0.6 changes per 100 frames |
 | `EVENT_TYPE_LOADOUT_CHANGED` / `_GRAB_CHANGED` / `_PLAYER_STATS_UPDATED` | enum | without them those events never reached the footer index |
 
-**Still needed:** nothing for the fields above. What remains is `last_throw` /
-`last_score` plumbing and per-frame `jersey_number` / `level` (§4).
+**Still needed:** nothing for the fields above. What remains is `last_throw`
+(CANONICAL-001 §2 — local-player-only; see BUGS.md). `last_score` (LASTSCORE-001),
+per-frame `jersey_number` / `level` (ROSTER-001), and the scoreboard seed
+(CLOCK-001) all ship.
 
 Ship path: edit proto → CI `buf push` on merge to `nevr-proto` main publishes
 the BSR module → `go get` the new version in tape (or `buf generate` + a local
@@ -180,13 +185,15 @@ written but never read is the failure mode this repo keeps repeating.
 ## 7. Open work (also tracked in `BUGS.md`)
 
 - ~~Build the v2→echoreplay reconstructor~~ — **done** (`reconstruct.go`, §1).
-- ~~Build GH #34 `Session`~~ — **partial**: `RosterAt`/`LoadoutAt`/`GrabAt`/
-  `ScoreAt` exist, but `replay()` handles only 6 of 26 `EchoEvent` variants and
-  there is no disc-holder accessor. The stat events it ignores are exactly why
-  `player.stats`/`team.stats` cannot be reconstructed.
-- Proto additions for the genuinely-absent fields (§6 "Still needed").
-- Wire `last_throw` / `last_score` — homes exist, plumbing absent at both ends.
-- Fix GH #18 (silent event loss) — the one hole in §5.
+- ~~Build GH #34 `Session`~~ — **done**: `OpenSession` / `RosterAt` / `LoadoutAt` /
+  `GrabAt` / `ScoreAt` / `StatsAt` / `LastGoalAt` in `pkg/conversion/session.go`;
+  `replay()` handles join/leave/switch/score/loadout/grab/player-info/stats
+  variants. `player.stats` / `team.stats` reconstruct from the engine's
+  `PlayerStatsUpdated` events (STATS-001).
+- ~~Wire `last_score`~~ — **done** (LASTSCORE-001).
+- `last_throw` — remaining; local-player-only (CANONICAL-001 §2).
+- ~~Fix GH #18 (silent event loss)~~ — **done** (EVENTDROP-001; drop counters
+  surfaced in `ConvertResult` and warned on by `tapedeck convert`).
 - Deprecate v1 as a runtime dep once v2 is a superset; add a v1→v2 importer.
 
 ## 8. The audit tools (reusable receipts)

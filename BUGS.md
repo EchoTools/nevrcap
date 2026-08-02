@@ -690,7 +690,8 @@ event-type mapping.
 **Status: FIXED.** `EVENT_TYPE_LOADOUT_CHANGED`, `EVENT_TYPE_GRAB_CHANGED` and
 `EVENT_TYPE_PLAYER_STATS_UPDATED` added in nevr-proto `eb3c3fb`; `classifyEvent`
 wired in tape `b4f0d94`. `eventTypeGap` is now empty and the count guard asserts
-27 variants / 27 mappable, so any future variant added without a case fails
+28 variants / 28 mappable (matches the current oneof, which gained
+`PlayerInfoUpdated`), so any future variant added without a case fails
 there.
 
 ---
