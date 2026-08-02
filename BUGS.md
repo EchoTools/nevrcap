@@ -899,6 +899,41 @@ channel when Stop has been called.
 
 ---
 
+## FIXED — READFRAMETO-PARITY-001 (release-audit R4): `ReadFrameTo` discarded a session `ReadFrame` retains
+
+**Severity:** medium (fidelity; ledger-mismatch with the fixed dropped-bones
+accounting claim, CANONICAL-001 §3).
+
+**What:** `ReadFrame` counts a bones payload that fails to unmarshal via
+`DroppedBones` and still returns the line's session
+(`pkg/codec/echoreplay.go:596-617`). The reuse API `ReadFrameTo` instead
+returned a bones error (`echoreplay.go:799-806`), whose caller incremented
+`SkippedFrames` and discarded the whole line (`echoreplay.go:721-723`) — a valid
+session that `ReadFrame` kept was silently lost through the reuse path.
+
+**Where:** `pkg/codec/echoreplay.go` — `parseFrameLineTo` bones branch (was
+`:799-806`), `ReadFrameTo` skip loop (`:721-723`).
+
+**Evidence:** measured pre-fix on one `2023/01/01 12:00:00.000\t{}\t{` line:
+
+    ReadFrame   frame=true  err=<nil>  skipped=0 droppedBones=1
+    ReadFrameTo ok=false    err=EOF    skipped=1 droppedBones=0
+
+**Fix:** `parseFrameLineTo` now mirrors `parseFrameLine` exactly: a bones
+payload that does not unmarshal increments `DroppedBones`, leaves `PlayerBones`
+nil, and returns nil — the frame survives with its session intact, and the line
+is not skipped. Measured post-fix on the same line:
+
+    ReadFrame   frame=true  err=<nil>  skipped=0 droppedBones=1
+    ReadFrameTo ok=true     err=<nil>  skipped=0 droppedBones=1
+
+**Status: FIXED.** Pinned by `TestReadFrameToReadFrameParity`
+(`pkg/codec/dropped_bones_test.go`) — valid, malformed-bones, and skip lines
+yield identical sessions, `SkippedFrames`, and `DroppedBones` through both
+entry points.
+
+---
+
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
 
 Every item below needs a **test** and a **BAC** it traces to. No feature ships
