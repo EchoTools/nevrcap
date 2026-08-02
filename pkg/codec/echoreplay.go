@@ -796,13 +796,18 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
-	// Parse player bones data if present
+	// Parse player bones data if present. A bones payload that does not unmarshal
+	// must not discard the line: the session is intact, so the frame is returned
+	// with its bones absent and the loss is counted rather than silently dropped
+	// (CANONICAL-001 §3). This mirrors parseFrameLine exactly — the reuse API and
+	// the allocating API agree on every line (release-audit R4).
 	if len(bonesBytes) > 0 {
 		if frame.PlayerBones == nil {
 			frame.PlayerBones = &enginev1.PlayerBonesResponse{}
 		}
 		if err := e.unmarshaler.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
-			return fmt.Errorf("failed to unmarshal player bones data: %w", err)
+			e.droppedBones++
+			frame.PlayerBones = nil
 		}
 	} else {
 		frame.PlayerBones = nil
