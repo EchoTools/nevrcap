@@ -351,15 +351,6 @@ func (ed *AsyncDetector) addFrameToBuffer(frame *telemetry.LobbySessionStateFram
 	}
 }
 
-// getFrame returns the frame at the given offset (0 = most recent, 1 = previous, etc.)
-func (ed *AsyncDetector) getFrame(offset int) *telemetry.LobbySessionStateFrame {
-	if offset >= ed.frameCount {
-		return nil
-	}
-	idx := (ed.writeIndex - 1 - offset + len(ed.frameBuffer)) % len(ed.frameBuffer)
-	return ed.frameBuffer[idx]
-}
-
 // lastFrame returns the most recently added frame
 func (ed *AsyncDetector) lastFrame() *telemetry.LobbySessionStateFrame {
 	if ed.frameCount == 0 {
