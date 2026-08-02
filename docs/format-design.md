@@ -186,7 +186,9 @@ written but never read is the failure mode this repo keeps repeating.
   `player.stats`/`team.stats` cannot be reconstructed.
 - Proto additions for the genuinely-absent fields (§6 "Still needed").
 - Wire `last_throw` / `last_score` — homes exist, plumbing absent at both ends.
-- Fix GH #18 (silent event loss) — the one hole in §5.
+- ~~Fix GH #18 (silent event loss) — the one hole in §5~~ — **RESOLVED
+  2026-08-02**: the loss is no longer silent — drop counters are surfaced on
+  `ConvertResult` (EVENTDROP-001) and `Processor` (PROCDROP-001).
 - Deprecate v1 as a runtime dep once v2 is a superset; add a v1→v2 importer.
 
 ## 8. The audit tools (reusable receipts)
