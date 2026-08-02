@@ -868,6 +868,39 @@ which prove the drop path is live and the conversion pattern keeps it at zero.
 
 ---
 
+## FIXED — PROCDROP-001 (R6 / GH #18): default processing drops without a caller-visible receipt
+
+**Severity:** medium (observability). `processing.New()` wraps the asynchronous
+`events.AsyncDetector`, whose non-blocking sends drop frames and event batches
+under back-pressure while incrementing private counters. The `Processor`
+exposed only `EventsChan()` (`pkg/processing/frame_processor.go:90-93`) — no
+loss metric and no error — so a caller using the default async processor had no
+way to know frames or events were dropped. This is the second half of GH #18;
+the conversion-side surfacing (`ConvertResult.DroppedFrames/DroppedEvents`) was
+committed in `3f99fdf` (EVENTDROP-001).
+
+**Evidence:** measured by saturation — 8 concurrent producers pushing 25,000
+frames each (200,000 sends) into the default detector's 100-slot input channel
+against its single one-frame-per-iteration consumer dropped 156,732–177,631
+frames (78–89%) across 10 runs, and the counters were invisible through the
+Processor.
+
+**Fix:** `Processor` gains `DroppedFrames() uint64` and `DroppedEvents() uint64`
+(`pkg/processing/frame_processor.go:114-132`), which type-assert the wrapped
+detector for the unexported `frameDropCounter`/`eventDropCounter` interfaces
+and return 0 for a custom `Detector` that does not count drops — a detector
+which does not track loss is reported as having none. `New()`'s doc comment
+documents the contract: drops are counted and surfaced, and a non-zero receipt
+is a capacity signal. The non-blocking drop behavior itself is unchanged; this
+is observability, not back-pressure.
+
+**Status: FIXED.** Pinned by `TestProcessor_DroppedFramesReceipt`,
+`TestProcessor_DroppedEventsReceipt`, and
+`TestProcessor_DropCountersZeroForNonCountingDetector`
+(`pkg/processing/frame_processor_test.go`), in commit `TBD`.
+
+---
+
 ## FIXED — FORMAT-VERSION-001 (GH #30): Reader accepted any format_version silently
 
 **Severity:** low (forward-compatibility). `Reader.ReadHeader` (`pkg/codec/tape.go:343-353`)
@@ -1072,7 +1105,9 @@ not-round-tripping; Andrew's call on which matter):**
   Refutes `SCHEMA-GAPS` BUG-7's constant assumption.
 - `pause` sub-state (`paused_state` narrowing, `unpaused_team`, timers).
 - per-frame `team.stats` / `player.stats`; empty-team structural case.
-- still: fix GH #18 (silent event loss); then v1 deprecation + v1→v2 importer.
+- ~~fix GH #18 (silent event loss)~~ — **RESOLVED 2026-08-02**: drop counters
+  surfaced on both call sites — `ConvertResult` (EVENTDROP-001) and `Processor`
+  (PROCDROP-001) — so the loss is counted, not silent; then v1 deprecation + v1→v2 importer.
 
 **Status as of 2026-08-02 — the DIRECTIVE is effectively complete.** Every
 "Still OPEN" item except `last_throw` / `last_score` has been shipped and tested:

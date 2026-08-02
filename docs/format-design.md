@@ -192,8 +192,9 @@ written but never read is the failure mode this repo keeps repeating.
   `PlayerStatsUpdated` events (STATS-001).
 - ~~Wire `last_score`~~ — **done** (LASTSCORE-001).
 - `last_throw` — remaining; local-player-only (CANONICAL-001 §2).
-- ~~Fix GH #18 (silent event loss)~~ — **done** (EVENTDROP-001; drop counters
-  surfaced in `ConvertResult` and warned on by `tapedeck convert`).
+- ~~Fix GH #18 (silent event loss)~~ — **done**: drop counters surfaced on
+  `ConvertResult` (EVENTDROP-001) and `Processor` (PROCDROP-001), warned on by
+  `tapedeck convert`.
 - Deprecate v1 as a runtime dep once v2 is a superset; add a v1→v2 importer.
 
 ## 8. The audit tools (reusable receipts)
