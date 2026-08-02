@@ -770,6 +770,80 @@ stats.
 
 ---
 
+## OPEN — SENTINEL-OPTIONAL-001 (F-4): v1 −1 sentinel stored as present −1 pointer in v2 optionals
+
+**Severity:** medium (format correctness). Three `mapEvent` sites always take the
+address of the local variable and set the `optional int32` pointer, even when the
+v1 value is the −1 sentinel ("disc free" / "no victim" / "unknown").
+
+**Where / evidence:**
+
+| site | file:line | field | proto contract |
+|---|---|---|---|
+| DiscPossessionChanged | `pkg/conversion/mapping.go:936-941` | `PlayerSlot`, `PreviousPlayerSlot` | "Absent if disc is free" (`echo_arena.proto:477-480`) |
+| PlayerSteal | `mapping.go:1022-1027` | `VictimPlayerSlot` | "Absent if unknown" (`echo_arena.proto:553-554`) |
+
+v1 uses −1 as a sentinel (e.g. `findPossessorSlot`, `pkg/events/sensor_disc.go:172`
+returns −1 when no player holds the disc). The proto uses `optional int32` with the
+contract "absent when free/unknown." A reader that honours the absence contract
+(e.g. checking `HasPlayerSlot()` before reading) sees `true` for a free disc and
+reads −1.
+
+**Measured:** `TestMapEvent_DiscPossessionChanged_FreeDiscMapsToAbsentOptional`
+(`pkg/conversion/sentinel_optional_test.go`) — currently RED: `HasPlayerSlot()=true`,
+`GetPlayerSlot()=-1`, not absent-with-zero-default.
+
+**Fix direction:** check for −1 before setting the pointer; only set it when the
+value is non-negative.
+
+**Status: OPEN.** RED tests committed in the TDD phase; fix pending.
+
+---
+
+## OPEN — WRITER-RACE-001 (GH #29): Writer carries shared mutable state with no synchronization
+
+**Severity:** medium (concurrency safety). The `Writer` struct (`pkg/codec/tape.go:35-45`)
+carries `frameCount`, `keyframes`, `eventIndex`, `bytesWritten`, `lastTimestampMs`,
+the `zstd.Encoder`, and the `*os.File` — all mutated by `WriteFrame` with no mutex.
+Concurrent `WriteFrame` calls race on every field.
+
+**Measured:** `TestWriter_ConcurrentWriteFrameRace` (`pkg/codec/writer_race_test.go`)
+— 8 concurrent goroutines, `-race` detects DATA RACE at `tape.go:94`
+(`w.keyframes` append, concurrent read+write) plus further races on `eventIndex`,
+`frameCount`, and `bytesWritten`.
+
+**Fix direction:** add `sync.Mutex` to the Writer, or document it as
+not-goroutine-safe (the Go convention for `bufio.Writer` / `json.Encoder`).
+
+**Status: OPEN.** RED test committed; fix pending.
+
+---
+
+## OPEN — STOP-RACE-001 (F-14): sync-mode Stop() closes eventsChan without waiting for in-flight ProcessFrame
+
+**Severity:** medium (crash risk). `AsyncDetector.Stop()` (`pkg/events/events.go:142-149`)
+in synchronous mode calls `cancel()` then immediately `close(ed.eventsChan)` without
+waiting for any in-flight `processFrameSync` to return. A concurrent `ProcessFrame`
+that reaches the event-send `select` (`events.go:213-223`) after the channel is
+closed panics with "send on closed channel."
+
+The conversion path (`pkg/conversion/convert.go:260,269`) is single-threaded and
+safe, but a library caller using `ProcessFrame` from one goroutine while tearing
+down from another hits the panic on every run.
+
+**Measured:** `TestSyncDetector_StopDuringProcessFrameDoesNotPanic`
+(`pkg/events/stop_race_test.go`) — 200 iterations, `-race` detected DATA RACE
+between `chansend` (ProcessFrame) and `closechan` (Stop);
+`"panic during ProcessFrame: send on closed channel"` fired on ~60% of iterations.
+
+**Fix direction:** add a `sync.Mutex` protecting the stop transition so that
+`Stop()` blocks until any in-flight `processFrameSync` completes, or use a
+`sync.WaitGroup` tracking in-flight sync calls.
+
+**Status: OPEN.** RED test committed; fix pending.
+
+---
+
 ## DIRECTIVE — Andrew, 2026-06-29 — make v2 the complete, tested, superset format
 
 Every item below needs a **test** and a **BAC** it traces to. No feature ships
