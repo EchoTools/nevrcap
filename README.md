@@ -25,7 +25,7 @@ Supports parallel workers, recursive directory scanning, glob patterns, dry-run 
 
 ```bash
 tapedeck convert *.echoreplay          # convert files in place
-tapedeck convert -r -o out/ ./replays  # recursive, output to out/
+tapedeck convert --recursive --output-dir out/ ./replays
 tapedeck convert --workers 8 *.echoreplay
 ```
 

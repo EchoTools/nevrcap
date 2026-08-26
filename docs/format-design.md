@@ -22,11 +22,11 @@ with `TAPE_AUDIT_FILE=/path go test ./pkg/conversion/ -run <Name> -v`.
 The loss happens **only** at the v1→v2 `MapFrame` step.
 
 **The v2→echoreplay reverse path exists** — `ReconstructFile` /
-`SessionReconstructor` (`pkg/conversion/reconstruct.go:478`), replaying the
+`SessionReconstructor` (`pkg/conversion/reconstruct.go:148 / :636`), replaying the
 header, frames and events through the `Session` state layer to rebuild each
 per-frame `SessionResponse`. `TestRoundTripBAC` exercises the full
 `echoreplay → v2 → echoreplay` cycle on every commit. (There is still no
-v2→v1 path; `ConvertNevrcapToEchoReplay` is v1→echoreplay and has no caller.)
+v2→v1 path.)
 
 `echoreplay ↔ echoreplay` through the v1 codec is **lossless** — proven
 field-for-field on 1023 frames (`TestEchoReplayRoundTripFidelity`, 0 diffs).
@@ -94,7 +94,7 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
     added.** It is `[team, in-team-player-index]`, proven on alienq to agree
     with `has_possession` 100% (0 frames where one knew the holder and the other
     didn't). See `TestPossessionProbe`. The team is derivable from the roster.
-    Rebuilt by `reconstructPossession` (`reconstruct.go:381`).
+    Rebuilt by `reconstructPossession` (`reconstruct.go:565`).
   - **`Team.stats` — derived, not stored.** Summing the team's players
     reproduces it exactly: measured on 7,470 team-frames, all eleven integer
     counters exact, and `possession_time` exact in 4,269 with the remainder
@@ -114,7 +114,7 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
   `SessionResponse`).
 - **`echoreplay → v2 → echoreplay` runs today** and is exact on every
   recoverable field — `TestRoundTripBAC`, 0 mismatches on the committed sample
-  (max magnitude deviation 5e-6, max orientation 2.4e-3, both inside tolerance).
+  (max magnitude deviation 0, max orientation 2.4e-3, both inside tolerance).
   The reconstructor **is** built (§1).
 - **What still does not round-trip** (measured; `TestRoundTripBAC` reports this as
   a finding):

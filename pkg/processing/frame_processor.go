@@ -46,7 +46,7 @@ func NewWithDetector(det events.Detector) *Processor {
 
 // ProcessAndDetectEvents takes raw session and user bones data, unmarshals it, and sends it through the event detector
 // This is optimized for high-frequency invocation (up to 600 Hz)
-// Note: Events are now processed asynchronously and can be received via EventDetector.EventsChan()
+// Note: Events are processed asynchronously and can be received via (*Processor).EventsChan().
 func (fp *Processor) ProcessAndDetectEvents(sessionResponseData, userBonesData []byte, timestamp time.Time) (*telemetry.LobbySessionStateFrame, error) {
 	// Reset the pre-allocated structs to avoid allocations
 	// Pre-allocated structs to avoid memory allocations

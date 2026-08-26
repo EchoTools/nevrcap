@@ -40,7 +40,8 @@ Build runner: `just` (see justfile). `just` runs fmt, vet, lint, test by default
 Three codec implementations for telemetry frame serialization:
 
 - **TapeV1** — Zstd-compressed, length-delimited protobuf stream using `telemetry.v1` types.
-  Writes a `TelemetryHeader` followed by sequential `LobbySessionStateFrame` messages.
+  Reads a `TelemetryHeader` followed by sequential `LobbySessionStateFrame` messages.
+  Read-only: the v1 writer was deliberately removed in `1e54c6e`.
   File extensions: `.tape`, `.nevrcap` (legacy).
 - **TapeV2** — Zstd-compressed, length-delimited `telemetry.v2.Envelope` stream.
   Game-agnostic envelope with `CaptureHeader`, sequential `Frame` messages, and `CaptureFooter`
@@ -62,7 +63,7 @@ Three codec implementations for telemetry frame serialization:
 
 ### `pkg/conversion`
 
-Bidirectional conversion between `.echoreplay` and `.tape` (v1) formats. Runs
+Bidirectional conversion between `.echoreplay` and `.tape` (v2) formats. Runs
 event detection during echoreplay-to-tape conversion so the resulting file
 includes enriched event data.
 
@@ -83,7 +84,7 @@ JSON frame data, runs event detection, and produces enriched protobuf frames.
   Any codec change must preserve this property.
 - **File extensions**: `.tape` is canonical. `.nevrcap` is accepted as legacy input.
 - **EchoReplay compatibility**: The echoreplay writer applies `FixProtojsonUint64Encoding`
-  and `FixExponentNotation` to match the original game engine output exactly.
+  and `FixEngineFloatFormatting` to match the original game engine output exactly.
   Third-party parsers depend on this byte-level compatibility.
 
 ## Dependencies

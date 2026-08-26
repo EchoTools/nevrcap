@@ -22,7 +22,7 @@
 //     keyframe/event indexes.
 //   - EchoReplay — the legacy engine format. The writer reproduces the engine's
 //     output byte for byte, because third-party parsers depend on those exact
-//     bytes; see FixProtojsonUint64Encoding and FixExponentNotation.
+//     bytes; see FixProtojsonUint64Encoding and FixEngineFloatFormatting.
 //
 // # Integrity
 //

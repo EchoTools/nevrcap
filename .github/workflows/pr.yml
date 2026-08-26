@@ -94,9 +94,34 @@ jobs:
           go test -cover ./... | tee coverage-summary.txt
 
           echo "Checking per-package coverage..."
-          grep -E "^ok\s+github.com/echotools/nevr-tape/v1/pkg/" coverage-summary.txt | while read -r line; do
+
+          # The module path is read from go.mod rather than hardcoded. It was
+          # previously pinned to the pre-rename "github.com/echotools/nevr-tape/v1",
+          # so the grep matched nothing, the loop body never ran, and this job
+          # passed unconditionally regardless of actual coverage.
+          module=$(awk '/^module /{print $2}' go.mod)
+          echo "module: $module"
+
+          matched=$(grep -cE "^ok[[:space:]]+$module/pkg/" coverage-summary.txt || true)
+          if [ "$matched" -eq 0 ]; then
+            echo "FAIL: coverage check matched 0 packages under $module/pkg/ — the gate is not running"
+            exit 1
+          fi
+          echo "matched $matched package(s)"
+
+          # Fed by process substitution, not a pipe: a piped `while` runs in a
+          # subshell, where `exit 1` leaves the subshell rather than failing
+          # the step.
+          failed=0
+          while read -r line; do
             pkg=$(echo "$line" | awk '{print $2}')
             percent=$(echo "$line" | sed -n 's/.*coverage: \([0-9.]*\)% of statements.*/\1/p')
+
+            if [ -z "$percent" ]; then
+              echo "FAIL: could not parse a coverage percentage from: $line"
+              failed=1
+              continue
+            fi
 
             if echo "$pkg" | grep -q "/conversion$"; then
               threshold=74.6
@@ -106,11 +131,13 @@ jobs:
 
             if (( $(echo "$percent < $threshold" | bc -l) )); then
               echo "FAIL: $pkg has $percent% coverage (threshold: $threshold%)"
-              exit 1
+              failed=1
             else
               echo "PASS: $pkg has $percent% coverage (threshold: $threshold%)"
             fi
-          done
+          done < <(grep -E "^ok[[:space:]]+$module/pkg/" coverage-summary.txt)
+
+          exit $failed
 
   race:
     name: Race Detector

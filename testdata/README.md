@@ -78,9 +78,9 @@ the session's team/player **slices** (fixed order), not maps.
 ### The dropped-batch risk (investigated, not a loss)
 
 The synchronous detector drops an event batch if its events channel is full
-(`pkg/events/events.go:219-223`). This does **not** lose events during
+(`pkg/events/events.go:257-263`). This does **not** lose events during
 conversion: the pipeline drains the channel fully after every frame
-(`pkg/conversion/convert.go:232,252-261`), so the channel never holds more than
+(`pkg/conversion/convert.go:232,292`), so the channel never holds more than
 one batch and the drop branch is unreachable on this path. Verified by
 `TestSyncDetector_ConversionPatternNoEventLoss`
 (`pkg/events/sync_detector_drop_test.go`).

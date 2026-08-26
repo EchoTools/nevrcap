@@ -65,7 +65,7 @@ present, or the repo copy at `.claude/GO-ADDENDUM-GENERIC.md`.
 | No `interface{}` | golangci-lint |
 | `%w` wrapping with a function-scoped prefix on every error boundary | review |
 | `//nolint` requires an inline reason | golangci-lint |
-| Exported symbols carry doc comments | golangci-lint |
+| Exported symbols carry doc comments | review (revive's `exported` rule is disabled in `.golangci.yml`) |
 | `b.Loop()` in benchmarks | go vet |
 | `go fix` / `go mod tidy` produce no changes | pre-commit hook |
 

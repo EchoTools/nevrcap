@@ -120,6 +120,10 @@ func NewEchoReplayReader(filename string, opts ...ReaderOption) (*EchoReplay, er
 	return NewEchoReplayReaderWithProgress(filename, nil, opts...)
 }
 
+// NewEchoReplayReaderWithProgress opens an .echoreplay capture and reports
+// read progress to progress, which may be nil to disable reporting. Reads are
+// bounded by DefaultLimits unless opts raise or disable the budgets; see
+// NewEchoReplayReader.
 func NewEchoReplayReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*EchoReplay, error) {
 	zipped, err := fileStartsWith(filename, zipMagic)
 	if err != nil {
@@ -269,7 +273,12 @@ func (e *EchoReplay) GetBufferSize() int {
 	return e.frameBuffer.Len()
 }
 
-// WriteReplayFrame writes a frame using optimized buffer operations (same approach as writer_replay_file.go)
+// WriteReplayFrame appends one echoreplay record for frame to dst and returns
+// the number of bytes written, or 0 if the frame carries no timestamp.
+//
+// The record is written straight into dst through reusable scratch buffers
+// rather than via an intermediate allocation, because this runs once per
+// frame on the write path.
 func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbySessionStateFrame) int {
 	if frame == nil || frame.Timestamp == nil {
 		return 0
@@ -428,6 +437,11 @@ func isEscaped(data []byte, i int) bool {
 	return backslashes%2 == 1
 }
 
+// Deprecated: FixExponentNotation has no caller on the write path. The
+// echoreplay writer uses FixEngineFloatFormatting, which reproduces the
+// engine's float formatting in full; this function handles only exponent
+// notation and is retained for compatibility.
+//
 // FixExponentNotation converts scientific notation floats to decimal notation
 // This ensures JSON output uses decimal format (e.g., 0.000001 instead of 1e-6)
 // while preserving full precision and not converting to strings
@@ -674,11 +688,6 @@ func (e *EchoReplay) ReadFrames() ([]*telemetry.LobbySessionStateFrame, error) {
 	var frames []*telemetry.LobbySessionStateFrame
 
 	for {
-		// SEC-001 accumulation guard (belt to the reader's braces): never
-		// grow the slice past the frame budget.
-		if max := e.limits.MaxFrameCount; max > 0 && int64(len(frames)) >= max {
-			return nil, fmt.Errorf("echoreplay: %d frames accumulated: %w (budget %d)", len(frames), ErrMaxFrameCount, max)
-		}
 		frame, err := e.ReadFrame()
 		if err != nil {
 			if err == io.EOF {
@@ -687,6 +696,14 @@ func (e *EchoReplay) ReadFrames() ([]*telemetry.LobbySessionStateFrame, error) {
 			return nil, err
 		}
 		frames = append(frames, frame)
+
+		// SEC-001 accumulation guard (belt to the reader's braces): never
+		// grow the slice past the frame budget. Checked after the append with
+		// > rather than >=, matching Limits.checkFrameBudget: a capture
+		// holding exactly MaxFrameCount frames is AT budget, not over it.
+		if max := e.limits.MaxFrameCount; max > 0 && int64(len(frames)) > max {
+			return nil, fmt.Errorf("echoreplay: %d frames accumulated: %w (budget %d)", len(frames), ErrMaxFrameCount, max)
+		}
 	}
 
 	return frames, nil
@@ -848,13 +865,46 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 	return nil
 }
 
+// echoReplayTimestampShape is the engine's timestamp layout, one entry per
+// byte position: 0 marks a position that must hold an ASCII digit, and any
+// other value is the literal separator byte required there.
+//
+//	2006/01/02 15:04:05.000
+//	0123456789012345678901
+var echoReplayTimestampShape = [23]byte{
+	0, 0, 0, 0, '/', 0, 0, '/', 0, 0, ' ',
+	0, 0, ':', 0, 0, ':', 0, 0, '.', 0, 0, 0,
+}
+
+// fastParseTimestamp parses the engine's fixed-width timestamp without
+// allocating.
+//
+// Every byte is validated against echoReplayTimestampShape before any
+// arithmetic. Checking only the length would let arbitrary 23-byte input
+// through: byte subtraction on a non-digit wraps, so garbage yielded a
+// plausible-looking time.Date rather than an error, and the line was counted as
+// a good frame instead of a skip. A fabricated timestamp is worse than a
+// dropped line — it becomes the synthesized header's baseTime and shifts every
+// frame offset in the capture.
 func fastParseTimestamp(buf []byte) (time.Time, error) {
-	if len(buf) != 23 {
-		return time.Time{}, &time.ParseError{Layout: EchoReplayTimeFormat, Value: string(buf), Message: "invalid length"}
+	fail := func(msg string) (time.Time, error) {
+		return time.Time{}, &time.ParseError{Layout: EchoReplayTimeFormat, Value: string(buf), Message: msg}
 	}
 
-	// 2006/01/02 15:04:05.000
-	// 01234567890123456789012
+	if len(buf) != 23 {
+		return fail("invalid length")
+	}
+	for i, want := range echoReplayTimestampShape {
+		if want == 0 {
+			if buf[i] < '0' || buf[i] > '9' {
+				return fail("expected a digit")
+			}
+			continue
+		}
+		if buf[i] != want {
+			return fail("expected a separator")
+		}
+	}
 
 	year := int(buf[0]-'0')*1000 + int(buf[1]-'0')*100 + int(buf[2]-'0')*10 + int(buf[3]-'0')
 	month := time.Month(int(buf[5]-'0')*10 + int(buf[6]-'0'))
@@ -863,6 +913,14 @@ func fastParseTimestamp(buf []byte) (time.Time, error) {
 	min := int(buf[14]-'0')*10 + int(buf[15]-'0')
 	sec := int(buf[17]-'0')*10 + int(buf[18]-'0')
 	ms := int(buf[20]-'0')*100 + int(buf[21]-'0')*10 + int(buf[22]-'0')
+
+	// Reject out-of-range components rather than letting time.Date normalize
+	// them: "2026/13/40" would otherwise silently become a real date in the
+	// following year, which is the same fabrication in a different disguise.
+	if month < time.January || month > time.December ||
+		day < 1 || day > 31 || hour > 23 || min > 59 || sec > 60 {
+		return fail("component out of range")
+	}
 
 	return time.Date(year, month, day, hour, min, sec, ms*1000000, time.UTC), nil
 }

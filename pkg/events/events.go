@@ -20,6 +20,9 @@ type Detector interface {
 	Stop()
 }
 
+// DefaultFrameBufferCapacity is the number of frames an AsyncDetector buffers
+// before ProcessFrame starts dropping them and counting the drops. Override
+// with WithFrameBufferSize.
 const DefaultFrameBufferCapacity = 10
 
 // Option configures the AsyncDetector
