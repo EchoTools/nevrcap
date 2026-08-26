@@ -7,7 +7,7 @@ import (
 	"time"
 
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestSupersetFieldsPopulate proves the v1->v2 converter copies the new superset
@@ -45,7 +45,11 @@ func TestSupersetFieldsPopulate(t *testing.T) {
 		if sess == nil {
 			continue
 		}
-		ea := mapper.MapFrame(v1f).GetEchoArena()
+		v2f, err := mapper.MapFrame(v1f)
+		if err != nil {
+			t.Fatalf("MapFrame frame %d: %v", v1f.GetFrameIndex(), err)
+		}
+		ea := v2f.GetEchoArena()
 
 		// Shoulder input copied exactly (frame-level, capture client).
 		if ea.GetLeftShoulderPressed() != float32(sess.GetLeftShoulderPressed()) ||

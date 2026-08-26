@@ -1,6 +1,6 @@
 // Hostile-input resource guards for the tape decoders.
 //
-// BUGS.md SEC-001 (decompression bomb) and SEC-002 (allocate-before-verify)
+// SEC-001 (decompression bomb) and SEC-002 (allocate-before-verify)
 // document the attacks these guards close. The principle is audit-not-restrict:
 // every limit is documented, configurable, and disableable, so a legitimate
 // giant capture stays readable by explicit opt-in — but a crafted few-KB file
@@ -62,6 +62,36 @@ var (
 	// ErrMaxFrameCount is returned when a capture yields more frames than the
 	// configured MaxFrameCount budget (SEC-001: decompression bomb).
 	ErrMaxFrameCount = errors.New("frame count exceeds MaxFrameCount budget; raise with codec.WithMaxFrameCount or disable with codec.WithoutLimits")
+
+	// ErrUnexpectedEnvelope is returned when the frame stream contains a
+	// non-frame, non-footer envelope (e.g. a stray header or an empty envelope)
+	// before the footer — a malformed or truncated-and-concatenated capture.
+	ErrUnexpectedEnvelope = errors.New("unexpected non-frame envelope before footer")
+
+	// ErrUnsupportedVersion is returned by ReadHeader when the capture's
+	// format_version is not 2 (or 0 for pre-2.1 captures). A future reader
+	// might understand additional versions, but this one does not.
+	ErrUnsupportedVersion = errors.New("unsupported format_version; this reader understands version 2")
+
+	// ErrFrameCountOverflow is returned by WriteFrame or Close when the
+	// capture would exceed the format's uint32 frame count limit
+	// (~4.29 billion frames, >82 days at 600 Hz).
+	ErrFrameCountOverflow = errors.New("frame count would exceed uint32 max; split the capture")
+
+	// ErrWriteOrder is returned by the Writer when calls arrive out of the
+	// stream contract: a frame before the header, a duplicate header, a call
+	// after Close, or Close before any header. The format is exactly one
+	// header, then frames, then one footer.
+	ErrWriteOrder = errors.New("writer call out of order; exactly one header, then frames, then one Close")
+
+	// ErrNilFrame is returned by WriteFrame when passed a nil *Frame.
+	ErrNilFrame = errors.New("frame is nil")
+
+	// ErrEmptyFrame is returned by WriteFrame when the frame's payload oneof is
+	// unset. Such a frame encodes no game state — it round-trips as a
+	// payload-less frame every consumer reads as absent data — so it is refused
+	// rather than written.
+	ErrEmptyFrame = errors.New("frame has no payload; a tape frame must carry game state")
 )
 
 // Limits bounds the resources a reader will spend on a single capture, so a

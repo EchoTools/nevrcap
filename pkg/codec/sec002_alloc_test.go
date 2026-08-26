@@ -9,7 +9,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// BUGS.md SEC-002 — allocate-before-verify.
+// SEC-002 — allocate-before-verify.
 //
 // BAC: A varint length prefix declaring MaxMessageSize (256 MiB) followed by
 // EOF must NOT cause an allocation proportional to the declared length. The

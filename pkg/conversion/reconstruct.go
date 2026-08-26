@@ -11,7 +11,7 @@ import (
 	spatialv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/spatial/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -40,13 +40,18 @@ var gameStatusReverse = buildReverse(gameStatusMap, capturepb.GameStatus_GAME_ST
 var matchTypeReverse = buildReverse(matchTypeMap, capturepb.MatchType_MATCH_TYPE_UNSPECIFIED, "")
 
 // pauseStateReverse maps a v2 PauseState enum back to a canonical v1
-// paused_state string. The forward pauseStateMap is many-to-one
-// ("" and "unpaused" both map to NOT_PAUSED; "paused" and "paused_requested"
-// both map to PAUSED), so the reverse picks the canonical non-empty spelling.
-// The "paused_requested" narrowing is not recoverable (see SCHEMA-GAPS BUG-5).
+// paused_state string. The forward pauseStateMap is still many-to-one — "" and
+// "unpaused" both map to NOT_PAUSED — so the reverse picks the canonical
+// non-empty spelling.
+//
+// The 2.1.0 proto added PAUSE_STATE_NONE and PAUSE_STATE_PAUSED_REQUESTED, so
+// "none" and "paused_requested" are no longer narrowed away and round-trip
+// exactly.
 var pauseStateReverse = map[capturepb.PauseState]string{
 	capturepb.PauseState_PAUSE_STATE_NOT_PAUSED:       "unpaused",
+	capturepb.PauseState_PAUSE_STATE_NONE:             "none",
 	capturepb.PauseState_PAUSE_STATE_PAUSED:           "paused",
+	capturepb.PauseState_PAUSE_STATE_PAUSED_REQUESTED: "paused_requested",
 	capturepb.PauseState_PAUSE_STATE_UNPAUSING:        "unpausing",
 	capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY: "autopause_replay",
 }
@@ -137,14 +142,20 @@ func vec3ToSlice(v *spatialv1.Vec3) []float64 {
 // per-frame identity, loadout, grab, and team-role come from the replayed
 // Session; the rest is read straight off each EchoArenaFrame.
 //
-// Fields with no v2 home (see SCHEMA-GAPS.md) are NOT fabricated: they are left
-// at their zero value. The round-trip BAC measures and reports them.
+// Fields with no v2 home (the remaining one is last_throw, gh #35) are NOT
+// fabricated: they are left at their zero value. The round-trip BAC measures
+// and reports them.
 type SessionReconstructor struct {
 	header   *capturepb.CaptureHeader
 	ea       *capturepb.EchoArenaHeader
 	session  *Session
 	baseTime time.Time
 	frames   []*capturepb.Frame
+	// hasBones is true if any frame in the capture carries player_bones.
+	// Used at reconstruction to distinguish "bones never recorded" (emit
+	// bare 2-field lines) from "bones recorded but this frame was a poll
+	// gap" (emit a 3-field line with err_code).
+	hasBones bool
 }
 
 // NewSessionReconstructor reads a full v2 capture from r and prepares a
@@ -175,12 +186,27 @@ func NewSessionReconstructor(r *codec.Reader) (*SessionReconstructor, error) {
 		frames = append(frames, frame)
 	}
 
+	// Determine whether any frame in this capture carries bones.
+	// Spark records bones as a per-file toggle (213 all-bare, 1 all-bones
+	// in 215 measured captures); nevr-agent always polls and gaps produce
+	// {"err_code":0}. A gap frame is not the same as a never-recorded
+	// frame, and the distinction is preserved at reconstruction by
+	// emitting an empty PlayerBonesResponse (CANONICAL-001 §3).
+	hasBones := false
+	for _, f := range frames {
+		if ea := f.GetEchoArena(); ea != nil && len(ea.GetPlayerBones()) > 0 {
+			hasBones = true
+			break
+		}
+	}
+
 	return &SessionReconstructor{
 		header:   hdr,
 		ea:       hdr.GetEchoArena(),
 		session:  NewSession(hdr.GetEchoArena(), frames),
 		frames:   frames,
 		baseTime: hdr.GetCreatedAt().AsTime(),
+		hasBones: hasBones,
 	}, nil
 }
 
@@ -215,11 +241,14 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 		// Session constants (header).
 		SessionId:       rc.ea.GetSessionId(),
 		SessionIp:       rc.ea.GetSessionIp(),
+		ClientName:      rc.ea.GetClientName(),
 		MapName:         rc.ea.GetMapName(),
 		MatchType:       matchTypeReverse[rc.ea.GetMatchType()],
 		PrivateMatch:    rc.ea.GetPrivateMatch(),
 		TournamentMatch: rc.ea.GetTournamentMatch(),
 		TotalRoundCount: rc.ea.GetTotalRoundCount(),
+		RulesChangedBy:  rc.ea.GetRulesChangedBy(),
+		RulesChangedAt:  rc.ea.GetRulesChangedAt(),
 	}
 	if ea == nil {
 		return s
@@ -235,17 +264,49 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 	s.LeftShoulderPressed2 = float64(ea.GetLeftShoulderPressed_2())
 	s.RightShoulderPressed2 = float64(ea.GetRightShoulderPressed_2())
 
-	// Round scores + display clock survive only as event samples; carry the
-	// last ScoreboardUpdated forward (the per-frame value between samples, and
-	// any value before the first sample, is not recoverable — see the BAC).
+	// Round scores survive only as event samples; carry the last
+	// ScoreboardUpdated forward (any value before the first sample is not
+	// recoverable — the scoreboard sensor seeds the first frame's scores, so
+	// pre-first-change round scores round-trip).
 	score := rc.session.ScoreAt(i)
 	s.BlueRoundScore = score.BlueRoundScore
 	s.OrangeRoundScore = score.OrangeRoundScore
-	s.GameClockDisplay = score.GameClockDisplay
+
+	// The display clock is derived, not carried. It changes every frame while
+	// ScoreboardUpdated only fires on a score change, so reading it from the
+	// event sample left it stale between goals and empty before the first one.
+	s.GameClockDisplay = gameClockDisplay(ea.GetGameClock())
 
 	// Pause: only the enum survives; reconstruct the canonical paused_state
 	// string. Sub-fields (teams, timers) have no v2 home.
-	s.Pause = &enginev1.PauseState{PausedState: pauseStateReverse[ea.GetPauseState()]}
+	// The engine spells "no team" as "none", not the empty string, and writes
+	// both team fields on every frame whether or not a pause is in progress.
+	s.Pause = &enginev1.PauseState{
+		PausedState:         pauseStateReverse[ea.GetPauseState()],
+		UnpausedTeam:        "none",
+		PausedRequestedTeam: "none",
+	}
+	if detail := ea.GetPauseDetail(); detail != nil {
+		s.Pause.UnpausedTeam = roleToTeamString(detail.GetUnpausedTeam())
+		s.Pause.PausedRequestedTeam = roleToTeamString(detail.GetPausedRequestedTeam())
+		s.Pause.UnpausedTimer = float64(detail.GetUnpausedTimer())
+		s.Pause.PausedTimer = float64(detail.GetPausedTimer())
+	}
+
+	// Transient request flags; zero on virtually every frame.
+	s.ErrCode = ea.GetErrCode()
+	s.BlueTeamRestartRequest = ea.GetBlueTeamRestartRequest()
+	s.OrangeTeamRestartRequest = ea.GetOrangeTeamRestartRequest()
+
+	// Echo Combat payload state. mapping.go only emits PayloadState when some
+	// payload value is non-zero, so this stays nil for every arena capture.
+	if payload := ea.GetPayload(); payload != nil {
+		s.PayloadMultiplier = float64(payload.GetMultiplier())
+		s.PayloadCheckpoint = payload.GetCheckpoint()
+		s.PayloadDistance = float64(payload.GetDistance())
+		s.PayloadDefenders = payload.GetDefenders()
+		s.PayloadSpeed = float64(payload.GetSpeed())
+	}
 
 	if disc := ea.GetDisc(); disc != nil {
 		s.Disc = reconstructDisc(disc)
@@ -254,20 +315,102 @@ func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoAren
 		s.Player = reconstructPlayerRoot(vr)
 	}
 
+	// last_score is a carried-forward snapshot in the engine, so it comes from
+	// replaying GoalScored rather than from anything on this frame.
+	if g := rc.session.LastGoalAt(i); g != nil {
+		s.LastScore = &enginev1.LastScore{
+			DiscSpeed:      float64(g.GetDiscSpeed()),
+			Team:           teamRoleReverse[g.GetTeam()],
+			GoalType:       goalTypeReverse[g.GetGoalType()],
+			PointAmount:    g.GetPointAmount(),
+			DistanceThrown: float64(g.GetDistanceThrown()),
+			PersonScored:   g.GetPersonScored(),
+			AssistScored:   g.GetAssistScored(),
+		}
+	}
+
 	s.Teams = rc.reconstructTeams(i, ea)
 	s.Possession = reconstructPossession(ea, s.Teams)
 
 	return s
 }
 
+// gameClockDisplay renders the engine's "MM:SS.CC" clock string from the
+// per-frame game clock.
+//
+// The engine truncates to centiseconds rather than rounding, and zero-pads
+// minutes. Verified exact on 13,840 real frames across two recordings — all
+// 1023 of testdata/sample.echoreplay and all 12,817 of a January 2026 capture —
+// computed from the float32 the tape actually stores, so the float64->float32
+// narrowing is already accounted for.
+//
+// Truncation is unstable within ~5e-6 of a centisecond boundary, which is the
+// measured round-trip error on game_clock. Neither recording hit that window;
+// the full-corpus run is what would surface it.
+func gameClockDisplay(clock float32) string {
+	if clock < 0 {
+		clock = 0
+	}
+	// Multiply in float64 to match how the engine's value was formatted; doing
+	// it in float32 loses precision the truncation then amplifies.
+	centis := int(float64(clock) * 100)
+	return fmt.Sprintf("%02d:%02d.%02d", centis/6000, (centis%6000)/100, centis%100)
+}
+
 // reconstructTeams groups the flat v2 player list back into v1 teams by the
 // team index encoded in flags, preserving player order within each team (which
 // is the original order, since mapPlayers appended team-by-team). Empty teams
 // present in the source have no v2 representation and are not reconstructed.
+// roleToTeamString inverts teamStringToRole for the pause sub-fields, which
+// spell the team in lowercase and use "none" rather than an empty string.
+func roleToTeamString(r capturepb.Role) string {
+	switch r {
+	case capturepb.Role_ROLE_BLUE_TEAM:
+		return "blue"
+	case capturepb.Role_ROLE_ORANGE_TEAM:
+		return "orange"
+	default:
+		return "none"
+	}
+}
+
+// sumTeamStats derives a v1 TeamStats by summing its players' stats. Measured
+// exact on 7,470 team-frames for all eleven integer counters, and for
+// possession_time exact in 4,269 with the remainder inside 7e-5 (float
+// accumulation order). So the team block needs no v2 field of its own.
+func sumTeamStats(members []*enginev1.TeamMember) *enginev1.TeamStats {
+	total := &enginev1.TeamStats{}
+	any := false
+	for _, m := range members {
+		st := m.GetStats()
+		if st == nil {
+			continue
+		}
+		any = true
+		total.PossessionTime += st.GetPossessionTime()
+		total.Points += st.GetPoints()
+		total.Saves += st.GetSaves()
+		total.Goals += st.GetGoals()
+		total.Stuns += st.GetStuns()
+		total.Passes += st.GetPasses()
+		total.Catches += st.GetCatches()
+		total.Steals += st.GetSteals()
+		total.Blocks += st.GetBlocks()
+		total.Interceptions += st.GetInterceptions()
+		total.Assists += st.GetAssists()
+		total.ShotsTaken += st.GetShotsTaken()
+	}
+	if !any {
+		return nil
+	}
+	return total
+}
+
 func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaFrame) []*enginev1.Team {
 	roster := rc.session.RosterAt(i)
 	loadout := rc.session.LoadoutAt(i)
 	grab := rc.session.GrabAt(i)
+	stats := rc.session.StatsAt(i)
 
 	// Group players by team index, tracking encounter order of team indices.
 	byTeam := map[int32][]*enginev1.TeamMember{}
@@ -277,7 +420,22 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 		if _, seen := byTeam[teamIdx]; !seen {
 			order = append(order, teamIdx)
 		}
-		byTeam[teamIdx] = append(byTeam[teamIdx], reconstructMember(ps, roster, loadout, grab))
+		byTeam[teamIdx] = append(byTeam[teamIdx], reconstructMember(ps, roster, loadout, grab, stats))
+	}
+
+	teamNames := rc.ea.GetTeamNames()
+
+	// A team with no players has no PlayerState to be inferred from, so it used
+	// to vanish from the reconstruction. team_names records the source's team
+	// count, which restores the empty ones (typically an unoccupied SPECTATORS
+	// team). Tapes written before 2.1.0 carry no team_names and keep the old
+	// behaviour.
+	for i := range len(teamNames) {
+		idx := int32(i) //nolint:gosec // bounded by the header's team_names length, at most a handful
+		if _, seen := byTeam[idx]; !seen {
+			byTeam[idx] = nil
+			order = append(order, idx)
+		}
 	}
 
 	// Emit teams in ascending team-index order (blue, orange, spectator).
@@ -285,7 +443,10 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 	teams := make([]*enginev1.Team, 0, len(order))
 	for _, teamIdx := range order {
 		members := byTeam[teamIdx]
-		team := &enginev1.Team{Players: members}
+		team := &enginev1.Team{Players: members, Stats: sumTeamStats(members)}
+		if int(teamIdx) < len(teamNames) {
+			team.TeamName = teamNames[teamIdx]
+		}
 		// Team possession is true when any member holds the disc.
 		for _, m := range members {
 			if m.GetHasPossession() {
@@ -300,7 +461,7 @@ func (rc *SessionReconstructor) reconstructTeams(i int, ea *capturepb.EchoArenaF
 
 // reconstructMember rebuilds a v1 TeamMember from a v2 PlayerState plus the
 // per-frame identity/loadout/grab looked up by slot.
-func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.PlayerInfo, loadout map[int32]Loadout, grab map[int32]Grab) *enginev1.TeamMember {
+func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.PlayerInfo, loadout map[int32]Loadout, grab map[int32]Grab, stats map[int32]*capturepb.PlayerStatsUpdated) *enginev1.TeamMember {
 	slot := ps.GetSlot()
 	flags := ps.GetFlags()
 
@@ -329,6 +490,29 @@ func reconstructMember(ps *capturepb.PlayerState, roster map[int32]*capturepb.Pl
 	if g, ok := grab[slot]; ok {
 		m.LeftHoldingOnto = g.Left
 		m.RightHoldingOnto = g.Right
+	}
+
+	// Reassemble the engine's stats block: eleven counters replayed from
+	// PlayerStatsUpdated, plus possession_time from the per-frame PlayerState.
+	// Emitted whenever either source carries something, so a player with only
+	// possession time still gets a block.
+	if su, ok := stats[slot]; ok {
+		m.Stats = &enginev1.PlayerStats{
+			PossessionTime: float64(ps.GetPossessionTime()),
+			Points:         su.GetPoints(),
+			Saves:          su.GetSaves(),
+			Goals:          su.GetGoals(),
+			Stuns:          su.GetStuns(),
+			Passes:         su.GetPasses(),
+			Catches:        su.GetCatches(),
+			Steals:         su.GetSteals(),
+			Blocks:         su.GetBlocks(),
+			Interceptions:  su.GetInterceptions(),
+			Assists:        su.GetAssists(),
+			ShotsTaken:     su.GetShotsTaken(),
+		}
+	} else if ps.GetPossessionTime() != 0 {
+		m.Stats = &enginev1.PlayerStats{PossessionTime: float64(ps.GetPossessionTime())}
 	}
 
 	if head := ps.GetHead(); head != nil {
@@ -409,10 +593,21 @@ func discHolder(ea *capturepb.EchoArenaFrame) (int32, bool) {
 
 // reconstructBones rebuilds the v1 PlayerBonesResponse from v2 PlayerBones.
 // Bones are float32 in both formats, so the transform/orientation data is
-// exact. The top-level err_code has no v2 home and is left zero.
+// exact.
+//
+// When this capture has bones on ANY frame (rc.hasBones), a frame whose v2
+// representation carries none was a poll gap — the bones endpoint was
+// active but returned nothing. The gap is represented as an empty
+// PlayerBonesResponse, which protojson with EmitUnpopulated marshals to
+// {"user_bones":[],"err_code":0}. When no frame in the capture has bones,
+// the endpoint was never polled and reconstruction emits a bare 2-field
+// line (nil), matching Spark's per-file toggle (CANONICAL-001 §3).
 func (rc *SessionReconstructor) reconstructBones(ea *capturepb.EchoArenaFrame) *enginev1.PlayerBonesResponse {
 	pbs := ea.GetPlayerBones()
 	if len(pbs) == 0 {
+		if rc.hasBones {
+			return &enginev1.PlayerBonesResponse{}
+		}
 		return nil
 	}
 	userBones := make([]*enginev1.UserBones, 0, len(pbs))

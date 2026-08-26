@@ -2,11 +2,14 @@ package processing
 
 import (
 	"encoding/json"
+	"runtime"
+	"sync"
 	"testing"
 	"time"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
+	"github.com/echotools/tape/v4/pkg/events"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -204,5 +207,120 @@ func TestFrameProcessor_Delegation(t *testing.T) {
 		if ok {
 			t.Error("Expected events channel to be closed")
 		}
+	}
+}
+
+// scoreFrame builds a frame whose distinct blue score makes the scoreboard
+// sensor emit a ScoreboardUpdated event on every successive value, mirroring
+// pkg/events/sync_detector_drop_test.go:13.
+func scoreFrame(bluePoints int32) *telemetry.LobbySessionStateFrame {
+	return &telemetry.LobbySessionStateFrame{
+		Session: &enginev1.SessionResponse{
+			GameStatus: events.GameStatusPlaying,
+			BluePoints: bluePoints,
+		},
+	}
+}
+
+// pollUntil polls cond until it returns true or the deadline passes. The repo
+// has no Eventually helper and the addendum forbids time.Sleep in tests, so
+// this is the bounded, sleep-free wait used to observe the async detector's
+// background goroutine.
+func pollUntil(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("condition not met within %s", timeout)
+		}
+		runtime.Gosched()
+	}
+}
+
+// TestProcessor_DroppedFramesReceipt is the saturation test for the loss
+// receipt: it drives the default processor (New()) and floods its input
+// channel with more frames than the async loop can drain, then asserts the
+// caller-visible Processor.DroppedFrames() reports the loss. This goes through
+// the Processor's public surface (DetectEvents + DroppedFrames), not the
+// AsyncDetector directly. DetectEvents is used rather than
+// ProcessAndDetectEvents because the latter mutates frameIndex without a lock
+// and the flood is deliberately concurrent.
+func TestProcessor_DroppedFramesReceipt(t *testing.T) {
+	p := New()
+	defer p.Stop()
+
+	const (
+		producers    = 8
+		perProducer  = 25000
+		channelDepth = 100 // events.New() input channel capacity (events.go:121)
+	)
+
+	// Each producer hammers DetectEvents in a tight loop. Aggregate producer
+	// rate vastly exceeds the single consumer's one-frame-per-iteration drain,
+	// so the buffered input channel (capacity channelDepth) fills and the
+	// non-blocking send in events.go:207 drops every subsequent frame until the
+	// consumer frees a slot. 8 x 25k sends saturate a 100-slot channel with
+	// overwhelming probability and keep the counter non-zero for the duration.
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range producers {
+		wg.Go(func() {
+			<-start
+			frame := &telemetry.LobbySessionStateFrame{Timestamp: timestamppb.Now()}
+			for range perProducer {
+				p.DetectEvents(frame)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+
+	if got := p.DroppedFrames(); got == 0 {
+		t.Fatal("expected the processor loss receipt to report dropped frames once the input channel saturates")
+	}
+}
+
+// TestProcessor_DroppedEventsReceipt fills the events channel through the
+// Processor: a sensor-equipped detector wrapped by NewWithDetector emits one
+// ScoreboardUpdated batch per distinct score, and with the events channel
+// never drained the async loop's non-blocking send (events.go:292-303) drops
+// every batch past the buffer. The counter must be visible through
+// Processor.DroppedEvents(). New() itself cannot reach this path — its default
+// detector (events.New()) carries no sensors, so it never emits events and the
+// events channel can never fill.
+func TestProcessor_DroppedEventsReceipt(t *testing.T) {
+	p := NewWithDetector(events.NewWithDefaultSensors())
+	defer p.Stop()
+
+	// Seed the scoreboard sensor so frame 0 does not emit; then feed distinct
+	// scores without ever draining the events channel (cap 10).
+	p.DetectEvents(scoreFrame(0))
+	for i := int32(1); i <= 50; i++ {
+		p.DetectEvents(scoreFrame(i))
+	}
+
+	pollUntil(t, 5*time.Second, func() bool { return p.DroppedEvents() > 0 })
+
+	if got := p.DroppedEvents(); got == 0 {
+		t.Fatal("expected the processor loss receipt to report dropped event batches once the events channel fills")
+	}
+}
+
+// TestProcessor_DropCountersZeroForNonCountingDetector pins the unsupported
+// contract: a custom Detector that does not implement the drop counters
+// reports zero rather than panicking or misreporting. The mockDetector above
+// satisfies events.Detector but has no DroppedFrames/DroppedEvents methods.
+func TestProcessor_DropCountersZeroForNonCountingDetector(t *testing.T) {
+	mock := &mockDetector{
+		eventsChan: make(chan []*telemetry.LobbySessionEvent),
+	}
+	p := NewWithDetector(mock)
+	defer p.Stop()
+
+	if got := p.DroppedFrames(); got != 0 {
+		t.Fatalf("expected DroppedFrames()==0 for a detector that does not count drops, got %d", got)
+	}
+	if got := p.DroppedEvents(); got != 0 {
+		t.Fatalf("expected DroppedEvents()==0 for a detector that does not count drops, got %d", got)
 	}
 }

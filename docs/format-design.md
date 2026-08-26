@@ -15,16 +15,29 @@ with `TAPE_AUDIT_FILE=/path go test ./pkg/conversion/ -run <Name> -v`.
 |---|---|---|
 | **`.echoreplay`** | The game's own recording: ZIP of `timestamp\tsessionJSON[\tbonesJSON]` lines. `sessionJSON` is an `engine.v1.SessionResponse` — the `/session` API payload, the **complete** per-frame truth. | Full source of truth |
 | **v1 (`telemetry.v1`)** | Proto mirror. `LobbySessionStateFrame` **embeds the whole `SessionResponse`** (field 4) + bones + events. The on-disk form is the **Legacy** codec (`.nevrcap`). | Full — nothing is lost at the v1 layer |
-| **v2 (`telemetry.v2`)** | The current on-disk tape: zstd stream of `Envelope`s (`CaptureHeader` + `Frame` + `CaptureFooter` with seek indexes). `float32` spatial. Per-frame payload is `EchoArenaFrame`. | **Curated** — lossy by design (see §3) |
+| **v2 (`telemetry.v2`)** | The current on-disk tape: zstd stream of `Envelope`s (`CaptureHeader` + `Frame` + `CaptureFooter` with seek indexes). `float32` spatial. Per-frame payload is `EchoArenaFrame`. | **Re-encoded, not curated** — see §2 and §4 |
 
 **Conversion flow (`tapedeck convert`):** echoreplay/nevrcap → v1 `LobbySessionStateFrame`
 → `MapFrame` (`pkg/conversion/mapping.go`) → v2 `EchoArenaFrame` → `.tape`.
-The loss happens **only** at the v1→v2 `MapFrame` step. **There is currently no
-v2→echoreplay or v2→v1 reverse path** — the only reverse converter is
-`ConvertNevrcapToEchoReplay` (v1→echoreplay).
+The loss happens **only** at the v1→v2 `MapFrame` step.
+
+**The v2→echoreplay reverse path exists** — `ReconstructFile` /
+`SessionReconstructor` (`pkg/conversion/reconstruct.go:478`), replaying the
+header, frames and events through the `Session` state layer to rebuild each
+per-frame `SessionResponse`. `TestRoundTripBAC` exercises the full
+`echoreplay → v2 → echoreplay` cycle on every commit. (There is still no
+v2→v1 path; `ConvertNevrcapToEchoReplay` is v1→echoreplay and has no caller.)
 
 `echoreplay ↔ echoreplay` through the v1 codec is **lossless** — proven
 field-for-field on 1023 frames (`TestEchoReplayRoundTripFidelity`, 0 diffs).
+
+**On "lossy by design".** This table used to call v2 *curated — lossy by design*,
+and that phrasing has been read as licence to accept any missing field as
+intentional. It is not what §2 says. v2 stores the same information in a
+different **shape**: constants once in the header, discrete changes as events,
+per-frame data per frame. A field that lives in the header or an event is not
+lost — provided reconstruction re-materializes it. The genuinely-absent fields
+are the short list in §4, and each is a gap to close, not a design decision.
 
 ## 2. The v2 design philosophy (do not violate this)
 
@@ -50,6 +63,14 @@ not signal. Orientation goes 9-float basis → quaternion (exact for a real
 rotation) → `float32` (~1e-7 rad). **There is no meaningful precision loss in
 v1→v2.** The loss is dropped *fields*, never resolution.
 
+**The writer enforces the stream contract.** `Writer` (`pkg/codec/tape.go`)
+rejects any call outside exactly-one-header → frames → one Close: a frame
+before the header, a duplicate header, a call after Close, a nil or
+payload-less frame are all errors (WRITER-ORDER-001). The footer's keyframe and
+event indexes record each frame's own `frame_index` — the value serialized on
+the wire — so they stay consistent even for legacy captures whose stored
+indices are not sequential (frame_count is the count, not the last index).
+
 ## 3. What v2 keeps vs. drops (measured, not asserted)
 
 Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
@@ -59,29 +80,55 @@ Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /
   disc, scores, clock, round, game status; events. The full kinematic record.
 - **Dropped but always-empty in arena (0%) — no real loss:** `weapon`,
   `ordnance`, `tac_mod`, payload fields. (Echo *Combat* fields.)
-- **Dropped and genuinely present:** grab state `left/right_holding_onto`
-  (~10% of player-frames), per-player `packet_loss_ratio` (~7%), analog
-  `*_shoulder_pressed[2]` (~31% of frames). These are the real gaps.
+- ~~**Dropped and genuinely present:** grab state, `packet_loss_ratio`, analog
+  shoulder~~ — **all three now have v2 homes and round-trip** (the §6 superset
+  landed): `GrabChanged` event, `PlayerState.packet_loss_ratio`, and all four
+  `EchoArenaFrame` shoulder fields including the `_2` variants. Loadout
+  (`weapon`/`ordnance`/`tac_mod`) likewise, via `LoadoutChanged`.
 - **Not actually lost (already represented):**
   - `has_possession` → `PlayerState.flags` bit 3, and `disc_holder_slot` (frame).
-  - round scores + `game_clock_display` → `ScoreboardUpdated` event.
+  - round scores → `ScoreboardUpdated` event (seeded at frame 0, so the opening
+    scoreboard is recorded — `pkg/events/sensor_scoreboard.go`).
   - per-player names/account/jersey/level → `initial_roster` + `PlayerJoined`.
   - **`possession[]` (engine field 23) — fully redundant, intentionally not
     added.** It is `[team, in-team-player-index]`, proven on alienq to agree
     with `has_possession` 100% (0 frames where one knew the holder and the other
     didn't). See `TestPossessionProbe`. The team is derivable from the roster.
+    Rebuilt by `reconstructPossession` (`reconstruct.go:381`).
+  - **`Team.stats` — derived, not stored.** Summing the team's players
+    reproduces it exactly: measured on 7,470 team-frames, all eleven integer
+    counters exact, and `possession_time` exact in 4,269 with the remainder
+    inside 7e-5 (float accumulation order). `sumTeamStats` in `reconstruct.go`.
+  - **`game_clock_display` — derived, not stored.** It is a pure formatting of
+    the per-frame `game_clock`: `trunc(clock*100)` centiseconds rendered
+    `"%02d:%02d.%02d"` (the engine truncates, does not round; minutes are
+    zero-padded). Exact on 13,840 real frames. It was previously read from the
+    `ScoreboardUpdated` sample, which fires only on a score change, so it was
+    stale between goals and empty before the first — wrong on 100% of frames in
+    both available recordings. Same reasoning as `possession[]`: redundant and
+    reconstructable, so reconstruct it. See CLOCK-001.
 
 ## 4. Round-trip
 
 - **Lossless today:** `echoreplay ↔ echoreplay` via the v1 codec (full
   `SessionResponse`).
-- **Lossy today:** `echoreplay → v2`. And there is **no** `v2 → echoreplay`
-  path, so "round-trip an echoreplay through v2" is not currently possible at
-  all.
-- **Goal:** make v2 a **superset** so `echoreplay → v2 → echoreplay` is
-  byte/field identical. That needs both the proto additions in §6 **and** a
-  v2→echoreplay reconstructor (replay header + frames + events to rebuild each
-  per-frame `SessionResponse`). The reconstructor is not built yet.
+- **`echoreplay → v2 → echoreplay` runs today** and is exact on every
+  recoverable field — `TestRoundTripBAC`, 0 mismatches on the committed sample
+  (max magnitude deviation 5e-6, max orientation 2.4e-3, both inside tolerance).
+  The reconstructor **is** built (§1).
+- **What still does not round-trip** (measured; `TestRoundTripBAC` reports this as
+  a finding):
+  - `last_throw` — the engine reports only the **local player's** last throw
+    (local-player-only), so the value in a Spark recording is one player's
+    perspective. v2 carries throws as `DiscThrown` events; reconstructing
+    `last_throw` from them would fabricate data for every other player. See
+    gh #35 (CANONICAL-001 §2) — a known limitation, not a fixable defect, until
+    the local-player identity problem is solved upstream.
+- **Goal:** v2 is a working superset for the recoverable lane (kinematics +
+  identity + loadout + grab + disc + scores). `last_score` (LASTSCORE-001),
+  per-frame `jersey_number` / `level` (ROSTER-001), and the scoreboard seed
+  round-trip; `last_throw` is the one remaining field-level gap and is by
+  design.
 
 ## 5. Identity / roster reconstruction (the per-frame state is anonymized)
 
@@ -97,13 +144,16 @@ from events:
   (`TestRosterRebuildAudit`: 12 joins + 7 leaves recover all 234,482
   player-frames, 0 wrong, 0 missing). This is what GH #34 (`Session.RosterAt`)
   formalizes.
-- **Risk:** GH issue #18 (silent event loss on a full channel). If a join is
-  dropped during conversion, that slot goes anonymous. Did not occur on alienq
-  (19 events total). Fix #18 before relying on roster reconstruction at scale.
+- **Risk (addressed):** GH #18 (silent event loss on a full channel) is FIXED
+  (EVENTDROP-001) — the detector's drop counters are surfaced in `ConvertResult`
+  and warned on by `tapedeck convert`, and conversion drains the events channel
+  every frame, so a join cannot be dropped. Roster reconstruction is safe.
 
 ## 6. The superset plan (proto change in `nevr-proto/telemetry/v2/echo_arena.proto`)
 
-Placed by §2's rule — nothing constant or rare gets propagated per-frame:
+Placed by §2's rule — nothing constant or rare gets propagated per-frame.
+
+**SHIPPED** — all of the following are in the proto and wired end to end:
 
 - **Per-frame:** `packet_loss_ratio` on `PlayerState`; the capture client's analog
   shoulder input (`left/right_shoulder_pressed` + alternate) on `EchoArenaFrame`
@@ -115,22 +165,66 @@ Placed by §2's rule — nothing constant or rare gets propagated per-frame:
 - **Header** (constant): `EchoArenaHeader.session_ip`.
 - **Not added:** `possession[]` (redundant — §3).
 
+**Also SHIPPED (2.1.0)** — placement measured on the dal1 corpus rather than
+assumed, per §2's rule:
+
+| addition | where | why there |
+|---|---|---|
+| `rules_changed_by`, `rules_changed_at` | header | invariant across every frame of 15 sampled captures |
+| `team_names` | header | constant per capture (25/25); NOT derivable from `Role` — custom names exist |
+| `err_code`, `blue/orange_team_restart_request` | frame | measured 0 everywhere, but transient flags; proto3 makes a zero field free |
+| `PauseDetail` (`unpaused_team`, `paused_requested_team`, both timers) | frame | nil outside an active pause |
+| `PAUSE_STATE_NONE`, `PAUSE_STATE_PAUSED_REQUESTED` | enum | "none" and "paused_requested" were narrowed away and unrecoverable |
+| `PlayerState.possession_time` | frame | 29.4 changes per 100 frames |
+| `PlayerStatsUpdated` (11 counters) | event | 0.6 changes per 100 frames |
+| `EVENT_TYPE_LOADOUT_CHANGED` / `_GRAB_CHANGED` / `_PLAYER_STATS_UPDATED` | enum | without them those events never reached the footer index |
+
+**Still needed:** nothing for the fields above. What remains is `last_throw`
+(gh #35, CANONICAL-001 §2 — local-player-only). `last_score` (LASTSCORE-001),
+per-frame `jersey_number` / `level` (ROSTER-001), and the scoreboard seed
+(CLOCK-001) all ship.
+
 Ship path: edit proto → CI `buf push` on merge to `nevr-proto` main publishes
 the BSR module → `go get` the new version in tape (or `buf generate` + a local
-`replace` for dev) → wire `MapFrame` to populate it → round-trip test.
+`replace` for dev) → wire `MapFrame` to populate it → wire `reconstruct.go` to
+read it back → round-trip test. **Both directions in the same change** — a field
+written but never read is the failure mode this repo keeps repeating.
 
-## 7. Open work (also tracked in `BUGS.md`)
+## 7. Open work (also tracked as GitHub issues)
 
-- Build the v2→echoreplay reconstructor (true round-trip; §4).
-- Wire the converter for the §6 fields + a round-trip BAC test.
-- Fix GH #18 (silent event loss) — the one hole in §5.
-- Build GH #34 `Session` (roster/score/disc-holder reader layer).
+- ~~Build the v2→echoreplay reconstructor~~ — **done** (`reconstruct.go`, §1).
+- ~~Build GH #34 `Session`~~ — **done**: `OpenSession` / `RosterAt` / `LoadoutAt` /
+  `GrabAt` / `ScoreAt` / `StatsAt` / `LastGoalAt` in `pkg/conversion/session.go`;
+  `replay()` handles join/leave/switch/score/loadout/grab/player-info/stats
+  variants. `player.stats` / `team.stats` reconstruct from the engine's
+  `PlayerStatsUpdated` events (STATS-001).
+- ~~Wire `last_score`~~ — **done** (LASTSCORE-001).
+- `last_throw` — remaining; local-player-only (CANONICAL-001 §2).
+- ~~Fix GH #18 (silent event loss)~~ — **done**: drop counters surfaced on
+  `ConvertResult` (EVENTDROP-001) and `Processor` (PROCDROP-001), warned on by
+  `tapedeck convert`.
 - Deprecate v1 as a runtime dep once v2 is a superset; add a v1→v2 importer.
 
 ## 8. The audit tools (reusable receipts)
 
-In `pkg/conversion/`, all take `TAPE_AUDIT_FILE` and skip when absent:
-`roundtrip_baseline_test.go` (echoreplay round-trip), `field_loss_audit_test.go`
-(what's dropped + how often it carries data), `roster_rebuild_audit_test.go`
-(identity recovery from events), `possession_probe_test.go` (possession
-redundancy). Run them on a new recording before assuming anything about it.
+**None of these run in CI** — every one skips unless `TAPE_AUDIT_FILE` is set,
+so the numbers quoted throughout this document come from tests that only ran
+when someone ran them by hand. Re-measure before relying on any of them.
+
+In `pkg/conversion/`, taking `TAPE_AUDIT_FILE` and skipping when absent:
+
+- `field_loss_audit_test.go` — what's dropped + how often it carries data
+- `roster_rebuild_audit_test.go` — identity recovery from events
+- `possession_probe_test.go` — `possession[]` redundancy
+- `roundtrip_v2_test.go` `TestRoundTripBACAudit` — the full
+  `echoreplay → v2 → echoreplay` comparison on an external capture
+
+`TAPE_AUDIT_FILE` must be an **absolute** path: these run with the package
+directory as cwd, and a relative path silently takes the skip branch.
+
+`roundtrip_baseline_test.go` (`TestEchoReplayRoundTripFidelity`) does **not**
+take `TAPE_AUDIT_FILE` — it is hardcoded to `testdata/sample.echoreplay` and so
+runs in CI. This document previously listed it among the audit tools; it is not
+one.
+
+Run them on a new recording before assuming anything about it.

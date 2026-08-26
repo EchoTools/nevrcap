@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // TestLoadoutGrabReconstruct proves the LoadoutChanged/GrabChanged events the
@@ -38,7 +38,11 @@ func TestLoadoutGrabReconstruct(t *testing.T) {
 		if sess == nil {
 			continue
 		}
-		ea := mapper.MapFrame(v1f).GetEchoArena()
+		v2f, err := mapper.MapFrame(v1f)
+		if err != nil {
+			t.Fatalf("MapFrame frame %d: %v", v1f.GetFrameIndex(), err)
+		}
+		ea := v2f.GetEchoArena()
 
 		// Replay this frame's loadout/grab events into the running state.
 		for _, ev := range ea.GetEvents() {

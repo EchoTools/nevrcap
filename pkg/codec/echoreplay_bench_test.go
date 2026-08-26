@@ -218,7 +218,7 @@ func BenchmarkTimeParse(b *testing.B) {
 	format := "2006/01/02 15:04:05.000"
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := time.Parse(format, ts)
 		if err != nil {
 			b.Fatal(err)
@@ -230,7 +230,7 @@ func BenchmarkFastParseTimestamp(b *testing.B) {
 	tsBytes := []byte("2023/11/27 15:04:05.123")
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_, err := fastParseTimestamp(tsBytes)
 		if err != nil {
 			b.Fatal(err)
@@ -243,7 +243,7 @@ func BenchmarkTimeFormat(b *testing.B) {
 	format := "2006/01/02 15:04:05.000"
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = t.Format(format)
 	}
 }
@@ -253,7 +253,7 @@ func BenchmarkFastFormatTimestamp(b *testing.B) {
 	buf := make([]byte, 23)
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		fastFormatTimestamp(buf, t)
 	}
 }

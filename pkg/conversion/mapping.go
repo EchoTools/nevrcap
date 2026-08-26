@@ -2,6 +2,8 @@ package conversion
 
 import (
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"math"
 	"slices"
 	"time"
@@ -11,8 +13,15 @@ import (
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 
-	"github.com/echotools/tape/pkg/events"
+	"github.com/echotools/tape/v4/pkg/events"
 )
+
+// ErrTimestampOffsetOverflow is returned by MapFrame and FrameMapper.MapFrame
+// when a frame's timestamp is more than math.MaxUint32 milliseconds after
+// baseTime. TimestampOffsetMs is a uint32 delta from created_at, so an offset
+// past ~49.7 days cannot be represented; the frame is not mapped rather than
+// silently wrapping to an unrelated offset (release-audit finding R5).
+var ErrTimestampOffsetOverflow = errors.New("timestamp offset exceeds uint32 max (~49.7 days from created_at); cannot represent in TimestampOffsetMs")
 
 // gameStatusMap maps v1 string game_status to v2 GameStatus enum.
 var gameStatusMap = map[string]capturepb.GameStatus{
@@ -40,12 +49,14 @@ var matchTypeMap = map[string]capturepb.MatchType{
 
 // pauseStateMap maps v1 PauseState.paused_state strings to v2 PauseState enum.
 var pauseStateMap = map[string]capturepb.PauseState{
-	"":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"unpaused": capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
-	"paused":   capturepb.PauseState_PAUSE_STATE_PAUSED,
-	// Intentional data narrowing: v2 proto has no PAUSE_STATE_REQUESTED;
-	// "paused_requested" is treated as PAUSED.
-	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED,
+	"":       capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"none":   capturepb.PauseState_PAUSE_STATE_NONE,
+	"paused": capturepb.PauseState_PAUSE_STATE_PAUSED,
+	// 2.1.0 added PAUSE_STATE_NONE and PAUSE_STATE_PAUSED_REQUESTED, so the
+	// former narrowing of "none" onto NOT_PAUSED and "paused_requested" onto
+	// PAUSED is gone; both now round-trip exactly.
+	"unpaused":         capturepb.PauseState_PAUSE_STATE_NOT_PAUSED,
+	"paused_requested": capturepb.PauseState_PAUSE_STATE_PAUSED_REQUESTED,
 	"unpausing":        capturepb.PauseState_PAUSE_STATE_UNPAUSING,
 	"autopause_replay": capturepb.PauseState_PAUSE_STATE_AUTOPAUSE_REPLAY,
 }
@@ -63,24 +74,47 @@ func teamStringToRole(team string) capturepb.Role {
 	return capturepb.Role_ROLE_UNSPECIFIED
 }
 
-// goalTypeStringToEnum maps v1 goal_type strings to v2 GoalType enum.
+// goalTypeStringMap covers the engine's complete goal-type table, which sits
+// contiguously in echovr.exe at 0x1416e22b0-0x1416e2360. An unmapped value
+// becomes GOAL_TYPE_UNSPECIFIED and is lost, so this must stay exhaustive —
+// TestGoalTypeMapCoversEveryEngineValue fails if the engine gains one.
 var goalTypeStringMap = map[string]capturepb.GoalType{
+	"[NO GOAL]":        capturepb.GoalType_GOAL_TYPE_NO_GOAL,
+	"SLAM DUNK":        capturepb.GoalType_GOAL_TYPE_SLAM_DUNK,
 	"INSIDE SHOT":      capturepb.GoalType_GOAL_TYPE_INSIDE_SHOT,
 	"LONG SHOT":        capturepb.GoalType_GOAL_TYPE_LONG_SHOT,
 	"BOUNCE SHOT":      capturepb.GoalType_GOAL_TYPE_BOUNCE_SHOT,
 	"LONG BOUNCE SHOT": capturepb.GoalType_GOAL_TYPE_LONG_BOUNCE_SHOT,
+	"HEADBUTT":         capturepb.GoalType_GOAL_TYPE_HEADBUTT,
+	"LONG HEADBUTT":    capturepb.GoalType_GOAL_TYPE_LONG_HEADBUTT,
+	"BUMPER SHOT":      capturepb.GoalType_GOAL_TYPE_BUMPER_SHOT,
+	"LONG BUMPER SHOT": capturepb.GoalType_GOAL_TYPE_LONG_BUMPER_SHOT,
 	"SELF GOAL":        capturepb.GoalType_GOAL_TYPE_SELF_GOAL,
 }
 
+// goalTypeReverse renders a GoalType back to the engine's exact spelling.
+var goalTypeReverse = buildReverse(goalTypeStringMap, capturepb.GoalType_GOAL_TYPE_UNSPECIFIED, "")
+
+// teamRoleReverse renders a Role back to the lowercase team string the engine
+// uses in last_score.team. Distinct from roleToTeamString, which spells the
+// absent case "none" for the pause sub-fields.
+var teamRoleReverse = buildReverse(teamStringToRoleMap, capturepb.Role_ROLE_UNSPECIFIED, "")
+
+// goalTypeStringToEnum maps a v1 goal_type string to the v2 GoalType enum,
+// discarding the record of an unrecognised value. Conversion paths use
+// (*vocabulary).goalType instead so the loss is counted.
 func goalTypeStringToEnum(goalType string) capturepb.GoalType {
-	if gt, ok := goalTypeStringMap[goalType]; ok {
-		return gt
-	}
-	return capturepb.GoalType_GOAL_TYPE_UNSPECIFIED
+	return (*vocabulary)(nil).goalType(goalType)
 }
 
-// MapHeader converts a v1 TelemetryHeader to a v2 CaptureHeader.
+// MapHeader converts a v1 TelemetryHeader to a v2 CaptureHeader, discarding
+// the record of any unrecognised engine string. Conversion uses mapHeader so
+// the loss reaches ConvertResult.UnmappedValues.
 func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
+	return mapHeader(v1, nil)
+}
+
+func mapHeader(v1 *telemetryv1.TelemetryHeader, vocab *vocabulary) *capturepb.CaptureHeader {
 	if v1 == nil {
 		return nil
 	}
@@ -89,6 +123,9 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 		CaptureId:     v1.GetCaptureId(),
 		CreatedAt:     v1.GetCreatedAt(),
 		FormatVersion: 2,
+		FormatMinor:   1, // this batch ships 2.1.0
+		FormatPatch:   0,
+		FrameEncoding: capturepb.FrameEncoding_FRAME_ENCODING_SPARSE,
 		Metadata:      v1.GetMetadata(),
 	}
 
@@ -102,7 +139,7 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 				eaHeader.MapName = mapName
 			}
 			if matchType, ok := meta["match_type"]; ok {
-				eaHeader.MatchType = matchTypeMap[matchType]
+				eaHeader.MatchType = vocab.matchType(matchType)
 			}
 			if clientName, ok := meta["client_name"]; ok {
 				eaHeader.ClientName = clientName
@@ -117,9 +154,15 @@ func MapHeader(v1 *telemetryv1.TelemetryHeader) *capturepb.CaptureHeader {
 }
 
 // MapHeaderFromSession creates a CaptureHeader from a v1 TelemetryHeader
-// enriched with data from the first SessionResponse frame.
+// enriched with data from the first SessionResponse frame, discarding the
+// record of any unrecognised engine string. Conversion uses
+// mapHeaderFromSession so the loss reaches ConvertResult.UnmappedValues.
 func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.SessionResponse) *capturepb.CaptureHeader {
-	header := MapHeader(v1hdr)
+	return mapHeaderFromSession(v1hdr, session, nil)
+}
+
+func mapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.SessionResponse, vocab *vocabulary) *capturepb.CaptureHeader {
+	header := mapHeader(v1hdr, vocab)
 	if header == nil {
 		return nil
 	}
@@ -144,7 +187,7 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 		eaHeader.MapName = session.GetMapName()
 	}
 	if eaHeader.MatchType == capturepb.MatchType_MATCH_TYPE_UNSPECIFIED {
-		eaHeader.MatchType = matchTypeMap[session.GetMatchType()]
+		eaHeader.MatchType = vocab.matchType(session.GetMatchType())
 	}
 	if eaHeader.ClientName == "" {
 		eaHeader.ClientName = session.GetClientName()
@@ -156,11 +199,44 @@ func MapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 		eaHeader.SessionIp = session.GetSessionIp()
 	}
 
+	// Session constants measured invariant across every frame of 15 sampled
+	// captures, so they are written once rather than per frame.
+	if eaHeader.RulesChangedBy == "" {
+		eaHeader.RulesChangedBy = session.GetRulesChangedBy()
+	}
+	if eaHeader.RulesChangedAt == 0 {
+		eaHeader.RulesChangedAt = session.GetRulesChangedAt()
+	}
+
+	// Team display names, indexed by team. Not derivable from Role: private and
+	// tournament matches use custom names. Constant within a capture (measured
+	// 25/25), so they ride the header.
+	if names := buildTeamNames(session.GetTeams()); len(names) > 0 {
+		eaHeader.TeamNames = names
+	}
+
 	if roster := buildInitialRoster(session.GetTeams()); len(roster) > 0 {
 		eaHeader.InitialRoster = roster
 	}
 
 	return header
+}
+
+// buildTeamNames collects team display names in team-array order, returning nil
+// when every name is empty so an all-blank capture costs nothing on the wire.
+func buildTeamNames(teams []*enginev1.Team) []string {
+	names := make([]string, 0, len(teams))
+	any := false
+	for _, team := range teams {
+		if team.GetTeamName() != "" {
+			any = true
+		}
+		names = append(names, team.GetTeamName())
+	}
+	if !any {
+		return nil
+	}
+	return names
 }
 
 // buildInitialRoster builds the v2 initial roster from the session's teams.
@@ -202,25 +278,68 @@ func rosterRole(teamIdx int, jersey int32) capturepb.Role {
 type FrameMapper struct {
 	BaseTime    time.Time
 	RoundNumber int32
-	// Per-slot previous loadout/grab, for emitting change events.
+	// Per-slot previous loadout/grab/stats/roster-info, for emitting change events.
 	prevLoadout map[int32]loadoutState
 	prevGrab    map[int32]grabState
+	prevStats   map[int32]statCounters
+	prevInfo    map[int32]rosterInfo
+	// vocab accumulates engine strings no conversion table recognised
+	// (VOCAB-001). Nil is valid and records nothing.
+	vocab *vocabulary
 }
+
+// Unmapped returns the engine strings this mapper could not translate, ordered
+// by field then value. Non-empty means the tape is not a complete record of its
+// source: an unrecognised value converts to *_UNSPECIFIED and renders back as
+// the empty string, so the loss is otherwise silent (VOCAB-001).
+func (m *FrameMapper) Unmapped() []UnmappedValue {
+	return m.vocab.sorted()
+}
+
+// rosterInfo holds the roster attributes that are session-constant by intent but
+// are reported as 0 by the engine for the first frames after a join.
+type rosterInfo struct{ jersey, level int32 }
 
 type loadoutState struct{ weapon, ordnance, tacMod string }
 type grabState struct{ left, right string }
+
+// statCounters holds the eleven integer counters of the engine's per-player
+// stats block. possession_time is excluded: it ticks continuously and rides
+// PlayerState per-frame instead, so including it here would turn a rare event
+// into a per-frame one.
+type statCounters struct {
+	points, saves, goals, stuns, passes, catches int32
+	steals, blocks, interceptions, assists       int32
+	shotsTaken                                   int32
+}
+
+func countersFrom(s *enginev1.PlayerStats) statCounters {
+	return statCounters{
+		points: s.GetPoints(), saves: s.GetSaves(), goals: s.GetGoals(),
+		stuns: s.GetStuns(), passes: s.GetPasses(), catches: s.GetCatches(),
+		steals: s.GetSteals(), blocks: s.GetBlocks(),
+		interceptions: s.GetInterceptions(), assists: s.GetAssists(),
+		shotsTaken: s.GetShotsTaken(),
+	}
+}
 
 // Reset clears the mapper's accumulated state for a new conversion session.
 func (m *FrameMapper) Reset() {
 	m.RoundNumber = 0
 	m.prevLoadout = nil
 	m.prevGrab = nil
+	m.prevStats = nil
+	m.prevInfo = nil
+	m.vocab = nil
 }
 
 // MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame using the
 // mapper's accumulated state. It updates RoundNumber when a RoundStarted
-// event is present on the frame.
-func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capturepb.Frame {
+// event is present on the frame. It returns an error wrapping
+// ErrTimestampOffsetOverflow when the frame's timestamp offset from BaseTime
+// exceeds the v2 TimestampOffsetMs uint32 range, so the conversion pipeline can
+// abort instead of writing a tape with silently wrapped offsets (R5).
+func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) (*capturepb.Frame, error) {
 	// Scan events for RoundStarted to update round number.
 	for _, evt := range v1f.GetEvents() {
 		if rs, ok := evt.GetEvent().(*telemetryv1.LobbySessionEvent_RoundStarted); ok {
@@ -228,9 +347,12 @@ func (m *FrameMapper) MapFrame(v1f *telemetryv1.LobbySessionStateFrame) *capture
 		}
 	}
 
-	frame := mapFrame(v1f, m.BaseTime, m.RoundNumber)
+	frame, err := mapFrame(v1f, m.BaseTime, m.RoundNumber, m.vocab)
+	if err != nil {
+		return nil, fmt.Errorf("FrameMapper.MapFrame: %w", err)
+	}
 	m.appendLoadoutGrabEvents(v1f, frame)
-	return frame
+	return frame, nil
 }
 
 // appendLoadoutGrabEvents detects per-player loadout (weapon/ordnance/tac-mod)
@@ -247,6 +369,8 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 	if m.prevLoadout == nil {
 		m.prevLoadout = make(map[int32]loadoutState)
 		m.prevGrab = make(map[int32]grabState)
+		m.prevStats = make(map[int32]statCounters)
+		m.prevInfo = make(map[int32]rosterInfo)
 	}
 
 	type entry struct {
@@ -286,6 +410,55 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 			m.prevLoadout[e.slot] = ld
 		}
 
+		// Roster attributes, corrected after the join snapshot. The engine
+		// reports jersey/level as 0 for the first frames after a join, so the
+		// value PlayerJoined captured is not necessarily final. Seeded on first
+		// sighting (the join value is already on PlayerJoined, so the seed
+		// emits nothing); afterwards any change becomes a delta. See ROSTER-001.
+		ri := rosterInfo{jersey: e.tm.GetJerseyNumber(), level: e.tm.GetLevel()}
+		if prev, ok := m.prevInfo[e.slot]; !ok {
+			m.prevInfo[e.slot] = ri
+		} else if prev != ri {
+			ea.Events = append(ea.Events, &capturepb.EchoEvent{
+				Event: &capturepb.EchoEvent_PlayerInfoUpdated{
+					PlayerInfoUpdated: &capturepb.PlayerInfoUpdated{
+						PlayerSlot:   e.slot,
+						JerseyNumber: ri.jersey,
+						Level:        ri.level,
+					},
+				},
+			})
+			m.prevInfo[e.slot] = ri
+		}
+
+		// The engine's own stat counters, seeded on first sighting so a capture
+		// starting mid-match records its opening totals (they carry a
+		// pre-capture baseline and cannot be rebuilt by counting events).
+		if st := e.tm.GetStats(); st != nil {
+			sc := countersFrom(st)
+			if prev, ok := m.prevStats[e.slot]; !ok || prev != sc {
+				ea.Events = append(ea.Events, &capturepb.EchoEvent{
+					Event: &capturepb.EchoEvent_PlayerStatsUpdated{
+						PlayerStatsUpdated: &capturepb.PlayerStatsUpdated{
+							PlayerSlot:    e.slot,
+							Points:        sc.points,
+							Saves:         sc.saves,
+							Goals:         sc.goals,
+							Stuns:         sc.stuns,
+							Passes:        sc.passes,
+							Catches:       sc.catches,
+							Steals:        sc.steals,
+							Blocks:        sc.blocks,
+							Interceptions: sc.interceptions,
+							Assists:       sc.assists,
+							ShotsTaken:    sc.shotsTaken,
+						},
+					},
+				})
+				m.prevStats[e.slot] = sc
+			}
+		}
+
 		gr := grabState{e.tm.GetLeftHoldingOnto(), e.tm.GetRightHoldingOnto()}
 		if prev, ok := m.prevGrab[e.slot]; !ok || prev != gr {
 			ea.Events = append(ea.Events, &capturepb.EchoEvent{
@@ -302,22 +475,38 @@ func (m *FrameMapper) appendLoadoutGrabEvents(v1f *telemetryv1.LobbySessionState
 	}
 }
 
-// MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame.
-// baseTime is the capture creation time, used to compute timestamp_offset_ms.
-func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) *capturepb.Frame {
-	return mapFrame(v1f, baseTime, 0)
+// MapFrame converts a v1 LobbySessionStateFrame to a v2 Frame, discarding the
+// record of any unrecognised engine string. baseTime is the capture creation
+// time, used to compute timestamp_offset_ms. Conversion goes through
+// FrameMapper.MapFrame so the loss reaches ConvertResult.UnmappedValues. It
+// returns an error wrapping ErrTimestampOffsetOverflow when the frame's
+// timestamp offset from baseTime exceeds the v2 TimestampOffsetMs uint32 range
+// (R5).
+func MapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time) (*capturepb.Frame, error) {
+	frame, err := mapFrame(v1f, baseTime, 0, nil)
+	if err != nil {
+		return nil, fmt.Errorf("MapFrame: %w", err)
+	}
+	return frame, nil
 }
 
-func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32) *capturepb.Frame {
+func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, roundNumber int32, vocab *vocabulary) (*capturepb.Frame, error) {
 	if v1f == nil {
-		return nil
+		return nil, nil
 	}
 
 	frameTime := v1f.GetTimestamp().AsTime()
 	// Clamp to zero if frame predates baseTime — prevents uint32 wrap from
 	// a negative Sub() result.
 	diffMs := max(frameTime.Sub(baseTime).Milliseconds(), 0)
-	offsetMs := uint32(diffMs) //nolint:gosec // duration fits uint32 for game sessions
+	// A positive offset past the uint32 field's range cannot be represented.
+	// Erroring rather than wrapping makes the loss loud (R5); the frame is not
+	// mapped because any offset we wrote would be silently wrong.
+	if diffMs > math.MaxUint32 {
+		return nil, fmt.Errorf("mapFrame: frame %d timestamp offset %d ms exceeds uint32 max (~49.7 days): %w",
+			v1f.GetFrameIndex(), diffMs, ErrTimestampOffsetOverflow)
+	}
+	offsetMs := uint32(diffMs)
 
 	frame := &capturepb.Frame{
 		FrameIndex:        v1f.GetFrameIndex(),
@@ -326,22 +515,31 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 
 	session := v1f.GetSession()
 	if session == nil {
-		return frame
+		return frame, nil
 	}
 
 	ea := &capturepb.EchoArenaFrame{
-		GameStatus:   gameStatusMap[session.GetGameStatus()],
+		GameStatus:   vocab.gameStatus(session.GetGameStatus()),
 		GameClock:    float32(session.GetGameClock()),
 		BluePoints:   session.GetBluePoints(),
 		OrangePoints: session.GetOrangePoints(),
 	}
 
-	// Map pause state.
+	// Map pause state. The sub-fields ride a per-frame message that stays nil
+	// unless a pause is actually in progress.
 	if pause := session.GetPause(); pause != nil {
-		if ps, ok := pauseStateMap[pause.GetPausedState()]; ok {
-			ea.PauseState = ps
+		ea.PauseState = vocab.pauseState(pause.GetPausedState())
+		if detail := mapPauseDetail(pause); detail != nil {
+			ea.PauseDetail = detail
 		}
 	}
+
+	// Transient request flags. Measured 0 on every sampled frame; proto3 writes
+	// nothing for a zero value, so carrying them per-frame is free and stays
+	// correct if they ever toggle.
+	ea.ErrCode = session.GetErrCode()
+	ea.BlueTeamRestartRequest = session.GetBlueTeamRestartRequest()
+	ea.OrangeTeamRestartRequest = session.GetOrangeTeamRestartRequest()
 
 	// Map disc.
 	if disc := session.GetDisc(); disc != nil {
@@ -351,12 +549,16 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	// Map players from teams.
 	ea.Players = mapPlayers(session.GetTeams())
 
-	// Find disc holder.
+	// Find disc holder. First possessor wins, matching findPossessorSlot
+	// (pkg/events/sensor_disc.go) so the frame's disc_holder_slot never
+	// disagrees with the DiscPossessionChanged events for the same frame.
+possessor:
 	for _, team := range session.GetTeams() {
 		for _, p := range team.GetPlayers() {
 			if p.GetHasPossession() {
 				slot := p.GetSlotNumber()
 				ea.DiscHolderSlot = &slot
+				break possessor
 			}
 		}
 	}
@@ -372,7 +574,7 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	// Map events from v1.
-	ea.Events = mapEvents(v1f.GetEvents())
+	ea.Events = mapEvents(v1f.GetEvents(), vocab)
 
 	// Set round number from conversion state.
 	ea.RoundNumber = roundNumber
@@ -398,7 +600,30 @@ func mapFrame(v1f *telemetryv1.LobbySessionStateFrame, baseTime time.Time, round
 	}
 
 	frame.Payload = &capturepb.Frame_EchoArena{EchoArena: ea}
-	return frame
+	return frame, nil
+}
+
+// mapPauseDetail carries the PauseState sub-fields the per-frame enum cannot
+// express. Returns nil when all four are at their zero value, which is every
+// frame outside an active pause.
+func mapPauseDetail(pause *enginev1.PauseState) *capturepb.PauseDetail {
+	unpausedTeam := teamStringToRole(pause.GetUnpausedTeam())
+	requestedTeam := teamStringToRole(pause.GetPausedRequestedTeam())
+	unpausedTimer := float32(pause.GetUnpausedTimer())
+	pausedTimer := float32(pause.GetPausedTimer())
+
+	if unpausedTeam == capturepb.Role_ROLE_UNSPECIFIED &&
+		requestedTeam == capturepb.Role_ROLE_UNSPECIFIED &&
+		unpausedTimer == 0 && pausedTimer == 0 {
+		return nil
+	}
+
+	return &capturepb.PauseDetail{
+		UnpausedTeam:        unpausedTeam,
+		PausedRequestedTeam: requestedTeam,
+		UnpausedTimer:       unpausedTimer,
+		PausedTimer:         pausedTimer,
+	}
 }
 
 func mapDisc(disc *enginev1.Disc) *capturepb.DiscState {
@@ -501,6 +726,10 @@ func mapPlayers(teams []*enginev1.Team) []*capturepb.PlayerState {
 				Ping: uint32(member.GetPing()), //nolint:gosec // ping is non-negative
 			}
 			ps.PacketLossRatio = float32(member.GetPacketLossRatio())
+			// Ticks continuously while a player holds the disc (29.4 changes
+			// per 100 frames measured), so it is per-frame rather than an
+			// event. The other eleven stats fields ride PlayerStatsUpdated.
+			ps.PossessionTime = float32(member.GetStats().GetPossessionTime())
 
 			// Map head pose.
 			if head := member.GetHead(); head != nil {
@@ -631,14 +860,14 @@ func float32SliceToBytes(fs []float32) []byte {
 }
 
 // mapEvents converts v1 LobbySessionEvent list to v2 EchoEvent list.
-func mapEvents(v1Events []*telemetryv1.LobbySessionEvent) []*capturepb.EchoEvent {
+func mapEvents(v1Events []*telemetryv1.LobbySessionEvent, vocab *vocabulary) []*capturepb.EchoEvent {
 	if len(v1Events) == 0 {
 		return nil
 	}
 
 	result := make([]*capturepb.EchoEvent, 0, len(v1Events))
 	for _, v1e := range v1Events {
-		if v2e := mapEvent(v1e); v2e != nil {
+		if v2e := mapEvent(v1e, vocab); v2e != nil {
 			result = append(result, v2e)
 		}
 	}
@@ -648,7 +877,7 @@ func mapEvents(v1Events []*telemetryv1.LobbySessionEvent) []*capturepb.EchoEvent
 // mapEvent converts a single v1 LobbySessionEvent to a v2 EchoEvent.
 // Both packages define the same event sub-message types with the same fields,
 // so we can copy field-by-field.
-func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
+func mapEvent(v1e *telemetryv1.LobbySessionEvent, vocab *vocabulary) *capturepb.EchoEvent {
 	if v1e == nil {
 		return nil
 	}
@@ -663,13 +892,19 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 			},
 		}
 	case *telemetryv1.LobbySessionEvent_RoundPaused:
-		evt.Event = &capturepb.EchoEvent_RoundPaused{
-			RoundPaused: &capturepb.RoundPaused{},
+		rp := &capturepb.RoundPaused{}
+		if ps := e.RoundPaused.GetPauseState(); ps != nil {
+			rp.PauseState = vocab.pauseState(ps.GetPausedState())
+			rp.RequestingTeam = teamStringToRole(ps.GetPausedRequestedTeam())
+			rp.PauseTimer = float32(ps.GetPausedTimer())
 		}
+		evt.Event = &capturepb.EchoEvent_RoundPaused{RoundPaused: rp}
 	case *telemetryv1.LobbySessionEvent_RoundUnpaused:
-		evt.Event = &capturepb.EchoEvent_RoundUnpaused{
-			RoundUnpaused: &capturepb.RoundUnpaused{},
+		ru := &capturepb.RoundUnpaused{}
+		if ps := e.RoundUnpaused.GetPauseState(); ps != nil {
+			ru.PauseState = vocab.pauseState(ps.GetPausedState())
 		}
+		evt.Event = &capturepb.EchoEvent_RoundUnpaused{RoundUnpaused: ru}
 	case *telemetryv1.LobbySessionEvent_RoundEnded:
 		evt.Event = &capturepb.EchoEvent_RoundEnded{
 			RoundEnded: &capturepb.RoundEnded{
@@ -732,11 +967,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 	case *telemetryv1.LobbySessionEvent_DiscPossessionChanged:
 		playerSlot := e.DiscPossessionChanged.GetPlayerSlot()
 		prevSlot := e.DiscPossessionChanged.GetPreviousPlayerSlot()
+		dc := &capturepb.DiscPossessionChanged{}
+		if playerSlot != -1 {
+			dc.PlayerSlot = &playerSlot
+		}
+		if prevSlot != -1 {
+			dc.PreviousPlayerSlot = &prevSlot
+		}
 		evt.Event = &capturepb.EchoEvent_DiscPossessionChanged{
-			DiscPossessionChanged: &capturepb.DiscPossessionChanged{
-				PlayerSlot:         &playerSlot,
-				PreviousPlayerSlot: &prevSlot,
-			},
+			DiscPossessionChanged: dc,
 		}
 	case *telemetryv1.LobbySessionEvent_DiscThrown:
 		dt := &capturepb.DiscThrown{
@@ -773,12 +1012,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 		if sd := e.GoalScored.GetScoreDetails(); sd != nil {
 			gs.DiscSpeed = float32(sd.GetDiscSpeed())
 			gs.Team = teamStringToRole(sd.GetTeam())
-			gs.GoalType = goalTypeStringToEnum(sd.GetGoalType())
+			gs.GoalType = vocab.goalType(sd.GetGoalType())
 			gs.PointAmount = sd.GetPointAmount()
 			gs.DistanceThrown = float32(sd.GetDistanceThrown())
-			// PersonScored and AssistScored are display names in v1;
-			// ScorerSlot and AssistSlot are slot indices in v2 and cannot
-			// be resolved from names alone, so they remain at zero values.
+			gs.PersonScored = sd.GetPersonScored()
+			gs.AssistScored = sd.GetAssistScored()
+			// ScorerSlot / AssistSlot are slot indices in v2 and cannot be
+			// resolved from v1 display names alone, so they remain zero; the
+			// real scorer slot rides the parallel PlayerGoal event, and the
+			// display names now survive on PersonScored / AssistScored.
 		}
 		evt.Event = &capturepb.EchoEvent_GoalScored{
 			GoalScored: gs,
@@ -814,12 +1056,15 @@ func mapEvent(v1e *telemetryv1.LobbySessionEvent) *capturepb.EchoEvent {
 		}
 	case *telemetryv1.LobbySessionEvent_PlayerSteal:
 		victimSlot := e.PlayerSteal.GetVictimPlayerSlot()
+		ps := &capturepb.PlayerSteal{
+			PlayerSlot:  e.PlayerSteal.GetPlayerSlot(),
+			TotalSteals: e.PlayerSteal.GetTotalSteals(),
+		}
+		if victimSlot != -1 {
+			ps.VictimPlayerSlot = &victimSlot
+		}
 		evt.Event = &capturepb.EchoEvent_PlayerSteal{
-			PlayerSteal: &capturepb.PlayerSteal{
-				PlayerSlot:       e.PlayerSteal.GetPlayerSlot(),
-				TotalSteals:      e.PlayerSteal.GetTotalSteals(),
-				VictimPlayerSlot: &victimSlot,
-			},
+			PlayerSteal: ps,
 		}
 	case *telemetryv1.LobbySessionEvent_PlayerBlock:
 		evt.Event = &capturepb.EchoEvent_PlayerBlock{

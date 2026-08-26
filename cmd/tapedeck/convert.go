@@ -2,15 +2,18 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/conversion"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
@@ -121,8 +124,17 @@ Output files are written alongside the input with .tape extension unless
 			}()
 
 			var converted, skipped, failed atomic.Int32
-			var totalFrames, totalEvents atomic.Uint32
+			var totalFrames, totalEvents, unparsedLines, droppedBones atomic.Uint32
+			var droppedFrames, droppedEvents atomic.Uint64
 			var errs []string
+			// Inputs whose lines the reader could not parse. A tape built from
+			// such a file is not a complete record of its source, so it is
+			// called out rather than folded into the frame count.
+			var lossy []string
+			// Engine strings no conversion table recognised, aggregated across
+			// every input so a corpus pass reports the vocabulary gap once
+			// rather than per file (VOCAB-001).
+			unmapped := map[string]uint32{}
 
 			for res := range results {
 				if bar != nil {
@@ -140,6 +152,25 @@ Output files are written alongside the input with .tape extension unless
 				converted.Add(1)
 				totalFrames.Add(res.result.FrameCount)
 				totalEvents.Add(res.result.EventCount)
+				if n := res.result.SkippedLines; n > 0 {
+					unparsedLines.Add(n)
+					lossy = append(lossy, fmt.Sprintf("  %s: %d line(s) unparsed, %d frame(s) kept",
+						res.item.input, n, res.result.FrameCount))
+				}
+				if n := res.result.DroppedBones; n > 0 {
+					droppedBones.Add(n)
+					lossy = append(lossy, fmt.Sprintf("  %s: %d bones payload(s) unparsed",
+						res.item.input, n))
+				}
+				for _, u := range res.result.UnmappedValues {
+					unmapped[u.Field+" = "+strconv.Quote(u.Value)] += u.Count
+				}
+				if n := res.result.DroppedFrames; n > 0 {
+					droppedFrames.Add(n)
+				}
+				if n := res.result.DroppedEvents; n > 0 {
+					droppedEvents.Add(n)
+				}
 			}
 
 			if bar != nil {
@@ -152,6 +183,30 @@ Output files are written alongside the input with .tape extension unless
 				converted.Load(), skipped.Load(), failed.Load())
 			printf(cmd.OutOrStdout(), "total frames: %d, total events: %d\n",
 				totalFrames.Load(), totalEvents.Load())
+
+			if n := droppedBones.Load(); n > 0 {
+				printf(cmd.OutOrStdout(),
+					"unparsed bones payloads: %d — those frames converted WITHOUT their bone data\n", n)
+			}
+
+			if n := unparsedLines.Load(); n > 0 {
+				printf(cmd.OutOrStdout(),
+					"unparsed lines: %d — output is NOT a complete record of its source\n", n)
+				println(cmd.ErrOrStderr(), "\nunparsed input:")
+				for _, l := range lossy {
+					println(cmd.ErrOrStderr(), l)
+				}
+			}
+
+			if len(unmapped) > 0 {
+				printf(cmd.OutOrStdout(),
+					"unmapped engine values: %d distinct — these convert to UNSPECIFIED and are LOST\n",
+					len(unmapped))
+				println(cmd.ErrOrStderr(), "\nunmapped engine values:")
+				for _, k := range slices.Sorted(maps.Keys(unmapped)) {
+					println(cmd.ErrOrStderr(), fmt.Sprintf("  %s (%d occurrence(s))", k, unmapped[k]))
+				}
+			}
 
 			if len(errs) > 0 {
 				println(cmd.ErrOrStderr(), "\nerrors:")

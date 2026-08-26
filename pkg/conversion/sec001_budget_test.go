@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
-// BUGS.md SEC-001 — decompression bomb, accumulation sites.
+// SEC-001 — decompression bomb, accumulation sites.
 //
 // BAC: the frame-accumulating entry points (OpenSession,
 // NewSessionReconstructor) must respect the reader's configured budgets and
@@ -26,8 +26,13 @@ func writeBombTapeV2(t *testing.T, path string, n int) {
 	if err := w.WriteHeader(&capturepb.CaptureHeader{}); err != nil {
 		t.Fatalf("WriteHeader: %v", err)
 	}
-	frame := &capturepb.Frame{}
-	for range n {
+	for i := range n {
+		frame := &capturepb.Frame{
+			FrameIndex: uint32(i), //nolint:gosec // loop bound is a small test constant
+			Payload: &capturepb.Frame_EchoArena{
+				EchoArena: &capturepb.EchoArenaFrame{},
+			},
+		}
 		if err := w.WriteFrame(frame); err != nil {
 			t.Fatalf("WriteFrame: %v", err)
 		}

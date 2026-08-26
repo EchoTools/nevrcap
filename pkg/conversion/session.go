@@ -6,7 +6,7 @@ import (
 	"maps"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/codec"
 )
 
 // Loadout is a player's combat loadout (weapon/ordnance/tactical-mod) at a
@@ -50,6 +50,11 @@ type Session struct {
 	loadout []map[int32]Loadout
 	grab    []map[int32]Grab
 	score   []Score
+	stats   []map[int32]*capturepb.PlayerStatsUpdated
+	// lastGoal is the most recent GoalScored as of each frame. The engine's
+	// last_score field is a carried-forward snapshot, so replaying the event
+	// forward reproduces it on every frame.
+	lastGoal []*capturepb.GoalScored
 }
 
 // NewSession builds a Session from a v2 Echo Arena header and its frames, in
@@ -58,12 +63,14 @@ type Session struct {
 // including that frame.
 func NewSession(header *capturepb.EchoArenaHeader, frames []*capturepb.Frame) *Session {
 	s := &Session{
-		header:  header,
-		frames:  frames,
-		roster:  make([]map[int32]*capturepb.PlayerInfo, len(frames)),
-		loadout: make([]map[int32]Loadout, len(frames)),
-		grab:    make([]map[int32]Grab, len(frames)),
-		score:   make([]Score, len(frames)),
+		header:   header,
+		frames:   frames,
+		roster:   make([]map[int32]*capturepb.PlayerInfo, len(frames)),
+		loadout:  make([]map[int32]Loadout, len(frames)),
+		grab:     make([]map[int32]Grab, len(frames)),
+		score:    make([]Score, len(frames)),
+		stats:    make([]map[int32]*capturepb.PlayerStatsUpdated, len(frames)),
+		lastGoal: make([]*capturepb.GoalScored, len(frames)),
 	}
 	s.replay()
 	return s
@@ -131,6 +138,31 @@ func (s *Session) GrabAt(frame int) map[int32]Grab {
 	return s.grab[frame]
 }
 
+// StatsAt returns slot -> the engine's per-player stat counters as of frame,
+// replayed from PlayerStatsUpdated events. The returned map must not be
+// mutated; it is shared across frames where nothing changed.
+//
+// These are the engine's own counters, which carry a pre-capture baseline and
+// are not the same quantity as tape's PlayerGoal/PlayerSave/... sensor events —
+// see STATS-001. possession_time is not here: it is per-frame on
+// PlayerState.
+func (s *Session) StatsAt(frame int) map[int32]*capturepb.PlayerStatsUpdated {
+	if frame < 0 || frame >= len(s.stats) {
+		return nil
+	}
+	return s.stats[frame]
+}
+
+// LastGoalAt returns the most recent GoalScored as of frame, or nil when no
+// goal has been recorded yet. The engine carries last_score forward on every
+// frame, so replaying the event reproduces it.
+func (s *Session) LastGoalAt(frame int) *capturepb.GoalScored {
+	if frame < 0 || frame >= len(s.lastGoal) {
+		return nil
+	}
+	return s.lastGoal[frame]
+}
+
 // ScoreAt returns the scoreboard snapshot for the given frame ordinal, or the
 // zero Score when out of range.
 func (s *Session) ScoreAt(frame int) Score {
@@ -151,10 +183,12 @@ func (s *Session) replay() {
 	}
 	loadout := map[int32]Loadout{}
 	grab := map[int32]Grab{}
+	stats := map[int32]*capturepb.PlayerStatsUpdated{}
 	var score Score
+	var lastGoal *capturepb.GoalScored
 
 	for i, f := range s.frames {
-		rosterDirty, loadoutDirty, grabDirty := false, false, false
+		rosterDirty, loadoutDirty, grabDirty, statsDirty := false, false, false, false
 
 		for _, ev := range f.GetEchoArena().GetEvents() {
 			switch e := ev.GetEvent().(type) {
@@ -222,6 +256,33 @@ func (s *Session) replay() {
 					Left:  gc.GetLeftHolding(),
 					Right: gc.GetRightHolding(),
 				}
+			case *capturepb.EchoEvent_GoalScored:
+				lastGoal = e.GoalScored
+			case *capturepb.EchoEvent_PlayerInfoUpdated:
+				// Corrects the join snapshot: the engine reports jersey/level
+				// as 0 for the first frames after a join.
+				iu := e.PlayerInfoUpdated
+				if cur, ok := roster[iu.GetPlayerSlot()]; ok {
+					if !rosterDirty {
+						roster = maps.Clone(roster)
+						rosterDirty = true
+					}
+					roster[iu.GetPlayerSlot()] = &capturepb.PlayerInfo{
+						Slot:          cur.GetSlot(),
+						AccountNumber: cur.GetAccountNumber(),
+						DisplayName:   cur.GetDisplayName(),
+						Role:          cur.GetRole(),
+						JerseyNumber:  iu.GetJerseyNumber(),
+						Level:         iu.GetLevel(),
+					}
+				}
+			case *capturepb.EchoEvent_PlayerStatsUpdated:
+				su := e.PlayerStatsUpdated
+				if !statsDirty {
+					stats = maps.Clone(stats)
+					statsDirty = true
+				}
+				stats[su.GetPlayerSlot()] = su
 			case *capturepb.EchoEvent_ScoreboardUpdated:
 				sb := e.ScoreboardUpdated
 				score = Score{
@@ -238,5 +299,7 @@ func (s *Session) replay() {
 		s.loadout[i] = loadout
 		s.grab[i] = grab
 		s.score[i] = score
+		s.stats[i] = stats
+		s.lastGoal[i] = lastGoal
 	}
 }

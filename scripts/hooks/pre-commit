@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-set -e
+# pre-commit hook — enforces code formatting, lint, and go.mod consistency.
+# Installed by scripts/install-hooks.sh.
+set -euo pipefail
 
 echo "Running pre-commit checks..."
 
-# Check 1: Go formatting
+# ── 1. Go formatting ──────────────────────────────────────────────────────
 echo "Checking formatting..."
 UNFORMATTED=$(gofmt -l .)
 if [ -n "$UNFORMATTED" ]; then
@@ -14,14 +16,14 @@ if [ -n "$UNFORMATTED" ]; then
   exit 1
 fi
 
-# Check 2: golangci-lint with baseline
+# ── 2. golangci-lint ──────────────────────────────────────────────────────
 echo "Running linter..."
 if ! golangci-lint run --new-from-rev=HEAD~1 ./...; then
   echo "ERROR: Linting failed. Fix the issues above."
   exit 1
 fi
 
-# Check 3: go.mod consistency
+# ── 3. go.mod consistency ─────────────────────────────────────────────────
 echo "Checking go.mod..."
 go mod tidy
 if ! git diff --exit-code go.mod go.sum; then

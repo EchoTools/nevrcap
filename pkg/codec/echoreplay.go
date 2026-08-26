@@ -62,6 +62,10 @@ type EchoReplay struct {
 
 	// skippedFrames counts lines that failed to parse and were skipped.
 	skippedFrames uint32
+	// droppedBones counts bones payloads present on a line but unparseable.
+	// Distinct from skippedFrames: the session parsed, so the frame survives
+	// and the line is not skipped — only the bones are gone.
+	droppedBones uint32
 	// eof is set when ReadFrame encounters io.EOF.
 	eof bool
 
@@ -74,6 +78,14 @@ type EchoReplay struct {
 // SkippedFrames returns the number of frames skipped due to parse errors.
 func (e *EchoReplay) SkippedFrames() uint32 {
 	return e.skippedFrames
+}
+
+// DroppedBones returns the number of bones payloads that were present on a line
+// but could not be parsed. Such a frame is still returned, with its session
+// intact and its bones absent, so this loss is invisible to SkippedFrames.
+// Non-zero means the capture's bone data is incomplete (CANONICAL-001 §3).
+func (e *EchoReplay) DroppedBones() uint32 {
+	return e.droppedBones
 }
 
 // EchoReplayFrame represents a frame in the .echoreplay format
@@ -109,20 +121,37 @@ func NewEchoReplayReader(filename string, opts ...ReaderOption) (*EchoReplay, er
 }
 
 func NewEchoReplayReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*EchoReplay, error) {
-	zipReader, err := zip.OpenReader(filename)
+	zipped, err := fileStartsWith(filename, zipMagic)
 	if err != nil {
 		return nil, err
 	}
 
 	codec := &EchoReplay{
-		filename:  filename,
-		zipReader: zipReader,
-		progress:  progress,
-		limits:    applyReaderOptions(opts),
+		filename: filename,
+		progress: progress,
+		limits:   applyReaderOptions(opts),
 		unmarshaler: &protojson.UnmarshalOptions{
 			DiscardUnknown: true,
 		},
 	}
+
+	if !zipped {
+		// Some recorders wrote the NDJSON directly with no zip container. The
+		// line format is identical, so only the source differs.
+		file, openErr := os.Open(filename) //nolint:gosec // filename is caller-provided path
+		if openErr != nil {
+			return nil, fmt.Errorf("codec.NewEchoReplayReaderWithProgress: %w", openErr)
+		}
+		codec.replayFile = file
+		codec.startScanner(file)
+		return codec, nil
+	}
+
+	zipReader, err := zip.OpenReader(filename)
+	if err != nil {
+		return nil, err
+	}
+	codec.zipReader = zipReader
 
 	// Initialize the scanner for streaming
 	if err := codec.initScanner(); err != nil {
@@ -170,23 +199,29 @@ func (e *EchoReplay) initScanner() error {
 		return err
 	}
 
-	var src io.Reader = reader
+	e.replayFile = reader
+	e.startScanner(reader)
+
+	return nil
+}
+
+// startScanner wires src into the line scanner, applying the progress tee and
+// the SEC-001 decoded-bytes budget. Shared by the zip and uncompressed paths,
+// which differ only in where the NDJSON comes from.
+func (e *EchoReplay) startScanner(src io.Reader) {
 	if e.progress != nil {
-		src = io.TeeReader(reader, e.progress)
+		src = io.TeeReader(src, e.progress)
 	}
 
-	// SEC-001: bound total decompressed bytes read from the zip member.
+	// SEC-001: bound total decompressed bytes read from the source.
 	src = newBudgetReader(src, e.limits.MaxDecodedBytes)
 
-	e.replayFile = reader
 	e.scanner = bufio.NewScanner(src)
 	// Set a larger buffer for long lines (some frames can be very large)
 	// Default is 64KB, increase to 10MB
 	const maxScannerBuffer = 10 * 1024 * 1024
 	e.scanner.Buffer(make([]byte, 64*1024), maxScannerBuffer)
 	e.frameIndex = 0
-
-	return nil
 }
 
 // WriteFrame writes a frame to the .echoreplay file using optimized buffer operations
@@ -257,7 +292,7 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbyS
 		return 0
 	}
 	e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
-	e.scratchBuf = FixExponentNotation(e.scratchBuf)
+	e.scratchBuf = FixEngineFloatFormatting(e.scratchBuf)
 	dst.Write(e.scratchBuf)
 
 	// 4. Player Bones (optional) - only write if present and non-empty
@@ -272,7 +307,7 @@ func (e *EchoReplay) WriteReplayFrame(dst *bytes.Buffer, frame *telemetry.LobbyS
 
 			// Write Player Bones
 			e.scratchBuf = FixProtojsonUint64Encoding(e.scratchBuf)
-			e.scratchBuf = FixExponentNotation(e.scratchBuf)
+			e.scratchBuf = FixEngineFloatFormatting(e.scratchBuf)
 			dst.Write(e.scratchBuf)
 		}
 	}
@@ -300,65 +335,89 @@ func FixProtojsonUint64Encoding(data []byte) []byte {
 
 // fixStringEncodedNumber finds pattern (e.g. `"userid":"`) and removes the quotes around the following number.
 // Transforms: "userid":"123" -> "userid":123
+//
+// A single pass over data: each unchanged run is appended to the output once,
+// and each valid match removes exactly two bytes (the quote before the digits,
+// the last byte of pattern, and the quote after the digits). The output slice is
+// allocated lazily on the first valid match with cap len(data), so a full fix is
+// one allocation and no reallocation; input with no valid match is returned
+// unchanged. This is linear in len(data) where the previous implementation
+// re-copied the whole buffer per match (O(n^2)).
 func fixStringEncodedNumber(data []byte, pattern []byte) []byte {
-	result := data
-	offset := 0
+	lastCopied := 0 // start of the next unchanged run to append
+	searchFrom := 0 // where to resume the pattern search
+	var out []byte
 
 	for {
-		// Find the pattern starting from current offset
-		idx := bytes.Index(result[offset:], pattern)
+		// Find the pattern starting from the current search position.
+		idx := bytes.Index(data[searchFrom:], pattern)
 		if idx == -1 {
 			break
 		}
-		idx += offset // Adjust to absolute position
+		idx += searchFrom
 
 		// Position after the pattern (start of the number string)
 		numStart := idx + len(pattern)
-		if numStart >= len(result) {
+		if numStart >= len(data) {
 			break
 		}
 
 		// Find the closing quote of the number
 		numEnd := numStart
-		for numEnd < len(result) && result[numEnd] >= '0' && result[numEnd] <= '9' {
+		for numEnd < len(data) && data[numEnd] >= '0' && data[numEnd] <= '9' {
 			numEnd++
 		}
 
 		// Skip empty strings (zero digits between quotes)
 		if numEnd == numStart {
-			offset = numEnd
+			searchFrom = numEnd
 			continue
 		}
 
 		// Verify the number ends with a quote
-		if numEnd >= len(result) || result[numEnd] != '"' {
-			offset = numEnd
+		if numEnd >= len(data) || data[numEnd] != '"' {
+			searchFrom = numEnd
 			continue
 		}
 
-		// We found: pattern + digits + quote
-		// Remove: the quote before digits (last char of pattern) and the quote after digits
+		// RFC 8259 forbids leading zeros in numbers. If the digit run
+		// has more than one digit and starts with '0', skip this match
+		// — the input is either a non-numeric string (already correct
+		// with quotes) or adversarial input that would produce invalid
+		// JSON if unquoted (GH #37).
+		if numEnd-numStart > 1 && data[numStart] == '0' {
+			searchFrom = numEnd + 1
+			continue
+		}
+
+		// We found: pattern + digits + quote.
+		// Remove: the quote before digits (last char of pattern) and the quote after digits.
 		// Before: "userid":"123"
 		// After:  "userid":123
-
-		// Create new slice without the two quotes around the number
-		// Pattern ends with `:"` so we keep everything up to the last quote of pattern
 		patternEndQuote := idx + len(pattern) - 1 // Position of quote before number
 		closingQuote := numEnd                    // Position of quote after number
 
-		newLen := len(result) - 2 // Removing 2 quotes
-		newData := make([]byte, newLen)
+		if out == nil {
+			// First valid match: allocate the output once. The result is
+			// strictly shorter than the input, so cap at len(data) and append
+			// without reallocating.
+			out = make([]byte, 0, len(data))
+		}
+		out = append(out, data[lastCopied:patternEndQuote]...)
+		out = append(out, data[numStart:closingQuote]...)
 
-		// Copy: [0, patternEndQuote) + [numStart, closingQuote) + [closingQuote+1, end)
-		n := copy(newData, result[:patternEndQuote])
-		n += copy(newData[n:], result[numStart:closingQuote])
-		copy(newData[n:], result[closingQuote+1:])
-
-		result = newData
-		offset = patternEndQuote + (numEnd - numStart) // Move past the fixed number
+		// Resume after the closing quote. The unchanged suffix from
+		// closingQuote+1 onward is exactly the search region the original
+		// loop continued from after its offset advance.
+		lastCopied = closingQuote + 1
+		searchFrom = numEnd + 1
 	}
 
-	return result
+	if out == nil {
+		return data
+	}
+	out = append(out, data[lastCopied:]...)
+	return out
 }
 
 func isEscaped(data []byte, i int) bool {
@@ -568,7 +627,12 @@ func (e *EchoReplay) parseFrameLine(line []byte) (*telemetry.LobbySessionStateFr
 
 		if len(bonesData) > 0 {
 			userBones := &enginev1.PlayerBonesResponse{}
-			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err == nil {
+			// The frame is still returned when its bones do not parse — the
+			// session is intact and the line is not skipped — so the loss is
+			// invisible to skippedFrames. Count it (CANONICAL-001 §3).
+			if err := e.unmarshaler.Unmarshal(bonesData, userBones); err != nil {
+				e.droppedBones++
+			} else {
 				frame.PlayerBones = userBones
 			}
 		}
@@ -756,13 +820,18 @@ func (e *EchoReplay) parseFrameLineTo(line []byte, frame *telemetry.LobbySession
 		return fmt.Errorf("failed to unmarshal session data: %w", err)
 	}
 
-	// Parse player bones data if present
+	// Parse player bones data if present. A bones payload that does not unmarshal
+	// must not discard the line: the session is intact, so the frame is returned
+	// with its bones absent and the loss is counted rather than silently dropped
+	// (CANONICAL-001 §3). This mirrors parseFrameLine exactly — the reuse API and
+	// the allocating API agree on every line (release-audit R4).
 	if len(bonesBytes) > 0 {
 		if frame.PlayerBones == nil {
 			frame.PlayerBones = &enginev1.PlayerBonesResponse{}
 		}
 		if err := e.unmarshaler.Unmarshal(bonesBytes, frame.PlayerBones); err != nil {
-			return fmt.Errorf("failed to unmarshal player bones data: %w", err)
+			e.droppedBones++
+			frame.PlayerBones = nil
 		}
 	} else {
 		frame.PlayerBones = nil

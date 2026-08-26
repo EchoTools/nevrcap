@@ -85,12 +85,19 @@ type AsyncDetector struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
+	startOnce  sync.Once
 	stopOnce   sync.Once
+	stopped    atomic.Bool
 
 	// Reusable buffer for events to reduce allocations
 	eventBuffer []*telemetry.LobbySessionEvent
 
 	synchronous bool
+
+	// syncMu serializes the close(eventsChan) in Stop() with sends in
+	// processFrameSync so a concurrent ProcessFrame cannot panic on a
+	// channel that was closed between the ctx.Done() check and the send.
+	syncMu sync.Mutex
 
 	// Drop counters for monitoring channel back-pressure.
 	droppedFrames uint64
@@ -109,7 +116,8 @@ func (ed *AsyncDetector) DroppedEvents() uint64 {
 
 var _ Detector = (*AsyncDetector)(nil)
 
-// New creates a new event detector with goroutine-based processing
+// New creates a new event detector. In async mode it starts the background
+// processing goroutine immediately, so a caller never needs to call Start.
 func New(opts ...Option) *AsyncDetector {
 	ctx, cancel := context.WithCancel(context.Background())
 	ed := &AsyncDetector{
@@ -132,18 +140,40 @@ func New(opts ...Option) *AsyncDetector {
 	return ed
 }
 
-// Start launches the background processing goroutine
+// Start launches the background processing goroutine. It is idempotent: the
+// loop is started at most once, so calling Start more than once cannot spawn a
+// second worker racing on the shared detector state. In synchronous mode there
+// is no background loop, so Start is a no-op. A detector that has been Stop()ed
+// cannot be restarted; Start after Stop has no effect.
 func (ed *AsyncDetector) Start() {
-	ed.wg.Add(1)
-	go ed.processLoop()
+	ed.startOnce.Do(func() {
+		if ed.synchronous || ed.stopped.Load() {
+			return
+		}
+		ed.wg.Add(1)
+		go ed.processLoop()
+	})
 }
 
-// Stop gracefully shuts down the event detector
+// Stop gracefully shuts down the event detector.
+//
+// In synchronous mode Stop first cancels the context so any in-flight
+// ProcessFrame sees ctx.Done(), then acquires syncMu to wait for that
+// ProcessFrame to finish before closing the events channel. This prevents
+// a send-on-closed-channel panic when ProcessFrame and Stop are called from
+// different goroutines.
 func (ed *AsyncDetector) Stop() {
 	ed.stopOnce.Do(func() {
+		ed.stopped.Store(true)
 		ed.cancel()
 		if !ed.synchronous {
 			ed.wg.Wait()
+		} else {
+			// In sync mode there is no background goroutine, but a
+			// concurrent ProcessFrame may still be sending. Wait for it
+			// to finish, then close the channel.
+			ed.syncMu.Lock()
+			defer ed.syncMu.Unlock()
 		}
 		close(ed.eventsChan)
 	})
@@ -206,6 +236,20 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		eventsToSend := make([]*telemetry.LobbySessionEvent, len(ed.eventBuffer))
 		copy(eventsToSend, ed.eventBuffer)
 
+		// Serialize with Stop() so close(eventsChan) cannot interleave
+		// with the send. stopOnce guarantees cancel() fires before
+		// Stop acquires syncMu, so ctx.Done() is already ready when
+		// Stop holds the lock.
+		ed.syncMu.Lock()
+		defer ed.syncMu.Unlock()
+
+		select {
+		case <-ed.ctx.Done():
+			// Detector is stopping; return without sending.
+			return
+		default:
+		}
+
 		// In synchronous mode, use non-blocking send to avoid blocking ProcessFrame.
 		// This ensures ProcessFrame completes immediately in the caller's goroutine.
 		// Events are dropped if the channel is full, which is acceptable since
@@ -213,9 +257,6 @@ func (ed *AsyncDetector) processFrameSync(frame *telemetry.LobbySessionStateFram
 		select {
 		case ed.eventsChan <- eventsToSend:
 			// Events sent successfully
-		case <-ed.ctx.Done():
-			// Detector is stopping
-			return
 		default:
 			// Channel is full, drop events rather than blocking.
 			// This maintains the synchronous processing guarantee.
@@ -308,15 +349,6 @@ func (ed *AsyncDetector) addFrameToBuffer(frame *telemetry.LobbySessionStateFram
 	if ed.frameCount < len(ed.frameBuffer) {
 		ed.frameCount++
 	}
-}
-
-// getFrame returns the frame at the given offset (0 = most recent, 1 = previous, etc.)
-func (ed *AsyncDetector) getFrame(offset int) *telemetry.LobbySessionStateFrame {
-	if offset >= ed.frameCount {
-		return nil
-	}
-	idx := (ed.writeIndex - 1 - offset + len(ed.frameBuffer)) % len(ed.frameBuffer)
-	return ed.frameBuffer[idx]
 }
 
 // lastFrame returns the most recently added frame

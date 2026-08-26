@@ -32,7 +32,7 @@ func TestGoalScored_ScorerSlotAndAssistSlotStayZero(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -83,7 +83,7 @@ func TestGoalScored_DisplayNamesDropped(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	gs := v2evt.GetGoalScored()
 	if gs == nil {
 		t.Fatal("expected GoalScored event")
@@ -249,7 +249,10 @@ func TestMapFrame_SessionFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -312,7 +315,10 @@ func TestMapFrame_TeamFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -366,7 +372,10 @@ func TestMapFrame_TeamMemberFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -422,7 +431,10 @@ func TestMapFrame_AdditionalSessionFieldsDropped(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -463,7 +475,10 @@ func TestMapFrame_DiscWithPartialOrientation(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -506,7 +521,7 @@ func TestPlayerJoined_JerseyNumberAndLevelDropped(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -553,7 +568,7 @@ func TestEmotePlayed_EmoteTypePreserved(t *testing.T) {
 		},
 	}
 
-	v2evt := mapEvent(v1evt)
+	v2evt := mapEvent(v1evt, nil)
 	if v2evt == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -574,4 +589,25 @@ func TestEmotePlayed_EmoteTypePreserved(t *testing.T) {
 	// regardless of the actual emote, so the issue is in the sensor, not the
 	// mapper.
 	_ = ep.Emote
+}
+
+// Item 6 (F-8): GoalScored now carries the engine's scorer/assister display
+// names (v1 LastScore person_scored/assist_scored) into v2.
+func TestGoalScored_NamesPopulated(t *testing.T) {
+	v1e := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_GoalScored{
+			GoalScored: &telemetryv1.GoalScored{
+				ScoreDetails: &enginev1.LastScore{
+					PersonScored: "PlayerOne", AssistScored: "PlayerTwo",
+				},
+			},
+		},
+	}
+	gs := mapEvent(v1e, nil).GetGoalScored()
+	if gs.GetPersonScored() != "PlayerOne" {
+		t.Errorf("person_scored = %q, want PlayerOne", gs.GetPersonScored())
+	}
+	if gs.GetAssistScored() != "PlayerTwo" {
+		t.Errorf("assist_scored = %q, want PlayerTwo", gs.GetAssistScored())
+	}
 }

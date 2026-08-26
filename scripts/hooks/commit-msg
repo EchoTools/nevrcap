@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# commit-msg hook — validates conventional-commit prefix.
+# Installed by scripts/install-hooks.sh.
+set -euo pipefail
+
+COMMIT_MSG_FILE="$1"
+
+read -r SUBJECT < "$COMMIT_MSG_FILE"
+
+# ── Conventional-commit prefix ───────────────────────────────────────────────
+REQUIRED='^(feat|fix|docs|test|refactor|chore|build|style|perf)(\([^)]+\))?[!]?: '
+if ! echo "$SUBJECT" | grep -qE "$REQUIRED"; then
+  echo "ERROR: Commit subject must use a conventional-commit prefix."
+  echo ""
+  echo "  Required:  feat|fix|docs|test|refactor|chore|build|style|perf"
+  echo "  Got:       $SUBJECT"
+  echo ""
+  echo "  Examples:"
+  echo "    feat(codec): add uncompressed tape reader"
+  echo "    fix(conversion): round-trip pause_state on frame 0"
+  echo "    docs: record KEYFRAME-001 with commit hash and test name"
+  echo ""
+  exit 1
+fi

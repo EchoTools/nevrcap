@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
+	"sync"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
@@ -32,11 +34,28 @@ const (
 // stream, keyframe and event indexes. Because the stream is Zstd-compressed,
 // byte-offset seeking requires decompressing from the start; true random
 // access would need Zstd seekable frames (future work).
+//
+// Stream contract: exactly one WriteHeader, then any number of WriteFrame
+// calls, then one Close. Any call outside this order (a frame before the
+// header, a duplicate header, or any call after Close) returns ErrWriteOrder,
+// and a nil or payload-less frame is rejected rather than written.
+//
+// The footer's keyframe and event indexes record each frame's own frame_index
+// (the value serialized on the wire), so the indexes are always consistent with
+// the frames regardless of whether the caller's indices are sequential.
+// frame_count in the footer is the number of frames written, not the last
+// index.
+//
+// Writer is safe for concurrent use: WriteHeader, WriteFrame, and Close are
+// serialized by an internal mutex.
 type Writer struct {
+	mu         sync.Mutex
 	file       *os.File
 	encoder    *zstd.Encoder
 	eventIndex map[capturepb.EventType][]uint32
 	keyframes  []*capturepb.KeyframeEntry
+	// state tracks the stream contract (see writerState).
+	state writerState
 	// bytesWritten tracks uncompressed bytes for footer_offset.
 	bytesWritten     uint64
 	frameCount       uint32
@@ -44,13 +63,32 @@ type Writer struct {
 	keyframeInterval uint32
 }
 
+// writerState tracks where the Writer sits in the stream contract: a new
+// writer is writerStateNew until WriteHeader succeeds, then
+// writerStateHeaderWritten, and finally writerStateClosed after Close.
+type writerState uint8
+
+const (
+	writerStateNew writerState = iota
+	writerStateHeaderWritten
+	writerStateClosed
+)
+
 // NewWriter creates a writer for tape files.
 func NewWriter(filename string) (*Writer, error) {
 	return NewWriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
 }
 
-// NewWriterWithKeyframeInterval creates a writer with a custom keyframe interval.
+// NewWriterWithKeyframeInterval creates a writer with a custom keyframe
+// interval. An interval of zero is clamped to DefaultKeyframeInterval: it
+// reached `frameIndex % keyframeInterval` in WriteFrame and panicked with an
+// integer divide by zero (GH #23). events.WithFrameBufferSize answers the same
+// class of bug the same way.
 func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*Writer, error) {
+	if keyframeInterval == 0 {
+		keyframeInterval = DefaultKeyframeInterval
+	}
+
 	file, err := os.Create(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
@@ -69,17 +107,49 @@ func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*W
 	}, nil
 }
 
-// WriteHeader writes the capture header as the first envelope.
+// WriteHeader writes the capture header as the first envelope. It is an error
+// to call it twice, to call it after Close, or to call WriteFrame before it.
 func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.state == writerStateClosed {
+		return fmt.Errorf("tape: WriteHeader: %w (writer already closed)", ErrWriteOrder)
+	}
+	if w.state == writerStateHeaderWritten {
+		return fmt.Errorf("tape: WriteHeader: %w (header already written)", ErrWriteOrder)
+	}
+
 	env := &capturepb.Envelope{
 		Message: &capturepb.Envelope_Header{Header: header},
 	}
-	return w.writeEnvelope(env)
+	if err := w.writeEnvelope(env); err != nil {
+		return err
+	}
+	w.state = writerStateHeaderWritten
+	return nil
 }
 
-// WriteFrame writes a frame envelope and updates indexes.
+// WriteFrame writes a frame envelope and updates indexes. The frame must
+// arrive after WriteHeader and carry a game payload. The footer's keyframe and
+// event indexes record the frame's own frame_index, so they stay consistent
+// with the wire even for legacy captures whose stored indices are not
+// sequential.
 func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
-	frameIndex := w.frameCount
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.state != writerStateHeaderWritten {
+		return fmt.Errorf("tape: WriteFrame: %w (header not yet written, or writer closed)", ErrWriteOrder)
+	}
+	if frame == nil {
+		return fmt.Errorf("tape: WriteFrame: %w", ErrNilFrame)
+	}
+	if frame.Payload == nil {
+		return fmt.Errorf("tape: WriteFrame: %w", ErrEmptyFrame)
+	}
+
+	frameIndex := frame.GetFrameIndex()
 
 	// Track keyframe offset before writing.
 	if frameIndex%w.keyframeInterval == 0 {
@@ -106,13 +176,30 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 		return err
 	}
 
+	// The format stores frame_count as uint32 in the footer (and frame
+	// indices in keyframe/event entries as uint32).  Over 4 billion frames
+	// in one capture (~82 days at 600 Hz) cannot be represented.
+	if w.frameCount == math.MaxUint32 {
+		return fmt.Errorf("tape: %w", ErrFrameCountOverflow)
+	}
 	w.frameCount++
 	w.lastTimestampMs = frame.GetTimestampOffsetMs()
 	return nil
 }
 
-// Close writes the footer, closes the zstd encoder, and closes the file.
+// Close writes the footer, closes the zstd encoder, and closes the file. It is
+// an error to call it before WriteHeader or more than once.
 func (w *Writer) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.state == writerStateClosed {
+		return fmt.Errorf("tape: Close: %w (writer already closed)", ErrWriteOrder)
+	}
+	if w.state != writerStateHeaderWritten {
+		return fmt.Errorf("tape: Close: %w (no header written)", ErrWriteOrder)
+	}
+
 	// Build event index entries in deterministic order.
 	types := make([]capturepb.EventType, 0, len(w.eventIndex))
 	for t := range w.eventIndex {
@@ -155,6 +242,9 @@ func (w *Writer) Close() error {
 		firstErr = err
 	}
 
+	// Mark the stream closed even when the footer write failed: the encoder and
+	// file are released, so no later call may be accepted.
+	w.state = writerStateClosed
 	return firstErr
 }
 
@@ -237,9 +327,21 @@ func classifyEvent(evt *capturepb.EchoEvent) capturepb.EventType {
 		return capturepb.EventType_EVENT_TYPE_PLAYER_ASSIST
 	case *capturepb.EchoEvent_PlayerShotTaken:
 		return capturepb.EventType_EVENT_TYPE_PLAYER_SHOT_TAKEN
+	case *capturepb.EchoEvent_PlayerStatsUpdated:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_STATS_UPDATED
+	case *capturepb.EchoEvent_PlayerInfoUpdated:
+		return capturepb.EventType_EVENT_TYPE_PLAYER_INFO_UPDATED
+	case *capturepb.EchoEvent_LoadoutChanged:
+		return capturepb.EventType_EVENT_TYPE_LOADOUT_CHANGED
+	case *capturepb.EchoEvent_GrabChanged:
+		return capturepb.EventType_EVENT_TYPE_GRAB_CHANGED
 	case *capturepb.EchoEvent_GenericEvent:
 		return capturepb.EventType_EVENT_TYPE_GENERIC
 	default:
+		// Unreachable for any variant the proto currently defines;
+		// TestClassifyEventCoversEveryEchoEventVariant fails if a newly added
+		// one lands here, because WriteFrame (tape.go:96) skips UNSPECIFIED and
+		// it would silently vanish from the footer's event index.
 		return capturepb.EventType_EVENT_TYPE_UNSPECIFIED
 	}
 }
@@ -271,6 +373,19 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 		return nil, err
 	}
 
+	// A tape is normally a zstd frame, but an uncompressed envelope stream is
+	// still a valid capture; read it rather than failing on magic mismatch.
+	compressed, err := startsWith(file, zstdMagic)
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+
+	r := &Reader{file: file, limits: limits}
+	if !compressed {
+		r.reader = newBudgetReader(file, limits.MaxDecodedBytes)
+		return r, nil
+	}
+
 	// SEC-001: cap the decoder's own memory (streaming window) alongside the
 	// total decoded-bytes budget enforced by budgetReader.
 	var zstdOpts []zstd.DOption
@@ -282,12 +397,9 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 		return nil, errors.Join(err, file.Close())
 	}
 
-	return &Reader{
-		file:    file,
-		decoder: decoder,
-		reader:  newBudgetReader(decoder, limits.MaxDecodedBytes),
-		limits:  limits,
-	}, nil
+	r.decoder = decoder
+	r.reader = newBudgetReader(decoder, limits.MaxDecodedBytes)
+	return r, nil
 }
 
 // Limits returns the resource budgets in effect for this reader. Frame
@@ -296,6 +408,10 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 func (r *Reader) Limits() Limits { return r.limits }
 
 // ReadHeader reads the first envelope, which must be a CaptureHeader.
+//
+// The header's format_version is validated against the versions this reader
+// understands: 0 (pre-2.1 captures, treated as 2) and 2. Any other version
+// returns ErrUnsupportedVersion.
 func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
@@ -305,6 +421,11 @@ func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 	header := env.GetHeader()
 	if header == nil {
 		return nil, io.ErrUnexpectedEOF
+	}
+
+	ver := header.GetFormatVersion()
+	if ver != 0 && ver != 2 {
+		return nil, fmt.Errorf("tape: header declares format_version=%d: %w", ver, ErrUnsupportedVersion)
 	}
 	return header, nil
 }
@@ -327,11 +448,13 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 		return frame, nil
 	}
 
-	// Non-frame envelope — save footer if present and signal end of frames.
+	// A footer marks the clean end of frames.
 	if footer := env.GetFooter(); footer != nil {
 		r.pendingFooter = footer
+		return nil, io.EOF
 	}
-	return nil, io.EOF
+	// Anything else here is a malformed stream.
+	return nil, fmt.Errorf("tape: %w", ErrUnexpectedEnvelope)
 }
 
 // ReadFooter returns the capture footer. If ReadFrame already encountered it,
@@ -355,7 +478,10 @@ func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 
 // Close closes the decoder and underlying file.
 func (r *Reader) Close() error {
-	r.decoder.Close()
+	// decoder is nil for an uncompressed capture.
+	if r.decoder != nil {
+		r.decoder.Close()
+	}
 	return r.file.Close()
 }
 

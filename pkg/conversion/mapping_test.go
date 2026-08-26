@@ -94,7 +94,10 @@ func TestMapFrame_Basic(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if got == nil {
 		t.Fatal("MapFrame returned nil")
 	}
@@ -124,8 +127,8 @@ func TestMapFrame_Basic(t *testing.T) {
 }
 
 func TestMapFrame_Nil(t *testing.T) {
-	if got := MapFrame(nil, time.Now()); got != nil {
-		t.Errorf("MapFrame(nil) = %v, want nil", got)
+	if got, err := MapFrame(nil, time.Now()); err != nil || got != nil {
+		t.Errorf("MapFrame(nil) = (%v, %v), want (nil, nil)", got, err)
 	}
 }
 
@@ -134,7 +137,10 @@ func TestMapFrame_NilSession(t *testing.T) {
 		FrameIndex: 0,
 		Timestamp:  timestamppb.Now(),
 	}
-	got := MapFrame(v1f, time.Now())
+	got, err := MapFrame(v1f, time.Now())
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	if got == nil {
 		t.Fatal("MapFrame returned nil for nil session")
 	}
@@ -194,7 +200,10 @@ func TestMapFrame_WithPlayers(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -263,7 +272,10 @@ func TestMapFrame_WithDisc(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -321,7 +333,10 @@ func TestMapFrame_WithBones(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -413,7 +428,10 @@ func TestMapFrame_WithEvents(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -488,7 +506,10 @@ func TestMapFrame_NilFields(t *testing.T) {
 		},
 	}
 
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if ea == nil {
 		t.Fatal("expected EchoArenaFrame")
@@ -521,7 +542,10 @@ func TestMapFrame_EmptyEvents(t *testing.T) {
 		Session:    &enginev1.SessionResponse{GameStatus: "playing"},
 		Events:     []*telemetryv1.LobbySessionEvent{},
 	}
-	got := MapFrame(v1f, baseTime)
+	got, err := MapFrame(v1f, baseTime)
+	if err != nil {
+		t.Fatalf("MapFrame: %v", err)
+	}
 	ea := got.GetEchoArena()
 	if len(ea.Events) != 0 {
 		t.Errorf("expected 0 events, got %d", len(ea.Events))
@@ -867,7 +891,7 @@ func TestMapEvent_AllTypes(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := mapEvent(tt.v1evt)
+			got := mapEvent(tt.v1evt, nil)
 			if got == nil {
 				t.Fatal("mapEvent returned nil")
 			}
@@ -900,7 +924,7 @@ func TestMapEvent_DiscThrownWithThrowDetails(t *testing.T) {
 		},
 	}
 
-	got := mapEvent(v1evt)
+	got := mapEvent(v1evt, nil)
 	if got == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -954,7 +978,7 @@ func TestMapEvent_DiscThrownWithoutThrowDetails(t *testing.T) {
 		},
 	}
 
-	got := mapEvent(v1evt)
+	got := mapEvent(v1evt, nil)
 	if got == nil {
 		t.Fatal("mapEvent returned nil")
 	}
@@ -972,7 +996,7 @@ func TestMapEvent_DiscThrownWithoutThrowDetails(t *testing.T) {
 }
 
 func TestMapEvent_Nil(t *testing.T) {
-	if got := mapEvent(nil); got != nil {
+	if got := mapEvent(nil, nil); got != nil {
 		t.Errorf("mapEvent(nil) = %v, want nil", got)
 	}
 }
@@ -1026,5 +1050,47 @@ func TestFloat32SliceToBytes(t *testing.T) {
 		if got != want {
 			t.Errorf("buf[%d] = %f, want %f", i, got, want)
 		}
+	}
+}
+
+// Item 1 (F): the converter declares SemVer 2.1.0 in the header.
+func TestMapHeader_DeclaresFormat210(t *testing.T) {
+	got := MapHeader(&telemetryv1.TelemetryHeader{CaptureId: "x"})
+	if got.GetFormatVersion() != 2 || got.GetFormatMinor() != 1 || got.GetFormatPatch() != 0 {
+		t.Errorf("format = %d.%d.%d, want 2.1.0",
+			got.GetFormatVersion(), got.GetFormatMinor(), got.GetFormatPatch())
+	}
+}
+
+// Item 2 (F): the converter tags the capture as SPARSE-encoded.
+func TestMapHeader_FrameEncodingSparse(t *testing.T) {
+	got := MapHeader(&telemetryv1.TelemetryHeader{CaptureId: "x"})
+	if got.GetFrameEncoding() != capturepb.FrameEncoding_FRAME_ENCODING_SPARSE {
+		t.Errorf("frame_encoding = %v, want SPARSE", got.GetFrameEncoding())
+	}
+}
+
+// Item 3 (F-2): RoundPaused carries the pause state, requesting team, and timer.
+func TestMapEvent_RoundPausedCarriesPauseState(t *testing.T) {
+	v1e := &telemetryv1.LobbySessionEvent{
+		Event: &telemetryv1.LobbySessionEvent_RoundPaused{
+			RoundPaused: &telemetryv1.RoundPaused{
+				PauseState: &enginev1.PauseState{
+					PausedState:         "paused",
+					PausedRequestedTeam: "blue",
+					PausedTimer:         12.5,
+				},
+			},
+		},
+	}
+	rp := mapEvent(v1e, nil).GetRoundPaused()
+	if rp.GetPauseState() != capturepb.PauseState_PAUSE_STATE_PAUSED {
+		t.Errorf("pause_state = %v, want PAUSED", rp.GetPauseState())
+	}
+	if rp.GetRequestingTeam() != capturepb.Role_ROLE_BLUE_TEAM {
+		t.Errorf("requesting_team = %v, want BLUE", rp.GetRequestingTeam())
+	}
+	if rp.GetPauseTimer() != 12.5 {
+		t.Errorf("pause_timer = %v, want 12.5", rp.GetPauseTimer())
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/pkg/conversion"
+	"github.com/echotools/tape/v4/pkg/conversion"
 )
 
 // frameWithEvents builds a v2 Frame carrying the given EchoArena events.

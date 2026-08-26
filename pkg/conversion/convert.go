@@ -8,9 +8,9 @@ import (
 	"time"
 
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/events"
-	"github.com/echotools/tape/pkg/processing"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/events"
+	"github.com/echotools/tape/v4/pkg/processing"
 )
 
 const (
@@ -25,6 +25,31 @@ type ConvertResult struct {
 	OutputPath string
 	FrameCount uint32
 	EventCount uint32
+	// SkippedLines counts input lines the reader could not parse and dropped.
+	// Non-zero means the tape is not a complete record of its source: some
+	// recorders emitted formats this reader does not understand (GH #31), and
+	// the loss is otherwise silent.
+	SkippedLines uint32
+	// DroppedBones counts bones payloads the reader found on a line but could
+	// not parse. The frame still converts, with its session intact and its
+	// bones absent, so this loss appears in neither FrameCount nor
+	// SkippedLines (CANONICAL-001 §3).
+	DroppedBones uint32
+	// UnmappedValues lists engine strings no conversion table recognised, with
+	// occurrence counts, ordered by field then value. Non-empty is the same
+	// class of loss as SkippedLines: the value became *_UNSPECIFIED and renders
+	// back as the empty string, so it is gone without a trace (VOCAB-001).
+	// Conversion deliberately does not fail on these — one unknown string must
+	// not abort a corpus-wide pass.
+	UnmappedValues []UnmappedValue
+	// DroppedFrames counts frames the event detector dropped because its input
+	// channel was full. Under the conversion pipeline's drain-per-frame pattern
+	// this is always zero; non-zero means a regression.
+	DroppedFrames uint64
+	// DroppedEvents counts event batches the detector dropped because its
+	// events channel was full. Under the conversion pipeline's drain-per-frame
+	// pattern this is always zero; non-zero means a regression.
+	DroppedEvents uint64
 }
 
 // ConvertFile converts a legacy capture file (.echoreplay or .nevrcap) to
@@ -68,12 +93,31 @@ type v1Reader interface {
 	Close() error
 }
 
+// lineSkipper is implemented by readers that count input records they could not
+// parse. Declared at the consumer because only the line-oriented echoreplay
+// reader has the notion; the length-delimited legacy reader errors out instead.
+type lineSkipper interface {
+	SkippedFrames() uint32
+	// DroppedBones counts bones payloads present but unparseable. Distinct
+	// from SkippedFrames: the frame survives with its session intact, so the
+	// loss shows up in neither the frame count nor the skip count.
+	DroppedBones() uint32
+}
+
 // echoReplayAdapter wraps EchoReplay to implement v1Reader.
 // EchoReplay doesn't have ReadHeader, so we synthesize one from the first frame.
 type echoReplayAdapter struct {
 	reader     *codec.EchoReplay
 	firstFrame *telemetryv1.LobbySessionStateFrame
 }
+
+// SkippedFrames satisfies lineSkipper, exposing the underlying reader's count of
+// unparseable lines to the conversion pipeline.
+func (a *echoReplayAdapter) SkippedFrames() uint32 { return a.reader.SkippedFrames() }
+
+// DroppedBones satisfies lineSkipper, exposing the underlying reader's count of
+// bones payloads it could not parse.
+func (a *echoReplayAdapter) DroppedBones() uint32 { return a.reader.DroppedBones() }
 
 func (a *echoReplayAdapter) ReadHeader() (*telemetryv1.TelemetryHeader, error) {
 	// EchoReplay files don't have a separate header. Read the first frame
@@ -135,7 +179,10 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 		return nil, fmt.Errorf("read first frame: %w", err)
 	}
 
-	v2Header := MapHeaderFromSession(v1Header, firstFrame.GetSession())
+	// One vocabulary accumulator per conversion, shared by the header and frame
+	// paths so ConvertResult reports the whole file (VOCAB-001).
+	vocab := &vocabulary{}
+	v2Header := mapHeaderFromSession(v1Header, firstFrame.GetSession(), vocab)
 
 	// A nil protobuf timestamp's AsTime() returns Unix epoch (1970-01-01),
 	// not Go's zero time (year 0001), so IsZero() would never trigger.
@@ -149,7 +196,7 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 	} else {
 		baseTime = createdAt.AsTime()
 	}
-	mapper := &FrameMapper{BaseTime: baseTime}
+	mapper := &FrameMapper{BaseTime: baseTime, vocab: vocab}
 
 	writer, err := codec.NewWriter(outputPath)
 	if err != nil {
@@ -204,6 +251,19 @@ func convertFromV1Reader(reader v1Reader, inputPath, outputPath string) (*Conver
 		}
 	}
 
+	// Record input the reader could not parse. Counted after the read loop so it
+	// reflects the whole file.
+	if skipper, ok := reader.(lineSkipper); ok {
+		result.SkippedLines = skipper.SkippedFrames()
+		result.DroppedBones = skipper.DroppedBones()
+	}
+	result.UnmappedValues = vocab.sorted()
+
+	// Record event-detector drops. Under the drain-per-frame pattern these
+	// are always zero; non-zero is a regression in the conversion pipeline.
+	result.DroppedFrames = detector.DroppedFrames()
+	result.DroppedEvents = detector.DroppedEvents()
+
 	// Close writer (writes footer).
 	writerClosed = true
 	if err := writer.Close(); err != nil {
@@ -231,8 +291,14 @@ func processAndWriteFrame(
 	// Drain any detected events and attach them to the frame.
 	drainEvents(processor, v1Frame)
 
-	// Map v1 frame to v2 using the stateful mapper (tracks round number).
-	v2Frame := mapper.MapFrame(v1Frame)
+	// Map v1 frame to v2 using the stateful mapper (tracks round number). An
+	// error means the frame cannot be represented in v2 (e.g. a timestamp offset
+	// past the uint32 range, R5) — abort rather than write a silently-corrupted
+	// tape.
+	v2Frame, err := mapper.MapFrame(v1Frame)
+	if err != nil {
+		return fmt.Errorf("map frame %d: %w", result.FrameCount, err)
+	}
 
 	// Count events on the mapped frame.
 	if ea := v2Frame.GetEchoArena(); ea != nil {

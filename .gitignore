@@ -60,3 +60,5 @@ _local/
 .sisyphus/
 .serena/
 .opencode/
+.mcp.json
+.claude/agent-memory-local/

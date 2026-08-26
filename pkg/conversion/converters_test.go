@@ -1,15 +1,14 @@
 package conversion
 
 import (
+	"os"
 	"testing"
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetry "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"os"
 )
 
 // writeLegacyV1File writes a v1-format file (zstd-compressed,
@@ -84,39 +83,5 @@ func createTestFrame(t *testing.T) *telemetry.LobbySessionStateFrame {
 			UserBones: []*enginev1.UserBones{},
 			ErrCode:   0,
 		},
-	}
-}
-
-// TestConvertNevrcapToEchoReplay tests nevrcap-to-echoreplay conversion.
-func TestConvertNevrcapToEchoReplay(t *testing.T) {
-	nevrcapFile := t.TempDir() + "/test.nevrcap"
-	echoReplayFile := t.TempDir() + "/test.echoreplay"
-
-	// Write a v1 nevrcap file.
-	header := &telemetry.TelemetryHeader{
-		CaptureId: "convert-test",
-		CreatedAt: timestamppb.Now(),
-	}
-	frame := createTestFrame(t)
-	writeLegacyV1File(t, nevrcapFile, header, frame)
-
-	// Convert nevrcap to echoreplay.
-	if err := ConvertNevrcapToEchoReplay(nevrcapFile, echoReplayFile); err != nil {
-		t.Fatalf("ConvertNevrcapToEchoReplay: %v", err)
-	}
-
-	// Verify the echoreplay file is readable.
-	reader, err := codec.NewEchoReplayReader(echoReplayFile)
-	if err != nil {
-		t.Fatalf("NewEchoReplayReader: %v", err)
-	}
-	defer reader.Close()
-
-	frames, err := reader.ReadFrames()
-	if err != nil {
-		t.Fatalf("ReadFrames: %v", err)
-	}
-	if len(frames) != 1 {
-		t.Errorf("expected 1 frame, got %d", len(frames))
 	}
 }

@@ -1,15 +1,15 @@
-module github.com/echotools/tape
+module github.com/echotools/tape/v4
 
 go 1.26.0
 
 require (
-	github.com/klauspost/compress v1.18.6
+	github.com/klauspost/compress v1.19.1
 	google.golang.org/protobuf v1.36.11
 )
 
 require (
-	buf.build/gen/go/echotools/nevr-api/protocolbuffers/go v1.36.11-20260629074123-c89ff774a767.1
-	github.com/schollz/progressbar/v3 v3.19.0
+	buf.build/gen/go/echotools/nevr-api/protocolbuffers/go v1.36.11-20260729220401-fc62323fed49.1
+	github.com/schollz/progressbar/v3 v3.19.1
 	github.com/spf13/cobra v1.10.2
 )
 
@@ -18,6 +18,6 @@ require (
 	github.com/mitchellh/colorstring v0.0.0-20190213212951-d06e56a500db // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/term v0.44.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/term v0.45.0 // indirect
 )

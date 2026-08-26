@@ -8,8 +8,8 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/events"
-	"github.com/echotools/tape/pkg/processing"
+	"github.com/echotools/tape/v4/pkg/events"
+	"github.com/echotools/tape/v4/pkg/processing"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -139,7 +139,10 @@ func BenchmarkMapFrame(b *testing.B) {
 	b.ReportAllocs()
 
 	for b.Loop() {
-		v2 := MapFrame(frame, baseTime)
+		v2, err := MapFrame(frame, baseTime)
+		if err != nil {
+			b.Fatal(err)
+		}
 		if v2 == nil {
 			b.Fatal("MapFrame returned nil")
 		}
@@ -209,7 +212,7 @@ func BenchmarkMapEvent(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				v2 := mapEvent(v1e)
+				v2 := mapEvent(v1e, nil)
 				if v2 == nil {
 					b.Fatalf("mapEvent returned nil for %s", name)
 				}
@@ -276,7 +279,9 @@ func BenchmarkFullPipeline(b *testing.B) {
 			}
 		done:
 			// Map to v2.
-			_ = mapper.MapFrame(frame)
+			if _, err := mapper.MapFrame(frame); err != nil {
+				b.Fatal(err)
+			}
 			// Reset events for reuse in next iteration.
 			frame.Events = frame.Events[:0]
 		}

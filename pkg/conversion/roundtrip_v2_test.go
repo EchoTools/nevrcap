@@ -1,7 +1,11 @@
 package conversion_test
 
 import (
+	"archive/zip"
+	"bufio"
+	"bytes"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -11,8 +15,8 @@ import (
 
 	enginev1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/engine/v1"
 	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
-	"github.com/echotools/tape/pkg/codec"
-	"github.com/echotools/tape/pkg/conversion"
+	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 )
 
 // Two float tolerances, by error mechanism:
@@ -34,7 +38,8 @@ const (
 
 // tally accumulates the round-trip comparison: recoverable mismatches (which
 // must be zero for the gate to pass) and findings (fields v2 does not preserve,
-// measured and reported but not asserted — see SCHEMA-GAPS.md).
+// measured and reported but not asserted — the remaining gap is last_throw,
+// gh #35).
 type tally struct {
 	exactMismatch  map[string]int
 	exactExample   map[string]string
@@ -185,6 +190,8 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	// Session constants + per-frame scalars (exact).
 	ta.exact("session_id", orig.GetSessionId() == recon.GetSessionId(), orig.GetSessionId())
 	ta.exact("session_ip", orig.GetSessionIp() == recon.GetSessionIp(), orig.GetSessionIp())
+	ta.exact("client_name", orig.GetClientName() == recon.GetClientName(),
+		fmt.Sprintf("%q vs %q", orig.GetClientName(), recon.GetClientName()))
 	ta.exact("map_name", orig.GetMapName() == recon.GetMapName(), orig.GetMapName())
 	ta.exact("match_type", orig.GetMatchType() == recon.GetMatchType(), fmt.Sprintf("%q vs %q", orig.GetMatchType(), recon.GetMatchType()))
 	ta.exact("private_match", orig.GetPrivateMatch() == recon.GetPrivateMatch(), "")
@@ -198,12 +205,26 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.exact("possession", int32SliceEqual(orig.GetPossession(), recon.GetPossession()),
 		fmt.Sprintf("%v vs %v", orig.GetPossession(), recon.GetPossession()))
 
+	// Derived from game_clock during reconstruction rather than carried as an
+	// event sample, so it is exact per-frame instead of stale between goals.
+	ta.exact("game_clock_display", orig.GetGameClockDisplay() == recon.GetGameClockDisplay(),
+		fmt.Sprintf("orig=%q recon=%q", orig.GetGameClockDisplay(), recon.GetGameClockDisplay()))
+
 	// Per-frame floats (float32-narrowed -> magnitude tolerance).
 	ta.mag("game_clock", orig.GetGameClock(), recon.GetGameClock())
 	ta.mag("left_shoulder", orig.GetLeftShoulderPressed(), recon.GetLeftShoulderPressed())
 	ta.mag("right_shoulder", orig.GetRightShoulderPressed(), recon.GetRightShoulderPressed())
 	ta.mag("left_shoulder2", orig.GetLeftShoulderPressed2(), recon.GetLeftShoulderPressed2())
 	ta.mag("right_shoulder2", orig.GetRightShoulderPressed2(), recon.GetRightShoulderPressed2())
+
+	// Echo Combat payload. Zero on both sides for any arena capture, so this
+	// guards regression rather than measuring the sample; TestReconstructPreservesPayload
+	// exercises the non-zero path.
+	ta.mag("payload_multiplier", orig.GetPayloadMultiplier(), recon.GetPayloadMultiplier())
+	ta.exact("payload_checkpoint", orig.GetPayloadCheckpoint() == recon.GetPayloadCheckpoint(), "")
+	ta.mag("payload_distance", orig.GetPayloadDistance(), recon.GetPayloadDistance())
+	ta.exact("payload_defenders", orig.GetPayloadDefenders() == recon.GetPayloadDefenders(), "")
+	ta.mag("payload_speed", orig.GetPayloadSpeed(), recon.GetPayloadSpeed())
 
 	// Disc.
 	od, rd := orig.GetDisc(), recon.GetDisc()
@@ -228,6 +249,7 @@ func compareSession(ta *tally, orig, recon *enginev1.SessionResponse) {
 	}
 
 	compareTeamMembership(ta, orig, recon)
+	compareTeamLevel(ta, orig, recon)
 	measureFindings(ta, orig, recon)
 }
 
@@ -270,6 +292,7 @@ func compareTeamMembership(ta *tally, orig, recon *enginev1.SessionResponse) {
 		ta.exact("has_possession", om.GetHasPossession() == rm.GetHasPossession(), "")
 		ta.exact("is_emote_playing", om.GetIsEmotePlaying() == rm.GetIsEmotePlaying(), "")
 		ta.exact("ping", om.GetPing() == rm.GetPing(), fmt.Sprintf("slot %d: %d vs %d", slot, om.GetPing(), rm.GetPing()))
+		comparePlayerStats(ta, slot, om, rm)
 		// Network + spatial (tolerance).
 		ta.mag("packet_loss_ratio", om.GetPacketLossRatio(), rm.GetPacketLossRatio())
 		ta.magVec("velocity", om.GetVelocity(), rm.GetVelocity())
@@ -303,30 +326,71 @@ func compareHandPart(ta *tally, name string, a, b *enginev1.HandPart) {
 }
 
 // measureFindings counts SessionResponse fields that v2 does not preserve. These
-// are reported, never asserted: per SCHEMA-GAPS.md they have no v2 home (or only
-// an event sample), so a non-zero count here is the round-trip's true loss.
+// are reported, never asserted: the remaining one is last_throw (gh #35), so a
+// non-zero count here is the round-trip's true loss.
 func measureFindings(ta *tally, orig, recon *enginev1.SessionResponse) {
 	ta.found("rules_changed_by", orig.GetRulesChangedBy() != recon.GetRulesChangedBy(), fmt.Sprintf("orig=%q recon=%q", orig.GetRulesChangedBy(), recon.GetRulesChangedBy()))
 	ta.found("rules_changed_at", orig.GetRulesChangedAt() != recon.GetRulesChangedAt(), fmt.Sprintf("orig=%d recon=%d", orig.GetRulesChangedAt(), recon.GetRulesChangedAt()))
 	ta.found("err_code", orig.GetErrCode() != recon.GetErrCode(), fmt.Sprintf("orig=%d", orig.GetErrCode()))
 	ta.found("orange_team_restart_request", orig.GetOrangeTeamRestartRequest() != recon.GetOrangeTeamRestartRequest(), fmt.Sprintf("orig=%d", orig.GetOrangeTeamRestartRequest()))
 	ta.found("blue_team_restart_request", orig.GetBlueTeamRestartRequest() != recon.GetBlueTeamRestartRequest(), fmt.Sprintf("orig=%d", orig.GetBlueTeamRestartRequest()))
-	ta.found("game_clock_display", orig.GetGameClockDisplay() != recon.GetGameClockDisplay(), fmt.Sprintf("orig=%q recon=%q", orig.GetGameClockDisplay(), recon.GetGameClockDisplay()))
 	ta.found("blue_round_score", orig.GetBlueRoundScore() != recon.GetBlueRoundScore(), fmt.Sprintf("orig=%d recon=%d", orig.GetBlueRoundScore(), recon.GetBlueRoundScore()))
 	ta.found("orange_round_score", orig.GetOrangeRoundScore() != recon.GetOrangeRoundScore(), fmt.Sprintf("orig=%d recon=%d", orig.GetOrangeRoundScore(), recon.GetOrangeRoundScore()))
 	ta.found("last_throw", orig.GetLastThrow() != nil && recon.GetLastThrow() == nil, "present in orig, dropped in recon")
 	ta.found("last_score", orig.GetLastScore() != nil && recon.GetLastScore() == nil, "present in orig, dropped in recon")
 
-	// Team-level fields with no v2 home.
-	teamCountFinding := len(orig.GetTeams()) != len(recon.GetTeams())
-	ta.found("team_count(empty_teams)", teamCountFinding, fmt.Sprintf("orig=%d recon=%d teams", len(orig.GetTeams()), len(recon.GetTeams())))
-	for _, team := range orig.GetTeams() {
-		ta.found("team_name", team.GetTeamName() != "", team.GetTeamName())
-		ta.found("team.stats", team.GetStats() != nil, "team stats dropped")
-		for _, m := range team.GetPlayers() {
-			ta.found("player.stats", m.GetStats() != nil, "player stats dropped")
+}
+
+// compareTeamLevel asserts the team container and its stats. These were
+// previously "findings" that fired on presence in the ORIGINAL and never looked
+// at the reconstruction at all, so they reported loss even when the round-trip
+// was exact. They are real comparisons now, and hard assertions, because 2.1.0
+// gave team_names a header home and player stats an event home.
+func compareTeamLevel(ta *tally, orig, recon *enginev1.SessionResponse) {
+	ta.exact("team_count", len(orig.GetTeams()) == len(recon.GetTeams()),
+		fmt.Sprintf("orig=%d recon=%d teams", len(orig.GetTeams()), len(recon.GetTeams())))
+	if len(orig.GetTeams()) != len(recon.GetTeams()) {
+		return
+	}
+
+	for i, team := range orig.GetTeams() {
+		rt := recon.GetTeams()[i]
+		ta.exact("team_name", team.GetTeamName() == rt.GetTeamName(),
+			fmt.Sprintf("team %d: %q vs %q", i, team.GetTeamName(), rt.GetTeamName()))
+
+		os, rs := team.GetStats(), rt.GetStats()
+		ta.exact("team.stats.present", (os == nil) == (rs == nil),
+			fmt.Sprintf("team %d: orig=%v recon=%v", i, os != nil, rs != nil))
+		if os != nil && rs != nil {
+			ta.exact("team.stats.stuns", os.GetStuns() == rs.GetStuns(),
+				fmt.Sprintf("team %d: %d vs %d", i, os.GetStuns(), rs.GetStuns()))
+			ta.exact("team.stats.points", os.GetPoints() == rs.GetPoints(), "")
+			ta.mag("team.stats.possession_time", os.GetPossessionTime(), rs.GetPossessionTime())
 		}
 	}
+}
+
+// comparePlayerStats asserts the engine's per-player stat block, replayed from
+// PlayerStatsUpdated plus per-frame possession_time.
+func comparePlayerStats(ta *tally, slot int32, om, rm *enginev1.TeamMember) {
+	os, rs := om.GetStats(), rm.GetStats()
+	ta.exact("player.stats.present", (os == nil) == (rs == nil),
+		fmt.Sprintf("slot %d: orig=%v recon=%v", slot, os != nil, rs != nil))
+	if os == nil || rs == nil {
+		return
+	}
+	ta.exact("player.stats.points", os.GetPoints() == rs.GetPoints(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.saves", os.GetSaves() == rs.GetSaves(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.goals", os.GetGoals() == rs.GetGoals(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.stuns", os.GetStuns() == rs.GetStuns(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.passes", os.GetPasses() == rs.GetPasses(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.catches", os.GetCatches() == rs.GetCatches(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.steals", os.GetSteals() == rs.GetSteals(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.blocks", os.GetBlocks() == rs.GetBlocks(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.interceptions", os.GetInterceptions() == rs.GetInterceptions(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.assists", os.GetAssists() == rs.GetAssists(), fmt.Sprintf("slot %d", slot))
+	ta.exact("player.stats.shots_taken", os.GetShotsTaken() == rs.GetShotsTaken(), fmt.Sprintf("slot %d", slot))
+	ta.mag("player.stats.possession_time", os.GetPossessionTime(), rs.GetPossessionTime())
 }
 
 // runRoundTrip performs echoreplay -> v2 -> echoreplay and compares originals to
@@ -347,6 +411,16 @@ func runRoundTrip(t *testing.T, src string) *tally {
 	}
 
 	origFrames := readEchoReplay(t, src)
+
+	// Guard the comparison itself: every record physically in the source must
+	// have been surfaced by the reader. Without this the round-trip grades the
+	// survivors — a capture that parses to zero frames yields orig=0, recon=0,
+	// zero mismatches, PASS (READLOSS-001).
+	if sourceRecords := countSourceRecords(t, src); len(origFrames) != sourceRecords {
+		t.Fatalf("reader surfaced %d of %d records in %s — the comparison below "+
+			"would only cover the survivors", len(origFrames), sourceRecords, src)
+	}
+
 	reconFrames := readEchoReplay(t, recon)
 	if len(origFrames) != len(reconFrames) {
 		t.Fatalf("frame count: orig=%d recon=%d (reconstructed %d)", len(origFrames), len(reconFrames), n)
@@ -393,11 +467,68 @@ func readEchoReplay(t *testing.T, path string) []*telemetryv1.LobbySessionStateF
 		t.Fatalf("open %s: %v", path, err)
 	}
 	frames, err := r.ReadFrames()
+	skipped := r.SkippedFrames()
 	_ = r.Close()
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+	if skipped != 0 {
+		t.Fatalf("reader skipped %d unparseable line(s) in %s — those records are absent "+
+			"from this side of the comparison and would score as a match", skipped, path)
+	}
 	return frames
+}
+
+// countSourceRecords counts the records physically present in an echoreplay,
+// without the codec in the path: every non-empty line across every zip member,
+// or every non-empty line of the file when it is not a zip.
+//
+// The round-trip compares parsed originals against parsed reconstructions
+// through the same reader, so anything that reader drops is missing from both
+// sides and scores as a match (READLOSS-001). Comparing frames against
+// this number is what makes reader-level loss visible: it also catches loss the
+// skip counter cannot see, such as a second zip member that initScanner never
+// opens.
+func countSourceRecords(t *testing.T, path string) int {
+	t.Helper()
+
+	countLines := func(r io.Reader) int {
+		scanner := bufio.NewScanner(r)
+		scanner.Buffer(make([]byte, 64*1024), 10*1024*1024)
+		n := 0
+		for scanner.Scan() {
+			if len(scanner.Bytes()) > 0 {
+				n++
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatalf("scan %s: %v", path, err)
+		}
+		return n
+	}
+
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		// Not a zip: the recorder wrote raw NDJSON.
+		f, openErr := os.Open(path)
+		if openErr != nil {
+			t.Fatalf("open %s: %v", path, openErr)
+		}
+		defer f.Close() //nolint:errcheck // read-only test fixture
+		return countLines(f)
+	}
+	defer zr.Close() //nolint:errcheck // read-only test fixture
+
+	total := 0
+	for _, member := range zr.File {
+		rc, err := member.Open()
+		if err != nil {
+			t.Fatalf("open member %s of %s: %v", member.Name, path, err)
+		}
+		total += countLines(rc)
+		_ = rc.Close()
+	}
+	return total
 }
 
 // report logs the tally. When strict, any recoverable mismatch fails the test
@@ -430,7 +561,7 @@ func report(t *testing.T, src string, ta *tally, strict bool) {
 		t.Logf("FINDINGS: none — this file round-trips losslessly.")
 		return
 	}
-	t.Logf("FINDINGS (fields v2 does not preserve; reported, not asserted — see SCHEMA-GAPS.md):")
+	t.Logf("FINDINGS (fields v2 does not preserve; reported, not asserted — remaining gap: last_throw, gh #35):")
 	for _, f := range sortedKeys(ta.finding) {
 		t.Logf("  %-32s does NOT round-trip in %d frames/teams/players; e.g. %s", f, ta.finding[f], ta.findingExample[f])
 	}
@@ -443,6 +574,72 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// TestCountSourceRecordsSeesWhatTheReaderDrops proves the guard in runRoundTrip
+// has teeth. It builds a capture whose trailing lines the reader cannot parse
+// and shows the two numbers diverge — which is exactly the condition that used
+// to pass silently, because both sides of the comparison were built from the
+// survivors.
+func TestCountSourceRecordsSeesWhatTheReaderDrops(t *testing.T) {
+	sample := filepath.Join("..", "..", "testdata", "sample.echoreplay")
+	if _, err := os.Stat(sample); err != nil {
+		t.Skipf("no sample: %v", err)
+	}
+
+	zr, err := zip.OpenReader(sample)
+	if err != nil {
+		t.Fatalf("open sample: %v", err)
+	}
+	member, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("open member: %v", err)
+	}
+	body, err := io.ReadAll(member)
+	_ = member.Close()
+	_ = zr.Close()
+	if err != nil {
+		t.Fatalf("read member: %v", err)
+	}
+
+	const (
+		keep    = 20
+		garbage = 2
+	)
+	lines := bytes.SplitN(body, []byte("\r\n"), keep+1)[:keep]
+	corrupt := append(bytes.Join(lines, []byte("\r\n")),
+		[]byte("\r\nNOT A FRAME LINE\r\nALSO NOT A FRAME LINE\r\n")...)
+
+	path := filepath.Join(t.TempDir(), "corrupt.echoreplay")
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatalf("write corrupt capture: %v", err)
+	}
+
+	if got, want := countSourceRecords(t, path), keep+garbage; got != want {
+		t.Fatalf("countSourceRecords = %d, want %d", got, want)
+	}
+
+	r, err := codec.NewEchoReplayReader(path)
+	if err != nil {
+		t.Fatalf("open corrupt capture: %v", err)
+	}
+	frames, err := r.ReadFrames()
+	skipped := r.SkippedFrames()
+	_ = r.Close()
+	if err != nil {
+		t.Fatalf("read corrupt capture: %v", err)
+	}
+
+	if len(frames) != keep {
+		t.Errorf("reader surfaced %d frames, want %d", len(frames), keep)
+	}
+	if skipped != garbage {
+		t.Errorf("SkippedFrames = %d, want %d", skipped, garbage)
+	}
+	if len(frames) == countSourceRecords(t, path) {
+		t.Error("frames equal source records on a capture with unparseable lines; " +
+			"the runRoundTrip guard would not fire")
+	}
 }
 
 // TestRoundTripBAC is the acceptance gate: on the committed sample, every

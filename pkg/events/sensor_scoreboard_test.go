@@ -22,9 +22,15 @@ func TestScoreboardSensor_DetectsScoreChange(t *testing.T) {
 			GameClockDisplay: "5:00",
 		},
 	}
+	// The first frame emits a seed. Without it the opening scoreboard is never
+	// recorded, so a capture starting mid-match reconstructs as 0-0 until the
+	// next goal (DIRECTIVE, "the score sensor seeds frame 0 silently").
 	event := sensor.AddFrame(frame1)
-	if event != nil {
-		t.Fatalf("expected no event on first frame, got %v", event)
+	if event == nil {
+		t.Fatal("expected a seed ScoreboardUpdated on the first frame")
+	}
+	if got := event.GetScoreboardUpdated().GetGameClockDisplay(); got != "5:00" {
+		t.Errorf("seed game_clock_display = %q, want %q", got, "5:00")
 	}
 
 	// Second frame: blue scores
