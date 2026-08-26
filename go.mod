@@ -3,7 +3,7 @@ module github.com/echotools/tape/v4
 go 1.26.0
 
 require (
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.19.2
 	google.golang.org/protobuf v1.36.12
 )
 
