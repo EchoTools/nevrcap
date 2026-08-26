@@ -1,5 +1,0 @@
-ok  	github.com/echotools/tape/v4/cmd/tapedeck	(cached)	coverage: 0.7% of statements
-ok  	github.com/echotools/tape/v4/pkg/codec	0.743s	coverage: 91.7% of statements
-ok  	github.com/echotools/tape/v4/pkg/conversion	4.562s	coverage: 93.9% of statements
-ok  	github.com/echotools/tape/v4/pkg/events	(cached)	coverage: 97.5% of statements
-ok  	github.com/echotools/tape/v4/pkg/processing	(cached)	coverage: 94.9% of statements

@@ -62,3 +62,7 @@ _local/
 .opencode/
 .mcp.json
 .claude/agent-memory-local/
+
+# scratch from local runs of the CI coverage gate
+coverage-summary.txt
+coverage.out
