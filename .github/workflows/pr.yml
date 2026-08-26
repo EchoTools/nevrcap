@@ -21,13 +21,13 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
-          version: v2.8.0
+          version: v2.12.2
           args: --new-from-rev=origin/main
 
   format:
@@ -38,7 +38,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Check formatting
@@ -61,7 +61,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Run tests with coverage
@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Check coverage thresholds
@@ -116,7 +116,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Run race detector
@@ -130,7 +130,7 @@ jobs:
 
       - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: '1.25'
+          go-version: '1.26'
           cache: true
 
       - name: Install govulncheck
