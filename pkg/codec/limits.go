@@ -5,6 +5,10 @@
 // every limit is documented, configurable, and disableable, so a legitimate
 // giant capture stays readable by explicit opt-in — but a crafted few-KB file
 // can no longer force gigabytes of allocation by default.
+//
+// The package overview lives in doc.go; the blank line below keeps this a file
+// comment rather than a second package comment.
+
 package codec
 
 import (
@@ -67,6 +71,19 @@ var (
 	// non-frame, non-footer envelope (e.g. a stray header or an empty envelope)
 	// before the footer — a malformed or truncated-and-concatenated capture.
 	ErrUnexpectedEnvelope = errors.New("unexpected non-frame envelope before footer")
+
+	// ErrFooterMismatch is returned by ReadFrame when the capture's footer
+	// disagrees with what the stream actually carried — the capture is
+	// truncated, corrupt, or was concatenated from pieces.
+	//
+	// The tape container is Zstd, not gzip; the standard library's gzip reader
+	// is cited only as the precedent for the behaviour. It validates its
+	// trailer's CRC32 and ISIZE against the bytes it decompressed and reports
+	// ErrChecksum from Read rather than a clean io.EOF. frame_count is this
+	// format's ISIZE. A reader that ignores its own trailer reports success on
+	// a file that lost data, which is the one failure this library must never
+	// have.
+	ErrFooterMismatch = errors.New("footer frame_count disagrees with the frames read; capture is truncated or corrupt")
 
 	// ErrUnsupportedVersion is returned by ReadHeader when the capture's
 	// format_version is not 2 (or 0 for pre-2.1 captures). A future reader

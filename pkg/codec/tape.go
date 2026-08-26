@@ -432,6 +432,13 @@ func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 
 // ReadFrame reads the next frame envelope. Returns io.EOF when the stream
 // ends or a non-frame envelope (the footer) is encountered.
+//
+// When the footer is reached, its frame_count is checked against the number of
+// frames actually read. A mismatch returns ErrFooterMismatch instead of io.EOF,
+// so a truncated or concatenated capture is reported rather than read as a
+// short-but-successful one. Callers that scan to the end therefore get the
+// integrity check for free; a caller that stops early and calls ReadFooter
+// directly is not subject to it, since a partial read is not a defect.
 func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
@@ -448,9 +455,16 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 		return frame, nil
 	}
 
-	// A footer marks the clean end of frames.
+	// A footer marks the clean end of frames. Validate it against what the
+	// stream actually carried before reporting a clean EOF: a footer that
+	// disagrees with the frames read means the capture lost data, and
+	// answering io.EOF there would report success on a damaged file.
 	if footer := env.GetFooter(); footer != nil {
 		r.pendingFooter = footer
+		if declared := int64(footer.GetFrameCount()); declared != r.framesRead {
+			return nil, fmt.Errorf("tape: footer declares %d frames, stream carried %d: %w",
+				declared, r.framesRead, ErrFooterMismatch)
+		}
 		return nil, io.EOF
 	}
 	// Anything else here is a malformed stream.
