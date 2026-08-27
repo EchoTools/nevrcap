@@ -7,6 +7,7 @@ import (
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/proto"
 )
@@ -58,42 +59,72 @@ func runTrim(cmd *cobra.Command, inputPath, outputPath string, startMs, endMs ui
 		return fmt.Errorf("read header: %w", err)
 	}
 
-	writer, err := codec.NewWriter(outputPath)
-	if err != nil {
-		return fmt.Errorf("create output: %w", err)
-	}
-
-	// Write header (preserved from source).
-	if writeErr := writer.WriteHeader(header); writeErr != nil {
-		writer.Close() //nolint:errcheck // best-effort cleanup
-		return fmt.Errorf("write header: %w", writeErr)
-	}
-
-	var (
-		framesRead    uint32
-		framesWritten uint32
-		baseOffset    uint32 // timestamp of the first included frame
-		lastWrittenTs uint32 // adjusted timestamp of last written frame
-		baseSet       bool
-	)
-
+	// GH #44: v2 is a delta format — identity, loadout, grab, stats, the
+	// scoreboard and the last goal are carried by events and materialized by
+	// replaying them from the start. Trimming therefore cannot simply drop the
+	// leading frames, so the whole capture is read first and the state at the
+	// cut is restated on the first written frame.
+	var frames []*capturepb.Frame
 	for {
 		frame, readErr := reader.ReadFrame()
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
 				break
 			}
-			writer.Close() //nolint:errcheck // best-effort cleanup
-			return fmt.Errorf("read frame %d: %w", framesRead, readErr)
+			return fmt.Errorf("read frame %d: %w", len(frames), readErr)
 		}
+		frames = append(frames, frame)
 
-		framesRead++
+		// SEC-001 accumulation guard, matching Limits.checkFrameBudget.
+		if max := reader.Limits().MaxFrameCount; max > 0 && int64(len(frames)) > max {
+			return fmt.Errorf("tapedeck trim: %d frames accumulated: %w (budget %d)", len(frames), codec.ErrMaxFrameCount, max)
+		}
+	}
+
+	framesRead := len(frames)
+
+	// Locate the cut: the ordinal of the first frame at or after --start.
+	cut := -1
+	for i, f := range frames {
+		if f.GetTimestampOffsetMs() >= startMs {
+			cut = i
+			break
+		}
+	}
+
+	// Restate the state the dropped frames established. Frame 0 needs nothing,
+	// because nothing was dropped.
+	var seedEvents []*capturepb.EchoEvent
+	if cut > 0 {
+		sess := conversion.NewSession(header.GetEchoArena(), frames)
+		seedEvents = seedEventsForCut(sess, cut-1)
+		if roster := rosterAtCut(sess, cut-1); roster != nil {
+			if ea := header.GetEchoArena(); ea != nil {
+				ea.InitialRoster = roster
+			}
+		}
+	}
+
+	writer, err := codec.NewWriter(outputPath)
+	if err != nil {
+		return fmt.Errorf("create output: %w", err)
+	}
+
+	// Header is written only after its roster has been restated for the cut.
+	if writeErr := writer.WriteHeader(header); writeErr != nil {
+		writer.Close() //nolint:errcheck // best-effort cleanup
+		return fmt.Errorf("write header: %w", writeErr)
+	}
+
+	var (
+		framesWritten uint32
+		baseOffset    uint32 // timestamp of the first included frame
+		lastWrittenTs uint32 // adjusted timestamp of last written frame
+	)
+
+	for i := cut; cut >= 0 && i < len(frames); i++ {
+		frame := frames[i]
 		tsMs := frame.GetTimestampOffsetMs()
-
-		// Skip frames before the start time.
-		if tsMs < startMs {
-			continue
-		}
 
 		// Stop after the end time (if set).
 		if endMs > 0 && tsMs > endMs {
@@ -101,9 +132,8 @@ func runTrim(cmd *cobra.Command, inputPath, outputPath string, startMs, endMs ui
 		}
 
 		// Record the base offset from the first included frame.
-		if !baseSet {
+		if framesWritten == 0 {
 			baseOffset = tsMs
-			baseSet = true
 		}
 
 		// Clone the frame so we don't mutate the reader's buffer.
@@ -112,6 +142,13 @@ func runTrim(cmd *cobra.Command, inputPath, outputPath string, startMs, endMs ui
 		trimmed.SetTimestampOffsetMs(adjustedTs)
 		trimmed.SetFrameIndex(framesWritten)
 		lastWrittenTs = adjustedTs
+
+		// Seed events go on the first written frame, ahead of its own events.
+		if framesWritten == 0 && len(seedEvents) > 0 {
+			if ea := trimmed.GetEchoArena(); ea != nil {
+				ea.Events = append(seedEvents, ea.GetEvents()...)
+			}
+		}
 
 		if writeErr := writer.WriteFrame(trimmed); writeErr != nil {
 			writer.Close() //nolint:errcheck // best-effort cleanup

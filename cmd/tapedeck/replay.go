@@ -1,17 +1,17 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
 
-	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+	telemetryv1 "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v1"
 	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 )
 
 func newReplayCommand() *cobra.Command {
@@ -25,7 +25,11 @@ func newReplayCommand() *cobra.Command {
 		Short: "Replay a tape file over HTTP",
 		Long: `Serve a tape file as an HTTP replay, emulating the Echo VR API endpoints.
 Clients can poll GET /session and GET /player_bones to receive frame data
-at the original capture rate.`,
+at the original capture rate.
+
+Frames are reconstructed into the engine's own response shape and rendered
+with the same JSON fixers the .echoreplay writer uses, so the bytes match what
+the game engine produced and existing clients can parse them unchanged.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runReplay(cmd, args[0], addr, rate)
@@ -39,19 +43,20 @@ at the original capture rate.`,
 }
 
 type replayState struct {
-	header       *capturepb.CaptureHeader
-	currentFrame *capturepb.Frame
+	// currentFrame is the reconstructed engine-shaped frame, not the v2 wire
+	// frame. Clients of this server parse engine.v1 JSON (GH #45).
+	currentFrame *telemetryv1.LobbySessionStateFrame
 	mu           sync.RWMutex
 	done         bool
 }
 
-func (s *replayState) getFrame() *capturepb.Frame {
+func (s *replayState) getFrame() *telemetryv1.LobbySessionStateFrame {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.currentFrame
 }
 
-func (s *replayState) setFrame(f *capturepb.Frame) {
+func (s *replayState) setFrame(f *telemetryv1.LobbySessionStateFrame) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.currentFrame = f
@@ -69,48 +74,65 @@ func (s *replayState) setDone() {
 	s.done = true
 }
 
+// engineMarshaler mirrors the echoreplay writer's marshal options so the JSON
+// this server emits matches what the game engine produced. Third-party clients
+// depend on those exact bytes, which is the whole point of the endpoint.
+var engineMarshaler = protojson.MarshalOptions{
+	UseProtoNames:   false,
+	UseEnumNumbers:  true,
+	EmitUnpopulated: true,
+}
+
+// marshalEngineJSON renders msg the way the engine would, applying the same
+// two fixers the echoreplay writer applies in the same order
+// (pkg/codec/echoreplay.go): protojson encodes uint64 as strings and formats
+// floats differently from the engine.
+func marshalEngineJSON(msg proto.Message) ([]byte, error) {
+	data, err := engineMarshaler.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+	data = codec.FixProtojsonUint64Encoding(data)
+	data = codec.FixEngineFloatFormatting(data)
+	return data, nil
+}
+
 func runReplay(cmd *cobra.Command, filePath, addr string, rate float64) error {
 	reader, err := codec.NewReader(filePath)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
+	defer reader.Close() //nolint:errcheck // best-effort cleanup
 
-	header, err := reader.ReadHeader()
+	// The reconstructor materializes each frame back into the engine's
+	// SessionResponse shape. Serving the v2 frame directly produced JSON with
+	// none of the engine's field names, so no real client could parse it
+	// (GH #45).
+	rc, err := conversion.NewSessionReconstructor(reader)
 	if err != nil {
-		reader.Close() //nolint:errcheck // best-effort cleanup
-		return fmt.Errorf("read header: %w", err)
+		return fmt.Errorf("reconstruct: %w", err)
 	}
 
-	state := &replayState{header: header}
-
-	marshaler := protojson.MarshalOptions{
-		EmitUnpopulated: true,
-		UseProtoNames:   false,
-	}
+	state := &replayState{}
 
 	// Start frame playback goroutine.
 	go func() {
-		defer reader.Close() //nolint:errcheck // best-effort cleanup
 		defer state.setDone()
 
-		var prevOffsetMs uint32
-		for {
-			frame, readErr := reader.ReadFrame()
-			if readErr != nil {
-				if errors.Is(readErr, io.EOF) {
-					return
-				}
-				printf(cmd.ErrOrStderr(), "read error: %v\n", readErr)
-				return
+		var prev time.Time
+		for i := range rc.FrameCount() {
+			frame := rc.ReconstructFrame(i)
+			if frame == nil {
+				continue
 			}
 
-			// Wait for the inter-frame delay.
-			offsetMs := frame.GetTimestampOffsetMs()
-			if offsetMs > prevOffsetMs {
-				delay := time.Duration(float64(offsetMs-prevOffsetMs)/rate) * time.Millisecond
-				time.Sleep(delay)
+			// Wait for the inter-frame delay, derived from the reconstructed
+			// absolute timestamps.
+			ts := frame.GetTimestamp().AsTime()
+			if !prev.IsZero() && ts.After(prev) {
+				time.Sleep(time.Duration(float64(ts.Sub(prev)) / rate))
 			}
-			prevOffsetMs = offsetMs
+			prev = ts
 
 			state.setFrame(frame)
 		}
@@ -126,13 +148,13 @@ func runReplay(cmd *cobra.Command, filePath, addr string, rate float64) error {
 			return
 		}
 
-		ea := frame.GetEchoArena()
-		if ea == nil {
-			http.Error(w, "no echo arena data", http.StatusServiceUnavailable)
+		session := frame.GetSession()
+		if session == nil {
+			http.Error(w, "no session data", http.StatusServiceUnavailable)
 			return
 		}
 
-		data, marshalErr := marshaler.Marshal(ea)
+		data, marshalErr := marshalEngineJSON(session)
 		if marshalErr != nil {
 			http.Error(w, marshalErr.Error(), http.StatusInternalServerError)
 			return
@@ -149,26 +171,21 @@ func runReplay(cmd *cobra.Command, filePath, addr string, rate float64) error {
 			return
 		}
 
-		ea := frame.GetEchoArena()
-		if ea == nil || len(ea.GetPlayerBones()) == 0 {
+		bones := frame.GetPlayerBones()
+		if bones == nil {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte("{}")) //nolint:errcheck // HTTP response write errors are non-recoverable
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[")) //nolint:errcheck // HTTP response write errors are non-recoverable
-		for i, bones := range ea.GetPlayerBones() {
-			if i > 0 {
-				w.Write([]byte(",")) //nolint:errcheck // HTTP response write errors are non-recoverable
-			}
-			data, marshalErr := marshaler.Marshal(bones)
-			if marshalErr != nil {
-				continue
-			}
-			w.Write(data) //nolint:errcheck // HTTP response write errors are non-recoverable
+		data, marshalErr := marshalEngineJSON(bones)
+		if marshalErr != nil {
+			http.Error(w, marshalErr.Error(), http.StatusInternalServerError)
+			return
 		}
-		w.Write([]byte("]")) //nolint:errcheck // HTTP response write errors are non-recoverable
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data) //nolint:errcheck // HTTP response write errors are non-recoverable
 	})
 
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
