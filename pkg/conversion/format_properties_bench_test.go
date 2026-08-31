@@ -21,32 +21,44 @@ package conversion
 //
 // -----------------------------------------------------------------------------
 // ESTABLISHED BEFORE WRITING THESE -- read this before interpreting any number.
+// Sources are named because the scope of each claim is exactly the scope of its
+// citation; a broader sentence than its evidence supports is a defect.
 //
-// The container does NOT delta-encode frames, and a "keyframe" is NOT a
-// hydrated snapshot.
+// v2 IS delta-encoded, but in TIERS. docs/format-design.md §2 states the
+// design: "v2 is not 'every field, every frame'. It is ... organized by how
+// often data changes."
 //
-//   - Writer.WriteFrame (tape.go:154-160) appends a KeyframeEntry{FrameIndex,
-//     ByteOffset} every keyframeInterval frames. That is an INDEX ENTRY. The
-//     frame written at a keyframe boundary is in every way an ordinary frame;
-//     no state is hydrated into it and no neighbouring frame is shrunk.
-//     Therefore the keyframe interval changes ONLY footer index density -- it
-//     does not change the frame stream at all.
+//   - Session-constant -> the header, written once (§2).
+//   - Discrete changes -> EVENTS, and this tier IS delta. pkg/conversion/
+//     mapping.go:399-431 holds prevLoadout / prevInfo across frames and emits an
+//     event only on change: ":417  afterwards any change becomes a delta. See
+//     ROSTER-001." Reconstruction replays events from the beginning (§5).
+//   - Per-frame-varying -> per-frame fields, and this tier is NOT delta. §2:
+//     "Frames are self-contained for random access (scores/round repeat every
+//     frame, ~6-9 bytes)."
 //
-//   - Telemetry v2 IS a delta format at the SEMANTIC level, one layer up:
-//     identity, loadout, grab, stats, the scoreboard and the last goal are
-//     carried by events and materialized by replaying them from the beginning
-//     (see cmd/tapedeck/trim_seed.go:15-21). State is accumulated by replay,
-//     not restated per frame.
+// So "is a frame delta-encoded" has no single answer: the kinematic tier is
+// self-contained, the event tier is not.
 //
-// The two facts together are the finding: to reach frame N you must replay
-// events from frame 0, so a KeyframeEntry gives you a byte offset but NOT a
-// state seed -- and because the whole container is one zstd stream
-// (tape.go:97), you cannot seek to that byte offset either. Today a keyframe
-// delivers neither of the two things a keyframe normally provides.
+// What the CONTAINER does, separately: Writer.WriteFrame (pkg/codec/tape.go:
+// 154-160) appends a KeyframeEntry{FrameIndex, ByteOffset} every interval and
+// computes no delta of its own. That is an index entry; the frame at a boundary
+// is an ordinary frame with no materialized state written into it.
 //
-// This is why the "keyframe interval" axis is measured here as what it
-// currently is (footer cost), and the substantive axis is the COMPRESSION
-// LAYOUT, which is what actually decides byte-range access.
+// The consequence, and it is the point of this file: a boundary frame is
+// startable for its kinematic tier and NOT startable for its event tier, so a
+// reader must still replay events from frame 0 -- which is exactly why
+// cmd/tapedeck/trim_seed.go must rebuild seed events when it cuts a capture.
+// And because the whole container is one zstd stream (tape.go:97), the recorded
+// byte offset cannot be seeked to either.
+//
+// Therefore the keyframe interval is measured here TWICE, and the two answers
+// are different:
+//   - BenchmarkKeyframeIntervalSizeCost -- what the interval costs TODAY (footer
+//     index density only, because nothing hydrates).
+//   - BenchmarkHydratedKeyframeCost -- what a REAL keyframe would cost, by
+//     pricing the materialized event-tier state a reader would need. This is the
+//     number that answers "is one per second reasonable".
 // -----------------------------------------------------------------------------
 
 import (
@@ -55,9 +67,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 
+	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/echotools/tape/v4/pkg/codec"
 	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
@@ -74,17 +88,18 @@ func convertCorpus(src, dst string) error {
 // readFramePayloads reads a .tape through the public reader and returns each
 // frame's marshalled bytes. It deliberately does not reimplement framing, so it
 // keeps working if the container framing changes.
-func readFramePayloads(tapePath string) ([][]byte, error) {
+func readFramePayloads(tapePath string) ([][]byte, []*capturepb.Frame, error) {
 	r, err := codec.NewReader(tapePath)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer r.Close() //nolint:errcheck // read-only
 
 	if _, err := r.ReadHeader(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var out [][]byte
+	var protos []*capturepb.Frame
 	for {
 		f, err := r.ReadFrame()
 		if err != nil {
@@ -92,11 +107,37 @@ func readFramePayloads(tapePath string) ([][]byte, error) {
 		}
 		b, err := proto.Marshal(f)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		out = append(out, b)
+		protos = append(protos, f)
 	}
-	return out, nil
+	return out, protos, nil
+}
+
+// loadCorpusProtos returns the same corpus as decoded frames.
+func loadCorpusProtos(tb testing.TB) []*capturepb.Frame {
+	tb.Helper()
+	loadCorpusFrames(tb)
+	return corpusProtos
+}
+
+// stateKey identifies one slot of reconstructable state. Events with a
+// player_slot field are per-slot state; the rest are singletons (scoreboard,
+// last goal). Keeping only the LAST event per key is exactly what materializing
+// the delta state means -- the same thing cmd/tapedeck/trim_seed.go builds when
+// it seeds a cut.
+func stateKey(evt *capturepb.EchoEvent) string {
+	inner := evt.ProtoReflect().WhichOneof(evt.ProtoReflect().Descriptor().Oneofs().ByName("event"))
+	if inner == nil {
+		return "?"
+	}
+	key := string(inner.Name())
+	msg := evt.ProtoReflect().Get(inner).Message()
+	if fd := msg.Descriptor().Fields().ByName("player_slot"); fd != nil {
+		key += "|" + strconv.FormatInt(msg.Get(fd).Int(), 10)
+	}
+	return key
 }
 
 // Frame rate the intervals below are expressed against. The corpus is replayed
@@ -117,7 +158,8 @@ var keyframeIntervalCases = []struct {
 
 var (
 	corpusOnce   sync.Once
-	corpusFrames [][]byte // marshalled Envelope payloads, in order
+	corpusFrames [][]byte           // marshalled Envelope payloads, in order
+	corpusProtos []*capturepb.Frame // the same frames, decoded
 	corpusErr    error
 )
 
@@ -142,7 +184,7 @@ func loadCorpusFrames(tb testing.TB) [][]byte {
 		if corpusErr = convertCorpus(samplePath, tapePath); corpusErr != nil {
 			return
 		}
-		corpusFrames, corpusErr = readFramePayloads(tapePath)
+		corpusFrames, corpusProtos, corpusErr = readFramePayloads(tapePath)
 	})
 	if corpusErr != nil {
 		tb.Fatalf("corpus: %v", corpusErr)
@@ -286,14 +328,18 @@ func BenchmarkFrameBytesOnDisk(b *testing.B) {
 //
 // ANSWERED WHEN: the size curve across 1s/2s/5s/none is flat or it is not.
 //
-// STATUS -- READ THIS: with the container as it stands the question is
-// ANSWERED, and the answer is that the axis is DEGENERATE. A keyframe is an
-// index entry only (see the file header), so the interval changes the FOOTER
-// and nothing else; the frame stream is byte-identical at every interval. This
-// benchmark therefore measures the footer cost, which is the true cost today,
-// and it exists to catch the moment that stops being true -- if keyframes ever
-// carry hydrated state, this curve stops being flat and the question reopens by
-// itself.
+// STATUS -- READ THIS, AND DO NOT READ THE FLAT CURVE AS "THE INTERVAL IS FREE".
+// This benchmark measures only what the interval costs in the CONTAINER AS IT
+// STANDS: footer index density, because WriteFrame hydrates nothing
+// (pkg/codec/tape.go:154-160). The frame stream is byte-identical at every
+// interval, so of course the curve is flat -- that is a fact about the current
+// writer, NOT about whether one keyframe per second is a good idea.
+//
+// The interval question is a live one and it is answered by
+// BenchmarkHydratedKeyframeCost below, which prices the state a keyframe would
+// have to carry to actually be a keyframe. Read the two together or neither.
+// This one stays as the regression guard: if the writer ever starts hydrating,
+// this curve stops being flat by itself.
 // =============================================================================
 func BenchmarkKeyframeIntervalSizeCost(b *testing.B) {
 	frames := loadCorpusFrames(b)
@@ -488,6 +534,83 @@ func BenchmarkEncodePeakMemory(b *testing.B) {
 		b.Run("per-block/"+kc.name, func(b *testing.B) {
 			b.ResetTimer()
 			measure(b, func() { layoutPerBlock(frames, kc.frames, zstd.SpeedFastest, nil) })
+		})
+	}
+}
+
+// =============================================================================
+// QUESTION: what would a REAL keyframe cost — one that carries enough
+// materialized state that a reader can start there without replaying from
+// frame 0 — at a 1s, 2s or 5s interval?
+//
+// WHY IT MATTERS: this is the question BenchmarkKeyframeIntervalSizeCost cannot
+// answer, and the reason that one comes out flat. v2 is tiered
+// (docs/format-design.md §2): per-frame kinematic fields are "self-contained
+// for random access", but identity, loadout, roster attributes, stats and the
+// scoreboard are DELTA — carried by events and materialized by replaying them
+// from the start (§5, and pkg/conversion/mapping.go:399-431 keeps prevLoadout /
+// prevInfo so "afterwards any change becomes a delta. See ROSTER-001").
+//
+// So a frame at a keyframe boundary is startable for its kinematic tier and NOT
+// startable for its event tier. A keyframe that carries no materialized state
+// is not a keyframe — which is precisely why cmd/tapedeck/trim_seed.go has to
+// rebuild seed events when it cuts a capture. THAT payload is what a keyframe
+// would have to carry, and this benchmark prices it.
+//
+// Method: at each candidate boundary, materialize the event-tier state the way
+// a seed does — keep the LAST event per (event type, player slot) seen so far —
+// and measure its serialized size. This is a lower bound on a hydrated
+// keyframe: real state is at most the distinct per-slot last-values.
+//
+// ANSWERED WHEN: the cost of hydrating at 1s/2s/5s is known as a percentage of
+// the frame bytes it sits among, so "one keyframe per second" can be argued
+// from a number instead of a round figure.
+// =============================================================================
+func BenchmarkHydratedKeyframeCost(b *testing.B) {
+	frames := loadCorpusProtos(b)
+	payloads := loadCorpusFrames(b)
+	if len(frames) == 0 {
+		b.Skip("corpus unavailable")
+	}
+	var frameBytes int
+	for _, p := range payloads {
+		frameBytes += len(p)
+	}
+
+	for _, kc := range keyframeIntervalCases {
+		if kc.frames == 0 {
+			continue // "none" means no keyframes to hydrate
+		}
+		b.Run(kc.name, func(b *testing.B) {
+			state := map[string]*capturepb.EchoEvent{}
+			totalSeed, seeds, maxSeed := 0, 0, 0
+			for i, f := range frames {
+				if i > 0 && i%kc.frames == 0 {
+					// Materialize: the seed is the current last-value set.
+					sz := 0
+					for _, e := range state {
+						sz += proto.Size(e)
+					}
+					totalSeed += sz
+					seeds++
+					if sz > maxSeed {
+						maxSeed = sz
+					}
+				}
+				if ea := f.GetEchoArena(); ea != nil {
+					for _, e := range ea.GetEvents() {
+						state[stateKey(e)] = e
+					}
+				}
+			}
+			if seeds == 0 {
+				b.Skip("corpus shorter than one interval")
+			}
+			b.ReportMetric(float64(seeds), "keyframes")
+			b.ReportMetric(float64(totalSeed)/float64(seeds), "seedB/keyframe")
+			b.ReportMetric(float64(maxSeed), "maxSeedB")
+			b.ReportMetric(float64(totalSeed), "totalSeedB")
+			b.ReportMetric(100*float64(totalSeed)/float64(frameBytes), "%%overFrames")
 		})
 	}
 }
