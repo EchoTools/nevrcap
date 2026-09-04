@@ -14,8 +14,14 @@ const (
 )
 
 // TestGoldenConvert converts testdata/sample.echoreplay to tape format and
-// compares the output against a committed golden file. On first run (no
-// golden file), it creates it.
+// compares the output against a committed golden file.
+//
+// A MISSING GOLDEN IS A FAILURE, not an invitation to write one. This test
+// previously created the golden and returned green when the file was absent,
+// which meant deleting it made the test pass and silently re-bless whatever the
+// converter currently emits — a byte-for-byte gate that cannot fail if the
+// thing it guards against is a deletion. Regeneration is still available, but
+// it now takes a deliberate act: set TAPE_REGENERATE_GOLDEN=1.
 func TestGoldenConvert(t *testing.T) {
 	if _, err := os.Stat(sampleEchoReplay); os.IsNotExist(err) {
 		t.Skip("testdata/sample.echoreplay not available")
@@ -41,14 +47,21 @@ func TestGoldenConvert(t *testing.T) {
 
 	goldenData, err := os.ReadFile(goldenTape)
 	if os.IsNotExist(err) {
-		// First run: create the golden file.
+		if os.Getenv("TAPE_REGENERATE_GOLDEN") == "" {
+			t.Fatalf("golden file %s is missing. This is a failure, not a first run: the golden "+
+				"is the byte-for-byte record of what the converter emits, and writing a new one "+
+				"here would bless the current output unreviewed. To create it deliberately, run "+
+				"with TAPE_REGENERATE_GOLDEN=1 and state in the commit what changed it "+
+				"(AGENTS.md §5). Current output would be sha256:%s (%d bytes, %d frames).",
+				goldenTape, outputHash, len(outputData), result.FrameCount)
+		}
 		if err := os.MkdirAll(filepath.Dir(goldenTape), 0o755); err != nil {
 			t.Fatalf("create testdata dir: %v", err)
 		}
 		if err := os.WriteFile(goldenTape, outputData, 0o644); err != nil {
 			t.Fatalf("write golden file: %v", err)
 		}
-		t.Logf("created golden file: %s (%d bytes, %d frames, sha256:%s)",
+		t.Logf("REGENERATED golden file on request: %s (%d bytes, %d frames, sha256:%s)",
 			goldenTape, len(outputData), result.FrameCount, outputHash)
 		return
 	}

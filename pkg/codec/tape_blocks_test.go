@@ -122,11 +122,43 @@ func readCapture(t *testing.T, path string) (*capturepb.CaptureHeader, []*captur
 //
 // The comparison is against the whole-stream capture of the SAME frames, so a
 // difference is a layout defect and not a corpus difference.
+//
+// IT ASSERTS THE FEATURE BEFORE IT ASSERTS THE COMPATIBILITY, and that order is
+// load-bearing. Written without the structural check below, this test PASSED
+// under a mutation that made WithPerBlockCompression a no-op: both arms
+// collapsed to the whole-stream layout and agreed with each other trivially, so
+// it read as coverage of a feature while proving only that a thing equals
+// itself. The two files must differ in layout for the comparison of their
+// CONTENTS to mean anything.
+//
+// The genuinely old reader — a binary compiled from a previous commit — is
+// TestBackwardCompatibility. This test cannot be that: it compiles the reader
+// from the same commit as the writer.
 func TestPerBlockIsReadableByTheShippedReader(t *testing.T) {
 	frames := blockTestFrames(500)
 
 	wholePath := writeCapture(t, "whole.tape", frames, WithKeyframeInterval(30))
 	blockPath := writeCapture(t, "block.tape", frames, WithKeyframeInterval(30), WithPerBlockCompression())
+
+	// The feature must actually be on. A per-block capture carries a seek table
+	// and many blocks; a whole-stream capture carries neither. If these two
+	// assertions do not hold, everything below is comparing a layout with
+	// itself.
+	index, err := OpenBlockIndex(blockPath)
+	if err != nil {
+		t.Fatalf("WithPerBlockCompression produced no seek table (%v): the per-block layout is "+
+			"not in effect, so this test would compare the default layout against itself", err)
+	}
+	// 500 frames at an interval of 30 is 17 keyframe blocks, plus header and
+	// footer blocks.
+	if want := (500+29)/30 + 2; index.Blocks() != want {
+		t.Fatalf("per-block capture has %d blocks, want %d: the layout is not what this test "+
+			"believes it is testing", index.Blocks(), want)
+	}
+	if _, err := OpenBlockIndex(wholePath); !errors.Is(err, ErrNoSeekTable) {
+		t.Fatalf("the whole-stream capture carries a seek table (%v): the two arms are not "+
+			"different layouts", err)
+	}
 
 	wholeHeader, wholeFrames, wholeFooter := readCapture(t, wholePath)
 	blockHeader, blockFrames, blockFooter := readCapture(t, blockPath)
