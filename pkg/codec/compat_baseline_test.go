@@ -17,6 +17,7 @@ import (
 	"time"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -61,10 +62,27 @@ import (
 // compatBaseline is a version this repository promises to stay compatible with.
 //
 // BASELINES ACCUMULATE; THEY DO NOT ADVANCE. Compatibility is a set of promises
-// — "we can still read what v4.0.0 wrote" — and replacing an old entry with a
+// -- "we can still read what v4.0.0 wrote" -- and replacing an old entry with a
 // newer one silently retires a promise nobody agreed to retire. Add a row when
 // a release is tagged; remove one only as a deliberate, announced decision to
 // stop supporting that version.
+//
+// THE COST OF THAT POLICY, WHICH WHOEVER ADDS ROW SEVEN MUST KNOW: the
+// compressed-bytes assertion (property 3b) can only run when a baseline pins the
+// same output-affecting dependencies as HEAD, and every klauspost/compress bump
+// retires it for every row written before the bump. So the row COUNT trends up
+// while the number of rows able to catch a compressed-bytes change trends to
+// zero, and a growing table reads as growing coverage when it is not. Row seven
+// probably cannot catch a layout change by that route.
+//
+// Two things hold the line. First, property 3a compares the DECOMPRESSED
+// envelope stream and the container's frame structure -- properties of this
+// format rather than of the compressor -- so it runs on every row and survives
+// dependency bumps. That is where the real protection lives; readability alone
+// never was protection, because an old reader that still parses a rewritten
+// layout reports OK. Second, TestCompatBaselinesCanStillCatchAByteChange fails
+// when NO row can do 3b, so the day a bump disarms the last one is the day CI
+// says so rather than the day it quietly stops mattering.
 type compatBaseline struct {
 	// Ref is a tag or commit resolvable by git in this repository. A tag is
 	// preferred: it names a release rather than a moment.
@@ -72,27 +90,77 @@ type compatBaseline struct {
 	// Why records what this baseline represents, so a later reader can judge
 	// whether it is still worth carrying.
 	Why string
-	// ByteIdentical says whether property 3 applies. It does NOT apply across
-	// a change to the compression library: zstd's encoder output is a property
-	// of klauspost/compress, not of this format, so comparing bytes across a
-	// version bump measures the wrong thing and would fail for a reason that
-	// has nothing to do with tape. Readability (1, 2, 4) is checked for every
-	// baseline regardless — surviving a dependency bump is precisely what
-	// readability is for.
-	ByteIdentical bool
 }
 
 var compatBaselines = []compatBaseline{
 	{
-		Ref:           "v4.0.0",
-		Why:           "the released format version, tagged 2026-08-26",
-		ByteIdentical: false, // pins klauspost/compress v1.18.6; HEAD pins v1.19.2
+		Ref: "v4.0.0",
+		Why: "the released format version, tagged 2026-08-26",
 	},
 	{
-		Ref:           "2ca18fa",
-		Why:           "last commit before per-block compression; same dependency pins as HEAD",
-		ByteIdentical: true,
+		Ref: "2ca18fa",
+		Why: "last commit before per-block compression",
 	},
+}
+
+// byteIdenticalPins are the module requirements whose versions can change the
+// BYTES a writer emits with no change to this repository at all: compressed
+// output comes from klauspost/compress, message encoding from the protobuf
+// runtime and the generated types.
+//
+// Whether property 3b applies is DERIVED from comparing these across two go.mod
+// files, never declared in the table above, because a hand-maintained flag
+// becomes a lie the first time somebody bumps a dependency without revisiting
+// it -- and a lie in this direction disables an assertion silently, which is
+// the exact failure this file exists to prevent.
+var byteIdenticalPins = []string{
+	"github.com/klauspost/compress",
+	"google.golang.org/protobuf",
+	"buf.build/gen/go/echotools/nevr-api/protocolbuffers/go",
+}
+
+// pinsMatchHEAD reports whether a baseline's output-affecting dependency
+// versions are identical to HEAD's, and returns the first difference so the
+// reason can be stated rather than merely asserted.
+func pinsMatchHEAD(t *testing.T, ref string) (bool, string) {
+	t.Helper()
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locating the repository: %v", err)
+	}
+	headMod, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("reading HEAD go.mod: %v", err)
+	}
+	baseMod, err := runIn(root, "git", "show", ref+":go.mod")
+	if err != nil {
+		t.Fatalf("reading %s go.mod: %v", ref, err)
+	}
+	head, base := modulePins(string(headMod)), modulePins(baseMod)
+	for _, mod := range byteIdenticalPins {
+		if head[mod] != base[mod] {
+			return false, fmt.Sprintf("%s: baseline pins %s, HEAD pins %s", mod, base[mod], head[mod])
+		}
+	}
+	return true, ""
+}
+
+// modulePins reads module→version for the requirements named in
+// byteIdenticalPins out of go.mod content.
+func modulePins(gomod string) map[string]string {
+	pins := map[string]string{}
+	for line := range strings.Lines(gomod) {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 {
+			continue
+		}
+		for _, mod := range byteIdenticalPins {
+			if fields[0] == mod {
+				pins[mod] = fields[1]
+			}
+		}
+	}
+	return pins
 }
 
 // The fixed corpus. It must stay byte-for-byte in step with fixedHeader /
@@ -381,23 +449,71 @@ func TestBackwardCompatibility(t *testing.T) {
 				}
 			}
 
-			// --- Property 3: byte-identical default output -------------------
-			if base.ByteIdentical {
+			// --- Property 3a: the default LAYOUT is unchanged ----------------
+			//
+			// The assertion that survives a dependency bump, and where the real
+			// protection lives. Compressed bytes belong to klauspost/compress;
+			// the DECOMPRESSED envelope stream and the container's frame
+			// structure belong to tape. Comparing those catches a layout change
+			// on EVERY baseline, including ones whose pins have drifted far
+			// enough that comparing compressed bytes would measure the wrong
+			// library.
+			//
+			// Without this, readability alone lets a total container change
+			// pass: an old reader that still parses a rewritten layout reports
+			// OK, and OK was the entire signal.
+			//
+			// Decoding is version-independent -- zstd's format is stable even
+			// where its ENCODER output is not -- which is what makes this
+			// comparison legitimate across a compression-library bump.
+			headPlain := decompressAll(t, headDefault)
+			basePlain := decompressAll(t, baselineFile)
+			if !bytes.Equal(headPlain, basePlain) {
+				t.Errorf("property 3a (default layout unchanged): THE DECOMPRESSED ENVELOPE "+
+					"STREAM DIFFERS, so the container layout, framing or message encoding "+
+					"changed.\n  HEAD     %d bytes sha256:%s\n  %-8s %d bytes sha256:%s",
+					len(headPlain), sha256Bytes(headPlain), base.Ref, len(basePlain), sha256Bytes(basePlain))
+			}
+
+			// The container's shape, which the decompressed stream cannot show:
+			// a default capture is exactly ONE zstd frame and carries no seek
+			// table. Splitting the same envelopes across independent frames can
+			// leave the decompressed bytes identical, so this is the assertion
+			// that catches that.
+			if n := countZstdFrames(t, headDefault); n != 1 {
+				t.Errorf("property 3a (default layout unchanged): HEAD's default output is %d "+
+					"zstd frames, want exactly 1; the default container layout changed", n)
+			}
+			if n := countZstdFrames(t, baselineFile); n != 1 {
+				t.Errorf("property 3a: %s's default output is %d zstd frames, want 1", base.Ref, n)
+			}
+			if _, err := OpenBlockIndex(headDefault); !errors.Is(err, ErrNoSeekTable) {
+				t.Errorf("property 3a (default layout unchanged): HEAD's default output carries "+
+					"a seek table (%v); the default container layout changed", err)
+			}
+
+			// --- Property 3b: byte-identical compressed output ---------------
+			//
+			// The strongest available assertion, and it only means anything when
+			// the baseline pins the same output-affecting dependencies as HEAD.
+			matched, why := pinsMatchHEAD(t, base.Ref)
+			if matched {
 				headSum := sha256File(t, headDefault)
 				baseSum := sha256File(t, baselineFile)
 				if headSum != baseSum {
-					t.Errorf("property 3 (default output is byte-identical): THE DEFAULT ON-DISK "+
-						"LAYOUT CHANGED.\n  HEAD     sha256:%s (%d bytes)\n  %-8s sha256:%s (%d bytes)",
+					t.Errorf("property 3b (compressed output byte-identical): THE DEFAULT ON-DISK "+
+						"BYTES CHANGED.\n  HEAD     sha256:%s (%d bytes)\n  %-8s sha256:%s (%d bytes)",
 						headSum, fileSize(t, headDefault), base.Ref, baseSum, fileSize(t, baselineFile))
 				} else {
-					t.Logf("property 3: default output byte-identical, sha256:%s", headSum)
+					t.Logf("property 3b: compressed output byte-identical, sha256:%s", headSum)
 				}
 			} else {
-				// Not a skip of the property — a statement that it does not
-				// apply, with the reason, so nobody reads silence as a pass.
-				t.Logf("property 3 not applicable to %s: its go.mod pins a different "+
-					"klauspost/compress, so zstd output bytes are a property of that library "+
-					"rather than of this format. Readability is still checked below.", base.Ref)
+				// Not a skip of the property -- a statement that it cannot
+				// apply, naming the dependency, so nobody reads silence as a
+				// pass. Property 3a above checked the layout regardless.
+				t.Logf("property 3b not applicable to %s (%s); zstd and protobuf output bytes "+
+					"belong to those libraries, not to this format. Property 3a checked the "+
+					"layout instead, and it applies to every baseline.", base.Ref, why)
 			}
 
 			// --- Property 4: baseline reader × opt-in per-block layout -------
@@ -423,6 +539,90 @@ func TestBackwardCompatibility(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCompatBaselinesCanStillCatchAByteChange is the guard on the guard.
+//
+// Property 3b only runs for baselines whose output-affecting pins match HEAD's.
+// That condition is derived, not declared, so it cannot be switched off by
+// editing a flag -- but it CAN go away on its own. A klauspost/compress bump
+// retires 3b for every existing row at once, and because each row still passes
+// its remaining assertions, the suite would keep reporting green while the
+// strongest thing it does quietly stopped running.
+//
+// So: at least one baseline must still be able to perform the check. When a
+// dependency bump takes the last one out, this fails and says what to do, which
+// makes the disarm an event somebody sees rather than a silence.
+func TestCompatBaselinesCanStillCatchAByteChange(t *testing.T) {
+	if len(compatBaselines) == 0 {
+		t.Fatal("compatBaselines is empty: nothing is checked for backward compatibility at all")
+	}
+
+	var capable []string
+	reasons := make([]string, 0, len(compatBaselines))
+	for _, base := range compatBaselines {
+		matched, why := pinsMatchHEAD(t, base.Ref)
+		if matched {
+			capable = append(capable, base.Ref)
+		} else {
+			reasons = append(reasons, fmt.Sprintf("    %-10s %s", base.Ref, why))
+		}
+	}
+
+	if len(capable) == 0 {
+		t.Fatalf("NO BASELINE CAN STILL CHECK COMPRESSED-BYTE IDENTITY.\n"+
+			"Every row's output-affecting dependencies have drifted from HEAD's, so property 3b "+
+			"no longer runs anywhere and a change to the default on-disk BYTES would go "+
+			"unnoticed. Property 3a still checks the layout, which is the broader protection, "+
+			"but the byte check is gone.\n"+
+			"Fix: ADD a baseline at or after the dependency bump -- a release tag if there is "+
+			"one, otherwise the commit that performed the bump. Do not remove existing rows; "+
+			"baselines accumulate.\nWhy each row is out:\n%s", strings.Join(reasons, "\n"))
+	}
+	t.Logf("compressed-byte identity is still checkable against: %s", strings.Join(capable, ", "))
+}
+
+// TestMain removes the baseline build trees this file caches. They are created
+// with os.MkdirTemp rather than t.TempDir because one build is reused across
+// sub-tests and must outlive the test that first asked for it -- which means
+// nothing else will clean them up. Left alone they accumulated at roughly 17 MB
+// per run of this package (measured: 32 directories, 241 MB): disposable on an
+// ephemeral CI runner, permanent on a developer's machine or a self-hosted one.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	baselineMu.Lock()
+	for _, b := range baselineBuilds {
+		if b.binary != "" {
+			os.RemoveAll(filepath.Dir(b.binary)) //nolint:errcheck // best-effort cleanup at exit
+		}
+	}
+	baselineMu.Unlock()
+	os.Exit(code)
+}
+
+// decompressAll returns a capture's decompressed contents: the envelope stream
+// exactly as the writer produced it, before compression.
+func decompressAll(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path) //nolint:gosec // test-controlled path
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	dec, err := zstd.NewReader(nil)
+	if err != nil {
+		t.Fatalf("zstd.NewReader: %v", err)
+	}
+	defer dec.Close()
+	out, err := dec.DecodeAll(data, nil)
+	if err != nil {
+		t.Fatalf("decompressing %s: %v", path, err)
+	}
+	return out
+}
+
+func sha256Bytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // readCompatCapture reads a capture with HEAD's reader.

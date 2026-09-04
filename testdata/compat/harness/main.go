@@ -33,11 +33,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// fixedCapture is the deterministic corpus both sides write. It must stay
-// byte-for-byte in step with fixedCaptureHeader/fixedCaptureFrames in
-// pkg/codec/compat_baseline_test.go: the byte-identity property compares the
-// output of this program against the output of that test, so any drift between
-// the two shows up as a compatibility failure that is really a test bug.
+// The deterministic corpus both sides write. It must stay byte-for-byte in step
+// with compatHeader/compatFrames in pkg/codec/compat_baseline_test.go: the
+// layout- and byte-identity properties compare the output of this program
+// against the output of that test, so any drift between the two shows up as a
+// compatibility failure that is really a test bug.
 //
 // Deliberately no metadata map: protobuf does not guarantee map field ordering,
 // and a single-entry map only happens to be stable. Nothing here should be
