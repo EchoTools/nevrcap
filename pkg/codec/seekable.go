@@ -1,12 +1,16 @@
 package codec
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
+
+	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+	"github.com/klauspost/compress/zstd"
 )
 
 // The zstd seekable format — the index that makes a per-block .tape servable.
@@ -251,6 +255,7 @@ func blockAt(entries []seekTableEntry, offset uint64) (index int, length uint64,
 // layout: a keyframe's KeyframeEntry.ByteOffset becomes a position in the
 // compressed file, and this turns that position into a range.
 type BlockIndex struct {
+	path    string
 	entries []seekTableEntry
 }
 
@@ -277,7 +282,7 @@ func OpenBlockIndex(filename string) (*BlockIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BlockIndex{entries: entries}, nil
+	return &BlockIndex{entries: entries, path: filename}, nil
 }
 
 // Blocks reports how many independently decompressible blocks the capture
@@ -306,4 +311,109 @@ func (i *BlockIndex) DecompressedSize(n int) (uint32, error) {
 		return 0, fmt.Errorf("tape: block %d out of range (%d blocks): %w", n, len(i.entries), ErrSeekTableCorrupt)
 	}
 	return i.entries[n].decompressedSize, nil
+}
+
+// BlockRange returns the file offset and length of block n. Block 0 is the
+// header block and the last block is the footer block; the blocks between them
+// each open at a keyframe.
+func (i *BlockIndex) BlockRange(n int) (offset, length uint64, err error) {
+	if n < 0 || n >= len(i.entries) {
+		return 0, 0, fmt.Errorf("tape: block %d out of range (%d blocks): %w", n, len(i.entries), ErrSeekTableCorrupt)
+	}
+	for _, e := range i.entries[:n] {
+		offset += uint64(e.compressedSize)
+	}
+	return offset, uint64(i.entries[n].compressedSize), nil
+}
+
+// ReadBlock reads and decompresses block n, using dict if the capture was
+// written with a trained dictionary (nil otherwise). It reads only that block's
+// bytes: nothing before it is touched, which is the property the per-block
+// layout exists to provide.
+func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
+	offset, length, err := i.BlockRange(n)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(i.path) //nolint:gosec // path came from OpenBlockIndex
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close() //nolint:errcheck // read-only
+
+	raw := make([]byte, length)
+	if _, readErr := file.ReadAt(raw, int64(offset)); readErr != nil { //nolint:gosec // offset is a file position
+		return nil, fmt.Errorf("tape: reading block %d at %d: %w", n, offset, readErr)
+	}
+
+	var dopts []zstd.DOption
+	if len(dict) > 0 {
+		dopts = append(dopts, zstd.WithDecoderDicts(dict))
+	}
+	dec, err := zstd.NewReader(nil, dopts...)
+	if err != nil {
+		return nil, fmt.Errorf("tape: block %d decoder: %w", n, err)
+	}
+	defer dec.Close()
+
+	out, err := dec.DecodeAll(raw, nil)
+	if err != nil {
+		return nil, fmt.Errorf("tape: decompressing block %d: %w", n, err)
+	}
+	return out, nil
+}
+
+// Footer reads the CaptureFooter out of the capture's final block.
+//
+// This is the reason the footer gets a block of its own. The footer carries the
+// keyframe index, so a seeking reader needs it BEFORE it can resolve a frame to
+// a byte range — and reading it through the sequential Reader means walking
+// every frame in the capture, which costs exactly what seeking was supposed to
+// save. Here it costs one block.
+func (i *BlockIndex) Footer(dict []byte) (*capturepb.CaptureFooter, error) {
+	if len(i.entries) == 0 {
+		return nil, ErrNoSeekTable
+	}
+	block, err := i.ReadBlock(len(i.entries)-1, dict)
+	if err != nil {
+		return nil, err
+	}
+
+	r := &Reader{reader: bytes.NewReader(block), limits: Limits{}}
+	env, err := r.readEnvelope()
+	if err != nil {
+		return nil, fmt.Errorf("tape: reading footer envelope: %w", err)
+	}
+	footer := env.GetFooter()
+	if footer == nil {
+		return nil, fmt.Errorf("tape: final block does not hold a footer: %w", ErrUnexpectedEnvelope)
+	}
+	return footer, nil
+}
+
+// BlockForFrame returns the index of the block holding frameIndex, resolved
+// against the footer's keyframe index. It is the lookup a byte-range server
+// performs: frame number in, servable block out.
+//
+// A frame before the first keyframe cannot be resolved, because no block is
+// known to contain it.
+func (i *BlockIndex) BlockForFrame(footer *capturepb.CaptureFooter, frameIndex uint32) (int, error) {
+	var offset uint64
+	found := false
+	for _, kf := range footer.GetKeyframeIndex() {
+		if kf.GetFrameIndex() > frameIndex {
+			break
+		}
+		offset, found = kf.GetByteOffset(), true
+	}
+	if !found {
+		return 0, fmt.Errorf("tape: frame %d precedes every keyframe in the index: %w",
+			frameIndex, ErrSeekTableCorrupt)
+	}
+	block, _, err := blockAt(i.entries, offset)
+	if err != nil {
+		return 0, err
+	}
+	return block, nil
 }

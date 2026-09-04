@@ -455,3 +455,170 @@ func TestPerBlockWithDictionary(t *testing.T) {
 func seekTableSize(n int) int {
 	return skippableFrameHeaderSize + n*seekTableEntrySize + seekTableFooterSize
 }
+
+// TestReaderDictionaryClosesTheWritePath covers the half of the dictionary
+// obligation that WithDictionary alone leaves open. A write path with no
+// matching read path is the failure AGENTS.md §4 names as recurring in this
+// repo ("Both directions or neither"), and a dictionary-compressed capture that
+// the shipped reader cannot open is exactly that.
+//
+// Both layouts are covered, because a dictionary is not a per-block feature:
+// the whole-stream writer accepts one too.
+func TestReaderDictionaryClosesTheWritePath(t *testing.T) {
+	frames := blockTestFrames(200)
+	dict := buildTestDict(t, frames)
+
+	for _, tc := range []struct {
+		name string
+		opts []WriterOption
+	}{
+		{"whole-stream", []WriterOption{WithKeyframeInterval(50), WithDictionary(dict)}},
+		{"per-block", []WriterOption{WithKeyframeInterval(50), WithPerBlockCompression(), WithDictionary(dict)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeCapture(t, "dict.tape", frames, tc.opts...)
+
+			r, err := NewReaderWithDictionary(path, dict)
+			if err != nil {
+				t.Fatalf("NewReaderWithDictionary: %v", err)
+			}
+			defer r.Close() //nolint:errcheck // read-only
+
+			if _, err := r.ReadHeader(); err != nil {
+				t.Fatalf("ReadHeader with the dictionary: %v", err)
+			}
+			var got []*capturepb.Frame
+			for {
+				f, err := r.ReadFrame()
+				if errors.Is(err, io.EOF) {
+					break
+				}
+				if err != nil {
+					t.Fatalf("ReadFrame: %v", err)
+				}
+				got = append(got, f)
+			}
+			if len(got) != len(frames) {
+				t.Fatalf("read %d frames, wrote %d", len(got), len(frames))
+			}
+			for i := range frames {
+				if !proto.Equal(frames[i], got[i]) {
+					t.Fatalf("frame %d differs after a dictionary round trip", i)
+				}
+			}
+		})
+	}
+}
+
+// TestFooterIsReadableWithoutScanningFrames is the property that makes seeking
+// worth anything. The keyframe index lives in the footer, so a seeking reader
+// needs the footer FIRST — and reaching it through the sequential reader means
+// walking every frame, which costs exactly what the seek was meant to save.
+//
+// The footer gets its own final block precisely so it can be read on its own.
+// This asserts the footer read touches one block and yields the same footer the
+// sequential path yields.
+func TestFooterIsReadableWithoutScanningFrames(t *testing.T) {
+	const interval = 40
+	frames := blockTestFrames(400)
+	path := writeCapture(t, "footer.tape", frames,
+		WithKeyframeInterval(interval), WithPerBlockCompression())
+
+	_, _, sequential := readCapture(t, path)
+
+	index, err := OpenBlockIndex(path)
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	direct, err := index.Footer(nil)
+	if err != nil {
+		t.Fatalf("Footer: %v", err)
+	}
+	if !proto.Equal(sequential, direct) {
+		t.Fatal("the footer read from the final block differs from the one read by scanning")
+	}
+
+	// The footer block must hold the footer and nothing else, or "read the
+	// footer" is not a one-block operation.
+	block, err := index.ReadBlock(index.Blocks()-1, nil)
+	if err != nil {
+		t.Fatalf("ReadBlock: %v", err)
+	}
+	r := &Reader{reader: bytes.NewReader(block), limits: Limits{}}
+	if _, err := r.readEnvelope(); err != nil {
+		t.Fatalf("footer block: first envelope: %v", err)
+	}
+	if _, err := r.readEnvelope(); !errors.Is(err, io.EOF) {
+		t.Fatalf("footer block carries more than the footer: second envelope gave %v", err)
+	}
+}
+
+// TestBlockForFrameResolvesEveryFrame walks every frame in the capture and
+// requires the index to name a block that actually contains it. A lookup that
+// is right for keyframes and wrong in between would pass a keyframe-only test
+// and fail in the field on the first scrub.
+func TestBlockForFrameResolvesEveryFrame(t *testing.T) {
+	const interval = 30
+	frames := blockTestFrames(250)
+	path := writeCapture(t, "lookup.tape", frames,
+		WithKeyframeInterval(interval), WithPerBlockCompression())
+
+	index, err := OpenBlockIndex(path)
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	footer, err := index.Footer(nil)
+	if err != nil {
+		t.Fatalf("Footer: %v", err)
+	}
+
+	for _, f := range frames {
+		target := f.GetFrameIndex()
+		block, err := index.BlockForFrame(footer, target)
+		if err != nil {
+			t.Fatalf("BlockForFrame(%d): %v", target, err)
+		}
+		data, err := index.ReadBlock(block, nil)
+		if err != nil {
+			t.Fatalf("ReadBlock(%d) for frame %d: %v", block, target, err)
+		}
+		var found *capturepb.Frame
+		for _, got := range decodeEnvelopes(t, data) {
+			if got.GetFrameIndex() == target {
+				found = got
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("frame %d is not in block %d, which the index named for it", target, block)
+		}
+		if !proto.Equal(f, found) {
+			t.Fatalf("frame %d resolved to a different frame", target)
+		}
+	}
+}
+
+// buildTestDict trains a dictionary on the test corpus.
+func buildTestDict(t *testing.T, frames []*capturepb.Frame) []byte {
+	t.Helper()
+	var samples [][]byte
+	var history []byte
+	for _, f := range frames {
+		b, err := proto.Marshal(f)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		samples = append(samples, b)
+		history = append(history, b...)
+	}
+	dict, err := zstd.BuildDict(zstd.BuildDictOptions{
+		ID:       0x7A7E,
+		Contents: samples,
+		History:  history,
+		Level:    zstd.SpeedDefault,
+	})
+	if err != nil {
+		t.Skipf("BuildDict unavailable in this build: %v", err)
+	}
+	return dict
+}

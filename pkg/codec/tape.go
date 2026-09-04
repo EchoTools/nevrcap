@@ -437,6 +437,21 @@ type Reader struct {
 // DefaultLimits (SEC-001 decompression-bomb guard); pass ReaderOptions to
 // raise or disable the budgets for a legitimately giant capture.
 func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
+	return NewReaderWithDictionary(filename, nil, opts...)
+}
+
+// NewReaderWithDictionary opens a tape file that was written with a trained
+// zstd dictionary (Writer's WithDictionary).
+//
+// A dictionary is a permanent obligation: without it the capture does not
+// decode at all — zstd records the dictionary's id in every frame header and a
+// decoder lacking it fails with ErrUnknownDictionary rather than returning
+// wrong bytes. This is the read side of that obligation; a write path with no
+// matching read path is the recurring defect this repo names in AGENTS.md §4.
+//
+// A nil dictionary is exactly NewReader, so callers that do not know whether a
+// capture used one can pass what they have.
+func NewReaderWithDictionary(filename string, dict []byte, opts ...ReaderOption) (*Reader, error) {
 	limits := applyReaderOptions(opts)
 
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
@@ -462,6 +477,9 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 	var zstdOpts []zstd.DOption
 	if limits.MaxDecodedBytes > 0 {
 		zstdOpts = append(zstdOpts, zstd.WithDecoderMaxMemory(uint64(limits.MaxDecodedBytes)))
+	}
+	if len(dict) > 0 {
+		zstdOpts = append(zstdOpts, zstd.WithDecoderDicts(dict))
 	}
 	decoder, err := zstd.NewReader(file, zstdOpts...)
 	if err != nil {
