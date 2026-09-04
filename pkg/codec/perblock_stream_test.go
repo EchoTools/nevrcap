@@ -2,8 +2,6 @@ package codec
 
 import (
 	"bytes"
-	"errors"
-	"io"
 	"testing"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
@@ -95,6 +93,12 @@ func TestPerBlockEnvelopeStreamMatchesDefault(t *testing.T) {
 	// equal; if anything else moved, this fails.
 	defaultFooter := footerFrom(t, defaultEnvs[last])
 	perBlockFooter := footerFrom(t, perBlockEnvs[last])
+	// The footer's own framing is not licensed to differ either; only the
+	// message content is, and only in one field.
+	if dn, pn := prefixLen(defaultEnvs[last]), prefixLen(perBlockEnvs[last]); dn != pn {
+		t.Errorf("the footer's length prefix is %d bytes in the default layout and %d in "+
+			"per-block; the framing is not licensed to differ between layouts", dn, pn)
+	}
 	if proto.Equal(defaultFooter, perBlockFooter) {
 		t.Error("the per-block footer is identical to the default footer, so " +
 			"KeyframeEntry.ByteOffset was NOT redefined to a compressed-file offset — " +
@@ -111,34 +115,78 @@ func TestPerBlockEnvelopeStreamMatchesDefault(t *testing.T) {
 		len(defaultEnvs), identical, index.Blocks())
 }
 
-// envelopeStream splits a decompressed capture into its marshalled envelopes,
-// reusing the reader's own framing so a change to that framing cannot slip past
-// by being reimplemented here.
+// envelopeStream splits a decompressed capture into its RAW framed envelopes —
+// each one the varint length prefix followed by the message bytes, exactly as
+// they sit in the stream.
+//
+// It parses the varint here rather than going through Reader.readEnvelope, and
+// that is a deliberate reversal of the usual "reuse the real framing" rule. An
+// earlier version of this helper returned RE-MARSHALLED envelopes, which made it
+// blind to the framing itself: an audit mutation that padded the varint prefix
+// left all 401 message payloads byte-identical, and was caught only incidentally
+// because the padding also moved footer_offset. Comparing what the reader hands
+// back cannot detect a change in how the reader was told to read.
+//
+// Each payload is still unmarshalled as an Envelope, so a slice that is not a
+// valid message fails here rather than downstream.
 func envelopeStream(t *testing.T, stream []byte) [][]byte {
 	t.Helper()
-	r := &Reader{reader: bytes.NewReader(stream), limits: Limits{}}
 	var out [][]byte
-	for {
-		env, err := r.readEnvelope()
-		if errors.Is(err, io.EOF) {
-			return out
+	for off := 0; off < len(stream); {
+		length, n := consumeUvarint(stream[off:])
+		if n <= 0 {
+			t.Fatalf("envelope %d: malformed length prefix at byte %d", len(out), off)
 		}
-		if err != nil {
-			t.Fatalf("envelope %d: %v", len(out), err)
+		end := off + n + int(length)
+		if end > len(stream) {
+			t.Fatalf("envelope %d: length %d at byte %d overruns the %d-byte stream",
+				len(out), length, off, len(stream))
 		}
-		b, err := proto.Marshal(env)
-		if err != nil {
-			t.Fatalf("envelope %d: %v", len(out), err)
+		if err := proto.Unmarshal(stream[off+n:end], &capturepb.Envelope{}); err != nil {
+			t.Fatalf("envelope %d: payload is not a valid Envelope: %v", len(out), err)
 		}
-		out = append(out, b)
+		out = append(out, stream[off:end])
+		off = end
 	}
+	return out
 }
 
-// footerFrom unmarshals an envelope that must carry the capture footer.
-func footerFrom(t *testing.T, envelope []byte) *capturepb.CaptureFooter {
+// consumeUvarint decodes a protobuf-style varint, returning the value and the
+// number of bytes it occupied. A non-minimal encoding is decoded faithfully —
+// it must be, or the padding this test exists to catch would be normalised away
+// before the comparison ever saw it.
+func consumeUvarint(b []byte) (uint64, int) {
+	var v uint64
+	var shift uint
+	for i, c := range b {
+		v |= uint64(c&0x7F) << shift
+		if c&0x80 == 0 {
+			return v, i + 1
+		}
+		shift += 7
+		if shift >= 64 {
+			return 0, -1
+		}
+	}
+	return 0, -1
+}
+
+// prefixLen returns how many bytes the varint length prefix occupies.
+func prefixLen(framed []byte) int {
+	_, n := consumeUvarint(framed)
+	return n
+}
+
+// footerFrom unmarshals a RAW FRAMED envelope that must carry the capture
+// footer, skipping its length prefix.
+func footerFrom(t *testing.T, framed []byte) *capturepb.CaptureFooter {
 	t.Helper()
+	_, n := consumeUvarint(framed)
+	if n <= 0 {
+		t.Fatal("malformed length prefix on the final envelope")
+	}
 	env := &capturepb.Envelope{}
-	if err := proto.Unmarshal(envelope, env); err != nil {
+	if err := proto.Unmarshal(framed[n:], env); err != nil {
 		t.Fatalf("unmarshal final envelope: %v", err)
 	}
 	footer := env.GetFooter()
