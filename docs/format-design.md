@@ -71,6 +71,74 @@ event indexes record each frame's own `frame_index` — the value serialized on
 the wire — so they stay consistent even for legacy captures whose stored
 indices are not sequential (frame_count is the count, not the last index).
 
+## 2b. Container layout: one stream, or independent blocks
+
+§2 is about what goes in a frame. This is about how frames are packed into a
+file, which is a separate layer and was for a long time a separate problem.
+
+**The default layout is one continuous Zstd frame** over the whole capture
+(`pkg/codec/tape.go`, `NewWriter`). Under it, `CaptureFooter.keyframe_index`
+records byte offsets into the *decompressed* stream. Nothing can seek to those
+offsets — reaching one means decompressing everything before it. The index
+shipped; the property it exists for did not.
+
+**`codec.WithPerBlockCompression` writes a layout where it can.** Compression
+moves inside the container:
+
+```
+[zstd frame]  header block                 — the CaptureHeader alone
+[zstd frame]  block 0                      — opens at a keyframe
+[zstd frame]  block 1
+...
+[zstd frame]  footer block                 — the CaptureFooter alone
+[skippable]   seek table, magic 0x184D2A5E — block sizes, locatable from EOF
+```
+
+Block boundaries fall on keyframes, so the keyframe interval is also the block
+size: **one decision doing two jobs** rather than two numbers drifting apart.
+Header and footer get their own blocks so either can be rewritten without
+touching a frame byte — and so the footer, which carries the keyframe index a
+seeking reader needs *first*, is readable in one block instead of by scanning
+every frame.
+
+Under this layout `KeyframeEntry.ByteOffset` is the block's offset in the
+**compressed** file. `codec.OpenBlockIndex(path)` resolves it:
+`ByteRange`, `ReadBlock`, `Footer`, `BlockForFrame`.
+
+The index is the **zstd seekable format** verbatim (facebook/zstd,
+`contrib/seekable_format/zstd_seekable_compression_format.md`), not a bespoke
+trailer, so it rides in a skippable frame that decoders ignore rather than choke
+on. An absent seek table is a legal state meaning *not seekable or not finished*
+(`ErrNoSeekTable`); a table that is present and inconsistent is
+`ErrSeekTableCorrupt`.
+
+**It is opt-in, because it changes the bytes on disk.** `NewWriter` and
+`NewWriterWithKeyframeInterval` produce byte-for-byte the layout they always
+produced.
+
+**Measured** on `testdata/sample.echoreplay` (1023 frames), by
+`pkg/conversion/shipped_layout_bench_test.go`:
+
+| layout | B/frame | vs whole-stream | byte-rangeable | reach frame 920 |
+|---|---|---|---|---|
+| whole-stream (default) | 1583 | — | no | 5013 µs |
+| per-block 1s | 1626 | +2.7% | yes | 198 µs |
+| per-block + dict 1s | 1503 | **−5.0%** | yes | 256 µs |
+| per-block + dict 5s | 1495 | **−5.6%** | yes | 570 µs |
+
+Byte-range access is **not a premium**: with a trained dictionary the seekable
+layout is smaller than the one that cannot seek. Per-block alone costs +2.7%
+because resetting the match window every block barely matters — whole-stream
+compression was only achieving ratio 1.140 across frames to begin with — and a
+dictionary more than recovers it.
+
+**A dictionary is a permanent obligation.** A capture written with dictionary D
+needs D forever. zstd records the dictionary id in every frame header, so a
+reader without it fails with `ErrUnknownDictionary` rather than returning wrong
+bytes, but the bytes must be stored somewhere reachable. `codec.TrainDictionary`
+and `codec.TrainDictionaryFromCaptures` produce one; **who owns storage and
+distribution is an open operational question, not a format one.**
+
 ## 3. What v2 keeps vs. drops (measured, not asserted)
 
 Measured on a real arena recording (`TestFieldLossAudit`, 22,727 frames /

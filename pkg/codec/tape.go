@@ -21,7 +21,7 @@ const (
 
 // Writer writes tape captures in the envelope stream format.
 //
-// Wire format:
+// Wire format (the default, and what NewWriter has always produced):
 //
 //	[Zstd frame]
 //	  [varint len][Envelope{CaptureHeader}]   — exactly one
@@ -31,9 +31,15 @@ const (
 //	[Zstd trailer]
 //
 // The footer records frame count, duration, byte offsets in the uncompressed
-// stream, keyframe and event indexes. Because the stream is Zstd-compressed,
-// byte-offset seeking requires decompressing from the start; true random
-// access would need Zstd seekable frames (future work).
+// stream, keyframe and event indexes. Because this stream is one continuous
+// Zstd frame, byte-offset seeking requires decompressing from the start: the
+// keyframe index gives positions nothing can seek to.
+//
+// WithPerBlockCompression writes a second layout in which it can — the file
+// becomes independent per-block Zstd frames plus a seek table, a keyframe
+// offset becomes a servable byte range, and reaching frame N costs one block
+// rather than the whole file. It is opt-in because it changes the bytes on
+// disk. See tape_blocks.go for the layout and seekable.go for the index.
 //
 // Stream contract: exactly one WriteHeader, then any number of WriteFrame
 // calls, then one Close. Any call outside this order (a frame before the
