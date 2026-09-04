@@ -30,7 +30,6 @@ import (
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/echotools/tape/v4/pkg/codec"
-	"github.com/klauspost/compress/zstd"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -78,32 +77,22 @@ func writeShipped(tb testing.TB, dir, name string, frames []*capturepb.Frame, op
 	return path, info.Size()
 }
 
-// corpusDict trains a dictionary on the corpus's marshalled frames, the same
-// way buildCorpusDict does for the property suite, so the dictionary rows in
-// the two files are trained identically.
+// corpusDict trains a dictionary on the corpus through the package's own
+// trainer (codec.TrainDictionary), so the benchmark measures the dictionary a
+// caller would actually get rather than a hand-rolled equivalent.
 func corpusDict(tb testing.TB, frames []*capturepb.Frame) []byte {
 	tb.Helper()
-	var samples [][]byte
-	var history []byte
-	const histCap = 112 << 10 // conventional zstd dictionary size
-	for _, f := range frames {
+	samples := make([][]byte, len(frames))
+	for i, f := range frames {
 		b, err := proto.Marshal(f)
 		if err != nil {
 			tb.Fatalf("Marshal: %v", err)
 		}
-		samples = append(samples, b)
-		if len(history)+len(b) <= histCap {
-			history = append(history, b...)
-		}
+		samples[i] = b
 	}
-	d, err := zstd.BuildDict(zstd.BuildDictOptions{
-		ID:       1,
-		Contents: samples,
-		History:  history,
-		Level:    zstd.SpeedDefault,
-	})
+	d, err := codec.TrainDictionary(codec.MinPrivateDictionaryID, samples)
 	if err != nil {
-		tb.Skipf("BuildDict: %v", err)
+		tb.Skipf("TrainDictionary: %v", err)
 	}
 	return d
 }

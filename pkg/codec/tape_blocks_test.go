@@ -379,25 +379,7 @@ func TestPerBlockWithDictionary(t *testing.T) {
 
 	// Train on the corpus's own marshalled frames, which is what a real
 	// dictionary for this format would be trained on.
-	var samples [][]byte
-	var history []byte
-	for _, f := range frames {
-		b, err := proto.Marshal(f)
-		if err != nil {
-			t.Fatalf("Marshal: %v", err)
-		}
-		samples = append(samples, b)
-		history = append(history, b...)
-	}
-	dict, err := zstd.BuildDict(zstd.BuildDictOptions{
-		ID:       0x7A7E,
-		Contents: samples,
-		History:  history,
-		Level:    zstd.SpeedDefault,
-	})
-	if err != nil {
-		t.Skipf("BuildDict unavailable in this build: %v", err)
-	}
+	dict := buildTestDict(t, frames)
 
 	path := writeCapture(t, "dict.tape", frames,
 		WithKeyframeInterval(30), WithPerBlockCompression(), WithDictionary(dict))
@@ -598,27 +580,22 @@ func TestBlockForFrameResolvesEveryFrame(t *testing.T) {
 	}
 }
 
-// buildTestDict trains a dictionary on the test corpus.
+// buildTestDict trains a dictionary on the test corpus through the package's
+// own trainer, so the tests exercise the API a caller would use rather than a
+// parallel copy of it.
 func buildTestDict(t *testing.T, frames []*capturepb.Frame) []byte {
 	t.Helper()
-	var samples [][]byte
-	var history []byte
-	for _, f := range frames {
+	samples := make([][]byte, len(frames))
+	for i, f := range frames {
 		b, err := proto.Marshal(f)
 		if err != nil {
 			t.Fatalf("Marshal: %v", err)
 		}
-		samples = append(samples, b)
-		history = append(history, b...)
+		samples[i] = b
 	}
-	dict, err := zstd.BuildDict(zstd.BuildDictOptions{
-		ID:       0x7A7E,
-		Contents: samples,
-		History:  history,
-		Level:    zstd.SpeedDefault,
-	})
+	dict, err := TrainDictionary(MinPrivateDictionaryID, samples)
 	if err != nil {
-		t.Skipf("BuildDict unavailable in this build: %v", err)
+		t.Skipf("TrainDictionary unavailable in this build: %v", err)
 	}
 	return dict
 }
