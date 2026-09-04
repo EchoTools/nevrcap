@@ -491,6 +491,13 @@ func TestBackwardCompatibility(t *testing.T) {
 				t.Errorf("property 3a (default layout unchanged): HEAD's default output carries "+
 					"a seek table (%v); the default container layout changed", err)
 			}
+			// A receipt on success. A property that silently does not run looks
+			// exactly like a property that ran and passed, and this suite has
+			// been bitten by that difference more than once; the passing run
+			// should say what it checked without anyone having to instrument it.
+			t.Logf("property 3a: default layout unchanged — %d-byte decompressed envelope stream "+
+				"identical (sha256:%s), 1 zstd frame, no seek table",
+				len(headPlain), sha256Bytes(headPlain))
 
 			// --- Property 3b: byte-identical compressed output ---------------
 			//

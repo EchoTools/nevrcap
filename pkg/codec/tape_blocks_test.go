@@ -355,6 +355,20 @@ func TestDefaultLayoutIsUnchanged(t *testing.T) {
 
 // countZstdFrames walks the file frame by frame using the zstd frame header,
 // which is how a reader without an index would have to find block boundaries.
+//
+// KNOWN IMPRECISION, LEFT IN DELIBERATELY: it finds boundaries by scanning for
+// the 4-byte magic (0xFD2FB528, or a skippable frame's 0x184D2A5x) rather than
+// parsing each frame's declared size, so a compressed payload that happens to
+// contain those bytes is counted as a frame boundary and the total comes out
+// high. Parsing sizes properly means implementing the zstd frame header —
+// Window_Descriptor, Frame_Content_Size, the optional checksum — which is a
+// decoder, and a decoder in a test is a second implementation to keep correct.
+//
+// It is left as-is because it FAILS SAFE for every assertion built on it: those
+// assert an exact small count ("exactly 1 zstd frame"), so an overcount makes
+// the test FAIL LOUDLY on a correct file. It cannot make a wrong file pass. The
+// cost of the imprecision is a rare spurious red, never a silent green — and a
+// spurious red on a byte-exact corpus would itself be reproducible.
 func countZstdFrames(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)
