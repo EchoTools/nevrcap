@@ -61,6 +61,10 @@ type Writer struct {
 	frameCount       uint32
 	lastTimestampMs  uint32
 	keyframeInterval uint32
+	// blocks is non-nil only under WithPerBlockCompression, in which case it
+	// owns compression and encoder is nil. See tape_blocks.go for the layout
+	// and why it is opt-in.
+	blocks *blockWriter
 }
 
 // writerState tracks where the Writer sits in the stream contract: a new
@@ -85,26 +89,46 @@ func NewWriter(filename string) (*Writer, error) {
 // integer divide by zero (GH #23). events.WithFrameBufferSize answers the same
 // class of bug the same way.
 func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*Writer, error) {
-	if keyframeInterval == 0 {
-		keyframeInterval = DefaultKeyframeInterval
-	}
+	return NewWriterWithOptions(filename, WithKeyframeInterval(keyframeInterval))
+}
+
+// NewWriterWithOptions creates a writer configured by WriterOptions. With no
+// options it is identical to NewWriter, and every layout-affecting option
+// names itself as such (see tape_blocks.go): the default output is the layout
+// tape has always written, byte for byte.
+func NewWriterWithOptions(filename string, opts ...WriterOption) (*Writer, error) {
+	cfg := applyWriterOptions(opts)
 
 	file, err := os.Create(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
 	}
 
-	encoder, err := zstd.NewWriter(file, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	w := &Writer{
+		file:             file,
+		keyframeInterval: cfg.keyframeInterval,
+		eventIndex:       make(map[capturepb.EventType][]uint32),
+	}
+
+	if cfg.perBlock {
+		blocks, blockErr := newBlockWriter(file, cfg)
+		if blockErr != nil {
+			return nil, errors.Join(blockErr, file.Close())
+		}
+		w.blocks = blocks
+		return w, nil
+	}
+
+	zopts := []zstd.EOption{zstd.WithEncoderLevel(cfg.level)}
+	if len(cfg.dict) > 0 {
+		zopts = append(zopts, zstd.WithEncoderDict(cfg.dict))
+	}
+	encoder, err := zstd.NewWriter(file, zopts...)
 	if err != nil {
 		return nil, errors.Join(err, file.Close())
 	}
-
-	return &Writer{
-		file:             file,
-		encoder:          encoder,
-		keyframeInterval: keyframeInterval,
-		eventIndex:       make(map[capturepb.EventType][]uint32),
-	}, nil
+	w.encoder = encoder
+	return w, nil
 }
 
 // WriteHeader writes the capture header as the first envelope. It is an error
@@ -125,6 +149,14 @@ func (w *Writer) WriteHeader(header *capturepb.CaptureHeader) error {
 	}
 	if err := w.writeEnvelope(env); err != nil {
 		return err
+	}
+	// Under per-block compression the header is its own block, so rewriting it
+	// — the edit a metadata change or an audio strip performs — recompresses
+	// one small block rather than the first interval of frames along with it.
+	if w.blocks != nil {
+		if err := w.blocks.flush(); err != nil {
+			return fmt.Errorf("tape: WriteHeader: %w", err)
+		}
 	}
 	w.state = writerStateHeaderWritten
 	return nil
@@ -152,10 +184,24 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	frameIndex := frame.GetFrameIndex()
 
 	// Track keyframe offset before writing.
+	//
+	// The recorded offset means different things in the two layouts, and the
+	// difference is the whole point of per-block compression. In the shipped
+	// whole-stream layout it is a position in the DECOMPRESSED stream, which
+	// nothing can seek to. Under WithPerBlockCompression the keyframe opens a
+	// new block, so the offset is the block's position in the COMPRESSED file
+	// — a servable byte range, resolvable against the seek table.
 	if frameIndex%w.keyframeInterval == 0 {
+		offset := w.bytesWritten
+		if w.blocks != nil {
+			if err := w.blocks.flush(); err != nil {
+				return fmt.Errorf("tape: WriteFrame: %w", err)
+			}
+			offset = w.blocks.offset
+		}
 		w.keyframes = append(w.keyframes, &capturepb.KeyframeEntry{
 			FrameIndex: frameIndex,
-			ByteOffset: w.bytesWritten,
+			ByteOffset: offset,
 		})
 	}
 
@@ -230,11 +276,26 @@ func (w *Writer) Close() error {
 
 	var firstErr error
 
-	if err := w.writeEnvelope(env); err != nil {
+	// Under per-block compression the last frame block is closed BEFORE the
+	// footer is written, so the footer lands in a block of its own: it is
+	// derivable and rewritable without disturbing a single frame byte.
+	if w.blocks != nil {
+		if err := w.blocks.flush(); err != nil {
+			firstErr = err
+		}
+	}
+
+	if err := w.writeEnvelope(env); err != nil && firstErr == nil {
 		firstErr = err
 	}
 
-	if err := w.encoder.Close(); err != nil && firstErr == nil {
+	if w.blocks != nil {
+		// finish flushes the footer block and appends the seek table, which
+		// is what makes every keyframe offset above resolvable.
+		if err := w.blocks.finish(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	} else if err := w.encoder.Close(); err != nil && firstErr == nil {
 		firstErr = err
 	}
 
@@ -266,6 +327,16 @@ func (w *Writer) writeEnvelope(env *capturepb.Envelope) error {
 	}
 	buf[i] = byte(length)
 	i++
+
+	// bytesWritten counts UNCOMPRESSED bytes in both layouts, because that is
+	// what footer_offset has always meant. Per-block compression changes where
+	// blocks land in the file, not what the footer's own offset counts.
+	if w.blocks != nil {
+		w.blocks.write(buf[:i])
+		w.blocks.write(data)
+		w.bytesWritten += uint64(i) + uint64(len(data))
+		return nil
+	}
 
 	n, err := w.encoder.Write(buf[:i])
 	w.bytesWritten += uint64(max(n, 0)) //nolint:gosec // n is non-negative on success
