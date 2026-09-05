@@ -71,6 +71,33 @@ func allocatedDuring(fn func()) uint64 {
 	return after.TotalAlloc - before.TotalAlloc
 }
 
+// MUTATION WITNESS, and it is recorded because the first evidence offered for
+// these tests was a COMPILE ERROR — OpenBlockIndex did not take options yet —
+// and a build failure is not a failing test. It proves the API was absent; it
+// does not demonstrate the defect was reachable. Removing ReadBlock's four
+// checks (the file-size bound, the budget check, the frame-header cross-check
+// with its decoder cap, and the decoded-size equality) leaves the API intact,
+// so the tests RUN, and they fail on behaviour:
+//
+//	=== RUN   TestReadBlockRefusesASizeTheFileCannotHold
+//	    seekable_limits_test.go:123: ReadBlock allocated 1073746976 bytes
+//	    refusing a block that claims 1073741824 from a 1216-byte file
+//	    (SEC-002, allocate-before-verify).
+//	--- FAIL: TestReadBlockRefusesASizeTheFileCannotHold (0.00s)
+//	=== RUN   TestReadBlockBoundsDecoderMemory
+//	    seekable_limits_test.go:192: ReadBlock returned 268435456 bytes and NO
+//	    error for a block the seek table says yields 182
+//	    seekable_limits_test.go:201: bomb block: err=<nil>, 268780048 bytes
+//	    allocated
+//	--- FAIL: TestReadBlockBoundsDecoderMemory (0.18s)
+//	=== RUN   TestOpenBlockIndexTakesReaderOptions
+//	    seekable_limits_test.go:225: ReadBlock under WithMaxDecodedBytes(8)
+//	    returned <nil>; want ErrMaxDecodedBytes
+//	--- FAIL: TestOpenBlockIndexTakesReaderOptions (0.00s)
+//
+// That is the DoS firing: a gibibyte allocated to refuse a 1.2 KB file, and a
+// quarter-gibibyte decoded with no error at all.
+
 // TestReadBlockRefusesASizeTheFileCannotHold is SEC-002 on the seeking path: a
 // seek table claiming a block larger than the file must be refused BEFORE the
 // buffer is allocated.

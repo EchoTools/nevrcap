@@ -75,6 +75,20 @@ func readCaptureFrameIndexes(t *testing.T, path string) []uint32 {
 	}
 }
 
+// MUTATION WITNESS, recorded because a review could not find the red and the
+// red is the only thing that makes this test worth having. Setting
+// applyWriterOptions' perBlock back to false — exactly the pre-v4.1.0 default —
+// produces:
+//
+//	=== RUN   TestZeroOptionWriterIsPerBlockByDefault
+//	    default_layout_test.go:97: the DEFAULT capture has no seek table (tape:
+//	    no zstd seek table at end of file); NewWriter with no options must
+//	    produce the per-block layout
+//	--- FAIL: TestZeroOptionWriterIsPerBlockByDefault (0.00s)
+//
+// That is what a future change silently reverting the default would look like,
+// and it is the regression this repository has the most history with.
+
 // TestZeroOptionWriterIsPerBlockByDefault is the assertion Andrew's ruling
 // turns into code: a capture written with NO options is a per-block capture.
 //

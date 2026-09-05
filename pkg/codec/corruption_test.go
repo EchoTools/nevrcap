@@ -44,6 +44,15 @@ import (
 // exercised and how many the reader rejected, so a corpus that stopped being
 // corruptible fails here instead of going quiet.
 
+// THE CORPUS THESE NUMBERS COME FROM, stated because the findings doc reports
+// 35,085 of 60,424 for the same bug and two different numbers for one defect
+// invite someone later to pick one. The bug hunt swept every single bit of a
+// 7,553-byte capture of 60 float-heavy frames (8 players x Pose). This sweep
+// uses corruptionCorpus below — 60 frames of blockTestFrames at keyframe
+// interval 10, which is 836 bytes whole-stream and 1,216 per-block — and flips
+// three bits per byte rather than all eight. Different corpus, same defect,
+// and the rate differs because the payloads differ.
+
 // corruptionCorpus builds a float-heavy capture and returns its path and the
 // frames that went into it. Floats are the point: at SpeedFastest most of a
 // real telemetry frame is raw literals, and a flipped literal byte is a
