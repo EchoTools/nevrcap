@@ -105,6 +105,24 @@ var (
 	// failure this library must never have."
 	ErrCorruptCapture = errors.New("capture failed its compressor's integrity check; the bytes on disk are damaged")
 
+	// ErrTruncatedCapture is returned when the frame stream ends without a
+	// footer. The capture is cut: a crashed writer, a full disk, a partial
+	// copy, or a file still being written.
+	//
+	// WHY IT EXISTS (F2, measured 2026-09-05). ReadFrame's doc has always
+	// promised "a truncated or concatenated capture is reported rather than
+	// read as a short-but-successful one", and nothing implemented it. The
+	// promise held for the whole-stream layout by accident — a cut mid-frame is
+	// a zstd error at every offset — and the per-block layout removed the
+	// accident, because independent frames make every block boundary a clean
+	// EOF. Measured on a 35-frame capture: 4 of 697 truncation offsets returned
+	// 10 frames with err=nil, and `tapedeck show` printed "frames: 10" and
+	// exited 0. Data loss read as success.
+	//
+	// WithoutFooterRequired opts out, for salvaging a capture whose tail is
+	// known to be gone.
+	ErrTruncatedCapture = errors.New("capture ends with no footer; it is truncated or still being written")
+
 	// ErrTrailingData is returned when bytes remain after the footer envelope.
 	//
 	// A capture ends at its footer. Anything after it means the file is two
@@ -163,32 +181,75 @@ func DefaultLimits() Limits {
 	}
 }
 
-// ReaderOption adjusts the resource limits of a capture reader.
-type ReaderOption func(*Limits)
+// readerConfig is the folded result of the options passed to a reader
+// constructor. Every integrity check it can perform is ON here, and an option
+// is what turns one off (Andrew, 2026-09-05: "all features default.... you use
+// args to opt out").
+//
+// WHY IT IS A STRUCT AND NOT Limits. ReaderOption used to be func(*Limits), so
+// the only thing an option could reach was a resource budget, and "is a missing
+// footer an error" is not a budget. Folding it into Limits would have made
+// WithoutLimits — documented as disabling "every resource limit" — silently
+// re-arm or disarm an integrity check as a side effect. The config is
+// unexported, which also closes the option type: a ReaderOption can now only
+// come from this package, so the set of things a caller can switch off is
+// enumerable here rather than open-ended.
+type readerConfig struct {
+	limits Limits
+	// requireFooter makes a footerless stream an error rather than a clean
+	// short read. See ErrTruncatedCapture.
+	requireFooter bool
+}
+
+// ReaderOption adjusts a capture reader: its resource limits, or which
+// integrity checks it enforces.
+type ReaderOption func(*readerConfig)
 
 // WithMaxDecodedBytes sets the total decoded-bytes budget. n <= 0 disables it.
 func WithMaxDecodedBytes(n int64) ReaderOption {
-	return func(l *Limits) { l.MaxDecodedBytes = n }
+	return func(c *readerConfig) { c.limits.MaxDecodedBytes = n }
 }
 
 // WithMaxFrameCount sets the frame-count budget. n <= 0 disables it.
 func WithMaxFrameCount(n int64) ReaderOption {
-	return func(l *Limits) { l.MaxFrameCount = n }
+	return func(c *readerConfig) { c.limits.MaxFrameCount = n }
 }
 
 // WithoutLimits disables every resource limit. Explicit opt-in for reading a
 // trusted, legitimately giant capture.
+//
+// It disables RESOURCE limits only. Integrity checks are not limits and are
+// unaffected: a caller reading a trusted giant capture still wants to know if
+// it is damaged, and that is the case this option exists for.
 func WithoutLimits() ReaderOption {
-	return func(l *Limits) { *l = Limits{} }
+	return func(c *readerConfig) { c.limits = Limits{} }
 }
 
-// applyReaderOptions folds opts over the default limits.
-func applyReaderOptions(opts []ReaderOption) Limits {
-	limits := DefaultLimits()
+// WithoutFooterRequired accepts a capture whose frame stream ends with no
+// footer, returning the frames that survived instead of ErrTruncatedCapture.
+//
+// THE SALVAGE PATH, and the only intended use. A capture cut by a crashed
+// writer or a full disk still contains every frame before the cut, and
+// refusing the whole file to protect a caller from the missing tail is a
+// different kind of data loss. A live tail — reading a capture while it is
+// still being written — is the other case.
+//
+// WHAT IT COSTS: the reader can no longer distinguish "this capture ended" from
+// "this capture was cut", so a caller passing it is asserting that it already
+// knows. It also loses the footer's frame_count cross-check, since there is no
+// footer. Do not pass it to make an error go away.
+func WithoutFooterRequired() ReaderOption {
+	return func(c *readerConfig) { c.requireFooter = false }
+}
+
+// applyReaderOptions folds opts over the defaults: the default budgets, and
+// every integrity check on.
+func applyReaderOptions(opts []ReaderOption) readerConfig {
+	cfg := readerConfig{limits: DefaultLimits(), requireFooter: true}
 	for _, opt := range opts {
-		opt(&limits)
+		opt(&cfg)
 	}
-	return limits
+	return cfg
 }
 
 // checkFrameBudget returns ErrMaxFrameCount when framesRead exceeds the

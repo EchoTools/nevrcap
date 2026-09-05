@@ -133,7 +133,7 @@ func NewEchoReplayReaderWithProgress(filename string, progress io.Writer, opts .
 	codec := &EchoReplay{
 		filename: filename,
 		progress: progress,
-		limits:   applyReaderOptions(opts),
+		limits:   applyReaderOptions(opts).limits,
 		unmarshaler: &protojson.UnmarshalOptions{
 			DiscardUnknown: true,
 		},

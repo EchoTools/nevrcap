@@ -443,6 +443,11 @@ type Reader struct {
 	// pendingFooter holds a footer envelope encountered during ReadFrame.
 	pendingFooter *capturepb.CaptureFooter
 
+	// requireFooter makes a stream that ends with no footer an error rather
+	// than a clean short read (F2; see ErrTruncatedCapture). On by default;
+	// WithoutFooterRequired turns it off.
+	requireFooter bool
+
 	// tailVerified records that verifyTail already ran. The check consumes the
 	// stream, so it must happen exactly once however the caller arrives at the
 	// footer — ReadFrame reaching it, or ReadFooter reading it directly.
@@ -468,7 +473,8 @@ func NewReader(filename string, opts ...ReaderOption) (*Reader, error) {
 // A nil dictionary is exactly NewReader, so callers that do not know whether a
 // capture used one can pass what they have.
 func NewReaderWithDictionary(filename string, dict []byte, opts ...ReaderOption) (*Reader, error) {
-	limits := applyReaderOptions(opts)
+	cfg := applyReaderOptions(opts)
+	limits := cfg.limits
 
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
@@ -482,7 +488,7 @@ func NewReaderWithDictionary(filename string, dict []byte, opts ...ReaderOption)
 		return nil, errors.Join(err, file.Close())
 	}
 
-	r := &Reader{file: file, limits: limits}
+	r := &Reader{file: file, limits: limits, requireFooter: cfg.requireFooter}
 	if !compressed {
 		r.reader = newBudgetReader(file, limits.MaxDecodedBytes)
 		return r, nil
@@ -538,15 +544,33 @@ func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 // ReadFrame reads the next frame envelope. Returns io.EOF when the stream
 // ends or a non-frame envelope (the footer) is encountered.
 //
-// When the footer is reached, its frame_count is checked against the number of
-// frames actually read. A mismatch returns ErrFooterMismatch instead of io.EOF,
-// so a truncated or concatenated capture is reported rather than read as a
-// short-but-successful one. Callers that scan to the end therefore get the
-// integrity check for free; a caller that stops early and calls ReadFooter
-// directly is not subject to it, since a partial read is not a defect.
+// Three things are checked before io.EOF is returned, and a caller that scans
+// to the end gets all three for free:
+//
+//   - the footer must EXIST. A stream that ends with no footer is a cut file
+//     and returns ErrTruncatedCapture (F2). This used to be a clean io.EOF,
+//     which the per-block layout turned into silent data loss: independent
+//     frames make every block boundary a clean end of stream, so a truncated
+//     capture came back short and successful. WithoutFooterRequired opts out,
+//     for salvage.
+//   - the footer's frame_count must match the frames actually read, or
+//     ErrFooterMismatch.
+//   - the compressor's content checksum must verify, or ErrCorruptCapture
+//     (F1), and nothing may follow the footer, or ErrTrailingData.
+//
+// A caller that stops early and calls ReadFooter directly is not subject to
+// the frame_count check, since a partial read is not a defect.
 func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 	env, err := r.readEnvelope()
 	if err != nil {
+		// The stream ended. Whether that is the end of the CAPTURE depends on
+		// whether a footer was ever seen — and before v4.1.0 nothing asked
+		// (F2). Independent per-block frames make every block boundary a clean
+		// EOF, so a cut file returned a short capture and no error.
+		if errors.Is(err, io.EOF) && r.pendingFooter == nil && r.requireFooter {
+			return nil, fmt.Errorf("tape: stream ended after %d frames with no footer: %w",
+				r.framesRead, ErrTruncatedCapture)
+		}
 		return nil, err
 	}
 
@@ -590,6 +614,9 @@ func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 
 	env, err := r.readEnvelope()
 	if err != nil {
+		if errors.Is(err, io.EOF) && r.requireFooter {
+			return nil, fmt.Errorf("tape: no footer envelope in the stream: %w", ErrTruncatedCapture)
+		}
 		return nil, err
 	}
 

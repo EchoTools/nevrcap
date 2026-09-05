@@ -64,7 +64,9 @@ func NewLegacyReader(filename string, opts ...ReaderOption) (*LegacyReader, erro
 // NewLegacyReaderWithProgress creates a new reader that also copies
 // compressed bytes to progress (e.g. for a progress bar).
 func NewLegacyReaderWithProgress(filename string, progress io.Writer, opts ...ReaderOption) (*LegacyReader, error) {
-	limits := applyReaderOptions(opts)
+	// The legacy v1 reader has no footer, so requireFooter does not apply to
+	// it; only the budgets carry over.
+	limits := applyReaderOptions(opts).limits
 
 	file, err := os.Open(filename)
 	if err != nil {
