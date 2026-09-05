@@ -38,6 +38,7 @@ the game engine produced and existing clients can parse them unchanged.`,
 
 	cmd.Flags().StringVar(&addr, "addr", ":6721", "listen address")
 	cmd.Flags().Float64Var(&rate, "rate", 1.0, "playback rate multiplier")
+	addDictFlag(cmd)
 
 	return cmd
 }
@@ -98,7 +99,7 @@ func marshalEngineJSON(msg proto.Message) ([]byte, error) {
 }
 
 func runReplay(cmd *cobra.Command, filePath, addr string, rate float64) error {
-	reader, err := codec.NewReader(filePath)
+	reader, err := openTape(cmd, filePath)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}

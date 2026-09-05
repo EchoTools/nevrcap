@@ -41,6 +41,7 @@ with updated duration and indexes.`,
 	cmd.Flags().Uint32Var(&startMs, "start", 0, "start time in milliseconds (inclusive)")
 	cmd.Flags().Uint32Var(&endMs, "end", 0, "end time in milliseconds (inclusive, 0 = no limit)")
 	cmd.Flags().StringVarP(&output, "output", "o", "", "output file path")
+	addDictFlag(cmd)
 
 	return cmd
 }
@@ -48,7 +49,7 @@ with updated duration and indexes.`,
 func runTrim(cmd *cobra.Command, inputPath, outputPath string, startMs, endMs uint32) error {
 	out := cmd.OutOrStdout()
 
-	reader, err := codec.NewReader(inputPath)
+	reader, err := openTape(cmd, inputPath)
 	if err != nil {
 		return fmt.Errorf("open input: %w", err)
 	}

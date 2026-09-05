@@ -26,6 +26,7 @@ event counts per type, and field-level differences for individual frames.`,
 	}
 
 	cmd.Flags().IntVar(&maxDiffs, "max-diffs", 5, "maximum number of differing frames to show")
+	addDictFlag(cmd)
 
 	return cmd
 }
@@ -36,13 +37,13 @@ type diffEventCounts map[string]int
 func runDiff(cmd *cobra.Command, path1, path2 string, maxDiffs int) error {
 	out := cmd.OutOrStdout()
 
-	r1, err := codec.NewReader(path1)
+	r1, err := openTape(cmd, path1)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path1, err)
 	}
 	defer r1.Close() //nolint:errcheck // best-effort cleanup
 
-	r2, err := codec.NewReader(path2)
+	r2, err := openTape(cmd, path2)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path2, err)
 	}

@@ -10,7 +10,6 @@ import (
 	"text/tabwriter"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
-	"github.com/echotools/tape/v4/pkg/codec"
 	"github.com/spf13/cobra"
 )
 
@@ -30,6 +29,7 @@ disc throws, catches, and approximate possession time.`,
 	}
 
 	cmd.Flags().StringVar(&format, "format", "table", "output format: table|json")
+	addDictFlag(cmd)
 
 	return cmd
 }
@@ -59,7 +59,7 @@ func runStats(cmd *cobra.Command, filePath, format string) error {
 		return fmt.Errorf("unknown format: %s (use table or json)", format)
 	}
 
-	reader, err := codec.NewReader(filePath)
+	reader, err := openTape(cmd, filePath)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}

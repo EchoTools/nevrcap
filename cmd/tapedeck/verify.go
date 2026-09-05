@@ -39,6 +39,7 @@ Checks:
 	}
 
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "show detailed check output")
+	addDictFlag(cmd)
 
 	return cmd
 }
@@ -118,7 +119,11 @@ func runVerify(cmd *cobra.Command, inputPath string, verbose bool) error {
 
 	// --- Phase 3: Read the .tape back and collect tape data ---
 	printf(out, "phase 3: reading tape and verifying\n")
-	tapeData, err := collectTapeData(tapePath)
+	dict, err := dictBytes(cmd)
+	if err != nil {
+		return err
+	}
+	tapeData, err := collectTapeData(tapePath, dict)
 	if err != nil {
 		return fmt.Errorf("read tape: %w", err)
 	}
@@ -305,8 +310,11 @@ type tapeEventInfo struct {
 	isEmpty    bool
 }
 
-func collectTapeData(tapePath string) (*tapeData, error) {
-	reader, err := codec.NewReader(tapePath)
+// collectTapeData takes the dictionary as bytes rather than reaching for the
+// command, because it is called from inside the comparison rather than from a
+// RunE and there is no cobra command in scope there.
+func collectTapeData(tapePath string, dict []byte) (*tapeData, error) {
+	reader, err := codec.NewReaderWithDictionary(tapePath, dict)
 	if err != nil {
 		return nil, err
 	}

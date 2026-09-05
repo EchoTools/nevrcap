@@ -30,12 +30,13 @@ func newShowCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&format, "format", "summary", "output format: summary|text|json")
 	cmd.Flags().BoolVar(&showEvents, "events", false, "include events in output")
+	addDictFlag(cmd)
 
 	return cmd
 }
 
 func runShow(cmd *cobra.Command, filePath, format string, showEvents bool) error {
-	reader, err := codec.NewReader(filePath)
+	reader, err := openTape(cmd, filePath)
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
