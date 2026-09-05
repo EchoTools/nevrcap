@@ -442,6 +442,11 @@ type Reader struct {
 
 	// pendingFooter holds a footer envelope encountered during ReadFrame.
 	pendingFooter *capturepb.CaptureFooter
+
+	// tailVerified records that verifyTail already ran. The check consumes the
+	// stream, so it must happen exactly once however the caller arrives at the
+	// footer — ReadFrame reaching it, or ReadFooter reading it directly.
+	tailVerified bool
 }
 
 // NewReader opens a tape file for streaming reads. Reads are bounded by
@@ -565,6 +570,11 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 			return nil, fmt.Errorf("tape: footer declares %d frames, stream carried %d: %w",
 				declared, r.framesRead, ErrFooterMismatch)
 		}
+		// The footer agreeing is tape's OWN trailer checking out. The
+		// compressor has a trailer too, and reaching it is what F1 never did.
+		if err := r.verifyTail(); err != nil {
+			return nil, err
+		}
 		return nil, io.EOF
 	}
 	// Anything else here is a malformed stream.
@@ -587,7 +597,61 @@ func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 	if footer == nil {
 		return nil, io.ErrUnexpectedEOF
 	}
+	// A caller that reads the footer directly gets the same integrity check as
+	// one that scanned to it through ReadFrame.
+	if err := r.verifyTail(); err != nil {
+		return nil, err
+	}
 	return footer, nil
+}
+
+// verifyTail consumes what remains after the footer envelope, which is what
+// makes the compressor verify its own content checksum.
+//
+// THE BUG THIS CLOSES (F1, measured 2026-09-05; see ErrCorruptCapture). zstd
+// writes a content checksum on every frame, and klauspost's streaming decoder
+// validates it only when the frame's end is consumed. ReadFrame returned
+// io.EOF the moment it decoded the footer ENVELOPE, which sits before the end
+// of the zstd FRAME, so the last few bytes were never read and the checksum was
+// never checked — for any capture, in either layout, ever. 58% of single-bit
+// flips read back as clean captures with wrong telemetry.
+//
+// WHY DRAINING IS THE WHOLE FIX AND NOT A WORKAROUND: the checksum is already
+// written, so nothing on disk changes; the decoder is already the thing that
+// validates it; the only defect was that this reader stopped one read short of
+// asking. It is also layout-neutral — in the per-block layout the drain walks
+// off the end of the footer block and the decoder skips the seek table's
+// skippable frame, so it costs one Read either way.
+//
+// A NON-EMPTY TAIL IS ALSO A DEFECT, and a different one: a capture ends at its
+// footer, so bytes after it mean concatenation or appending
+// (ErrTrailingData). The two are reported separately because they need
+// different answers from whoever reads the error.
+func (r *Reader) verifyTail() error {
+	if r.tailVerified {
+		return nil
+	}
+	r.tailVerified = true
+
+	var buf [512]byte
+	// A bound, not a belief: an io.Reader is permitted to return (0, nil), and
+	// an unbounded loop over one would hang rather than fail. Any real stream
+	// reaches EOF or an error in one or two reads here.
+	for range 64 {
+		n, err := r.reader.Read(buf[:])
+		if n > 0 {
+			return fmt.Errorf("tape: %d byte(s) after the footer: %w", n, ErrTrailingData)
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			// The decoder's own verdict, wrapped so callers can match on the
+			// sentinel while still seeing what the compressor said.
+			return fmt.Errorf("tape: %w: %w", ErrCorruptCapture, err)
+		}
+	}
+	return fmt.Errorf("tape: the stream after the footer never ended: %w", ErrTrailingData)
 }
 
 // Close closes the decoder and underlying file.

@@ -85,6 +85,35 @@ var (
 	// have.
 	ErrFooterMismatch = errors.New("footer frame_count disagrees with the frames read; capture is truncated or corrupt")
 
+	// ErrCorruptCapture is returned when the COMPRESSOR's own integrity check
+	// fails — zstd writes a content checksum on every frame and this is that
+	// checksum disagreeing with the bytes decoded.
+	//
+	// WHY IT EXISTS (F1, measured 2026-09-05). It did not, and the check it
+	// reports was never reached: ReadFrame returned io.EOF the instant it saw
+	// the footer envelope, while klauspost's streaming decoder verifies the
+	// checksum only when the end of the zstd frame is consumed. The
+	// whole-stream layout is ONE frame, so no capture ever written was
+	// checksum-verified on this path. A sweep of every single-bit flip of a
+	// 7,553-byte capture: 35,085 of 60,424 flips read back as a clean capture
+	// with WRONG telemetry, and all 32 flips inside the checksum bytes were
+	// accepted. `zstd -d` rejected the same files.
+	//
+	// This is ErrFooterMismatch's argument applied one layer down: tape's
+	// trailer is frame_count, zstd's trailer is the checksum, and ignoring
+	// either "reports success on a file that lost data, which is the one
+	// failure this library must never have."
+	ErrCorruptCapture = errors.New("capture failed its compressor's integrity check; the bytes on disk are damaged")
+
+	// ErrTrailingData is returned when bytes remain after the footer envelope.
+	//
+	// A capture ends at its footer. Anything after it means the file is two
+	// captures concatenated, or a capture with something appended — and either
+	// way the reader has just returned frames from a file it does not
+	// understand the whole of. Reporting it is the same promise ReadFrame's doc
+	// already makes about concatenation.
+	ErrTrailingData = errors.New("bytes remain after the capture footer; the file is concatenated or appended to")
+
 	// ErrUnsupportedVersion is returned by ReadHeader when the capture's
 	// format_version is not 2 (or 0 for pre-2.1 captures). A future reader
 	// might understand additional versions, but this one does not.
