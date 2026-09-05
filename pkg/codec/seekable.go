@@ -257,6 +257,16 @@ func blockAt(entries []seekTableEntry, offset uint64) (index int, length uint64,
 type BlockIndex struct {
 	path    string
 	entries []seekTableEntry
+	// limits bounds what this read path will spend on a hostile file, the same
+	// budgets the sequential Reader enforces. Before v4.1.0 they were not
+	// reachable from here at all (F4): a caller who bounded a Reader had no way
+	// to bound a BlockIndex, and did not choose which path a library function
+	// took.
+	limits Limits
+	// size is the file's length at open time, the only ground truth about how
+	// large a block can possibly be. A seek table is data from the file; the
+	// file's own size is not.
+	size int64
 }
 
 // OpenBlockIndex reads the seek table of the capture at filename.
@@ -266,7 +276,11 @@ type BlockIndex struct {
 // failure: such a capture is read sequentially instead. A table that is
 // present but internally inconsistent returns ErrSeekTableCorrupt, because
 // answering "no index" there would hide damage behind a legal-sounding state.
-func OpenBlockIndex(filename string) (*BlockIndex, error) {
+//
+// ReaderOptions bound what reads through the returned index will spend, exactly
+// as they do for NewReader. Passing none applies DefaultLimits.
+func OpenBlockIndex(filename string, opts ...ReaderOption) (*BlockIndex, error) {
+	cfg := applyReaderOptions(opts)
 	file, err := os.Open(filename) //nolint:gosec // filename is caller-provided path
 	if err != nil {
 		return nil, err
@@ -282,8 +296,11 @@ func OpenBlockIndex(filename string) (*BlockIndex, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &BlockIndex{entries: entries, path: filename}, nil
+	return &BlockIndex{entries: entries, path: filename, limits: cfg.limits, size: info.Size()}, nil
 }
+
+// Limits returns the resource budgets in effect for reads through this index.
+func (i *BlockIndex) Limits() Limits { return i.limits }
 
 // Blocks reports how many independently decompressible blocks the capture
 // holds, including the header block and the footer block.
@@ -330,10 +347,64 @@ func (i *BlockIndex) BlockRange(n int) (offset, length uint64, err error) {
 // written with a trained dictionary (nil otherwise). It reads only that block's
 // bytes: nothing before it is touched, which is the property the per-block
 // layout exists to provide.
+//
+// EVERY NUMBER IT ACTS ON COMES FROM THE FILE, so every one is checked before
+// it is spent (F4, measured 2026-09-05). What this used to do:
+//
+//	compressedSize=0xFFFFFFFF: ReadBlock(1) -> "reading block 1 at 52: EOF"
+//	                           AFTER HeapAlloc 4097 MiB
+//	a 426 KB file whose block 1 is 2 GiB of zeros:
+//	                           len=2147483648 err=nil, HeapAlloc 3699 MiB
+//
+// The first line is the defect exactly: the error was correct and it arrived
+// after the allocation. A reader that refuses a hostile file only once it has
+// allocated what the file asked for has not refused it (SEC-002). The second is
+// SEC-001, which the sequential reader has enforced since it shipped and this
+// path could not even be told about.
+//
+// Three checks, in the order the budget is actually spent:
+//
+//  1. The block must FIT IN THE FILE. The file's size is the one fact about a
+//     capture that does not come out of the capture, so it bounds the buffer
+//     before a byte is allocated.
+//  2. The declared decompressed size must fit the caller's budget, checked
+//     before decoding rather than after.
+//  3. The FRAME HEADER is parsed before the frame is decoded. zstd states a
+//     frame's content size in its own header, so a block whose header
+//     disagrees with the seek table is refused having allocated nothing — this
+//     is what catches the 2 GiB-of-zeros case, and it costs a header parse.
+//     The decoder is then capped, and the decoded length must EQUAL the
+//     declared size. Resolving a disagreement in the file's favour is how a
+//     426 KB file becomes a 2 GB allocation.
+//
+// THE CAP IS NOT THE DECLARED SIZE, and the first attempt at this made it so:
+// WithDecoderMaxMemory(182) rejected a legitimate 182-byte block with "window
+// size exceeded", because klauspost checks the frame's WINDOW against that
+// budget and the encoder's window is megabytes regardless of how little the
+// block holds. The cap is therefore max(declared, the frame's own declared
+// window) — still a bound the file cannot inflate past what it already
+// committed to in its header, and check 3's equality is what makes a lie about
+// that header useless.
 func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 	offset, length, err := i.BlockRange(n)
 	if err != nil {
 		return nil, err
+	}
+
+	// 1. SEC-002: verify against the file's own size BEFORE allocating.
+	if i.size < 0 || offset > uint64(i.size) || length > uint64(i.size)-offset {
+		return nil, fmt.Errorf("tape: block %d claims %d bytes at offset %d in a %d-byte file: %w",
+			n, length, offset, i.size, ErrSeekTableCorrupt)
+	}
+
+	declared := uint64(i.entries[n].decompressedSize)
+
+	// 2. SEC-001: the budget is checked against what the table DECLARES,
+	// before anything is decoded. A block that lies about this is caught by
+	// check 3.
+	if i.limits.MaxDecodedBytes > 0 && declared > uint64(i.limits.MaxDecodedBytes) {
+		return nil, fmt.Errorf("tape: block %d declares %d decoded bytes: %w",
+			n, declared, ErrMaxDecodedBytes)
 	}
 
 	file, err := os.Open(i.path) //nolint:gosec // path came from OpenBlockIndex
@@ -343,11 +414,28 @@ func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 	defer file.Close() //nolint:errcheck // read-only
 
 	raw := make([]byte, length)
-	if _, readErr := file.ReadAt(raw, int64(offset)); readErr != nil { //nolint:gosec // offset is a file position
+	if _, readErr := file.ReadAt(raw, int64(offset)); readErr != nil { //nolint:gosec // bounded by i.size above
 		return nil, fmt.Errorf("tape: reading block %d at %d: %w", n, offset, readErr)
 	}
 
-	var dopts []zstd.DOption
+	// 3. The frame states its own content size. Compare it with the index
+	// BEFORE decoding: this is the check that refuses a bomb having allocated
+	// nothing but the compressed bytes already read.
+	var hdr zstd.Header
+	if hdrErr := hdr.Decode(raw); hdrErr != nil {
+		return nil, fmt.Errorf("tape: block %d frame header: %w", n, hdrErr)
+	}
+	if hdr.HasFCS && hdr.FrameContentSize != declared {
+		return nil, fmt.Errorf("tape: block %d's frame declares %d bytes, seek table declares %d: %w",
+			n, hdr.FrameContentSize, declared, ErrSeekTableCorrupt)
+	}
+	// klauspost's own default cap is 64 GiB, which is not a bound for a file
+	// that chose its own numbers. The window term is required: the budget is
+	// checked against the frame's window, not only its content, and a
+	// legitimate small block still carries the encoder's window. A declared
+	// zero would be rejected by the option itself (WithDecoderMaxMemory
+	// requires >= 1), so the floor of 1 keeps the error ours.
+	dopts := []zstd.DOption{zstd.WithDecoderMaxMemory(max(declared, hdr.WindowSize, 1))}
 	if len(dict) > 0 {
 		dopts = append(dopts, zstd.WithDecoderDicts(dict))
 	}
@@ -360,6 +448,10 @@ func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 	out, err := dec.DecodeAll(raw, nil)
 	if err != nil {
 		return nil, fmt.Errorf("tape: decompressing block %d: %w", n, err)
+	}
+	if uint64(len(out)) != declared {
+		return nil, fmt.Errorf("tape: block %d decoded to %d bytes, seek table declares %d: %w",
+			n, len(out), declared, ErrSeekTableCorrupt)
 	}
 	return out, nil
 }
