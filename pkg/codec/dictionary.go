@@ -55,9 +55,27 @@ var ErrNoTrainingData = errors.New("tape: no frames to train a dictionary on")
 // rejected, because zstd treats a zero id as "no dictionary declared", which
 // would leave a capture that needs a dictionary unable to say so.
 //
-// The samples train the entropy tables; the first DefaultDictionaryHistory
-// bytes of them, in order, become the match history every block compresses
-// against. Both are required — zstd rejects an empty history.
+// The samples train the entropy tables; a PREFIX of them becomes the match
+// history every block compresses against. Both are required — zstd rejects an
+// empty history.
+//
+// THE HISTORY IS BOUNDED BY TWO THINGS, and the second one is F5. The byte
+// budget (DefaultDictionaryHistory) was always there. The sample-count bound
+// was not, and without it training failed on every corpus smaller than 112 KiB
+// with an error that blamed the trainer: the history swallowed the entire
+// corpus, so every sample handed to BuildDict was already in the history, there
+// was nothing left to learn from, and klauspost reported "0 sequences found".
+// Measured at ~216-byte frames: failure at every n <= 500 (108,367 B),
+// success from n >= 550 (119,267 B) — a boundary at exactly the history size.
+//
+// TrainDictionaryFromCaptures on ONE capture is the operation someone performs
+// first, and one capture of a normal match is well under 112 KiB of payload, so
+// the feature was unreachable from its own front door.
+//
+// Bounding the history to at most half the samples leaves the rest as novel
+// input whatever the corpus size. For a corpus larger than the byte budget the
+// byte bound still binds first, so nothing that already trained trains
+// differently.
 func TrainDictionary(id uint32, samples [][]byte) ([]byte, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("tape: dictionary id 0 means \"no dictionary\" to zstd: %w", ErrNoTrainingData)
@@ -66,12 +84,23 @@ func TrainDictionary(id uint32, samples [][]byte) ([]byte, error) {
 		return nil, ErrNoTrainingData
 	}
 
+	// At most half the samples, so the other half is material BuildDict has
+	// not already seen. One sample cannot be split and cannot train anything;
+	// say that rather than letting zstd say something else.
+	if len(samples) < 2 {
+		return nil, fmt.Errorf("tape: a dictionary needs samples to learn from beyond its own "+
+			"match history, and %d sample cannot be split into both: %w", len(samples), ErrNoTrainingData)
+	}
+	maxHistorySamples := len(samples) / 2
+
 	history := make([]byte, 0, DefaultDictionaryHistory)
+	used := 0
 	for _, s := range samples {
-		if len(history)+len(s) > DefaultDictionaryHistory {
+		if used >= maxHistorySamples || len(history)+len(s) > DefaultDictionaryHistory {
 			break
 		}
 		history = append(history, s...)
+		used++
 	}
 	if len(history) == 0 {
 		return nil, fmt.Errorf("tape: every training sample exceeds the %d-byte history budget: %w",
@@ -85,7 +114,15 @@ func TrainDictionary(id uint32, samples [][]byte) ([]byte, error) {
 		Level:    zstd.SpeedDefault,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("tape: training dictionary %d on %d samples: %w", id, len(samples), err)
+		// Say what the corpus WAS. The trainer's own message ("0 sequences
+		// found") names a symptom of the input, and reading it as a defect in
+		// the trainer is what F5 cost.
+		total := 0
+		for _, s := range samples {
+			total += len(s)
+		}
+		return nil, fmt.Errorf("tape: training dictionary %d on %d samples (%d bytes, %d of them "+
+			"in the %d-byte match history): %w", id, len(samples), total, used, len(history), err)
 	}
 	return dict, nil
 }
