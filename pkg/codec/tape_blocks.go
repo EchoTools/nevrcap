@@ -10,7 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// Per-block container layout — opt-in, and OFF by default.
+// Per-block container layout — THE DEFAULT since v4.1.0.
 //
 // WHY THIS EXISTS. Writer's own doc comment concedes the defect: "Because the
 // stream is Zstd-compressed, byte-offset seeking requires decompressing from
@@ -46,14 +46,28 @@ import (
 //
 // WHAT IT CHANGES ON DISK: the byte layout, and the meaning of
 // KeyframeEntry.ByteOffset, which in this mode is the offset of the block in
-// the COMPRESSED file rather than in the decompressed stream. That is a format
-// change and it is therefore opt-in: NewWriter and
-// NewWriterWithKeyframeInterval keep producing exactly the layout they always
-// produced. Nothing writes the new layout unless a caller asks for it by name.
+// the COMPRESSED file rather than in the decompressed stream.
+//
+// WHY IT IS THE DEFAULT, AND WHEN THAT CHANGED. It shipped opt-in, on the
+// reasoning that a format change must be asked for by name. Andrew overruled
+// that on 2026-09-05 15:54, and the ruling is the authority for this file:
+//
+//	"fix it. all features default.... you use args to opt out"
+//	"your acting like this proto is already released.. it's not.. THIS is
+//	 the release."
+//
+// The old reasoning protected a release that had not happened. What it cost
+// was real: the seekability this layout exists for was off for every caller
+// who did not know the option's name, which is every caller. So NewWriter,
+// NewWriterWithKeyframeInterval and NewWriterWithOptions with no options all
+// produce THIS layout, and WithWholeStreamCompression is how a caller opts
+// back out.
 
 // WriterOption configures a Writer. Options that change the on-disk layout say
-// so in their own doc comment; the zero-option writer is byte-for-byte the
-// layout tape has always written.
+// so in their own doc comment. The zero-option writer takes every feature that
+// can be on by default: per-block compression at DefaultKeyframeInterval,
+// compressed at zstd.SpeedFastest. Turning a feature OFF is what takes an
+// argument.
 type WriterOption func(*writerConfig)
 
 // writerConfig is the folded result of the options passed to
@@ -69,8 +83,9 @@ type writerConfig struct {
 // is clamped to DefaultKeyframeInterval (GH #23: it reached
 // `frameIndex % keyframeInterval` and panicked with a divide by zero).
 //
-// Under WithPerBlockCompression this interval is also the block size, so it
-// sets seek granularity as well as index density.
+// Under the default per-block layout this interval is also the block size, so
+// it sets seek granularity as well as index density. Under
+// WithWholeStreamCompression it sets index density only.
 func WithKeyframeInterval(n uint32) WriterOption {
 	return func(c *writerConfig) { c.keyframeInterval = n }
 }
@@ -82,14 +97,39 @@ func WithCompressionLevel(level zstd.EncoderLevel) WriterOption {
 }
 
 // WithPerBlockCompression writes the capture as independent per-block zstd
-// frames plus a seek table, instead of one continuous zstd stream.
+// frames plus a seek table, instead of one continuous zstd stream. What it
+// buys: a keyframe offset becomes a servable byte range, and reaching frame N
+// costs one block instead of the whole file.
 //
-// THIS CHANGES THE ON-DISK LAYOUT and redefines KeyframeEntry.ByteOffset to a
-// compressed-file offset. It is opt-in for exactly that reason. What it buys:
-// a keyframe offset becomes a servable byte range, and reaching frame N costs
-// one block instead of the whole file.
+// THIS IS THE DEFAULT as of v4.1.0 — the option is now a no-op that states an
+// intent. It is kept, rather than deleted, because call sites and tests name it
+// and because writing it makes a caller's requirement explicit at the call site
+// instead of dependent on this package's default. It is idempotent and it wins
+// over an earlier WithWholeStreamCompression, so options fold last-wins in
+// either order.
 func WithPerBlockCompression() WriterOption {
 	return func(c *writerConfig) { c.perBlock = true }
+}
+
+// WithWholeStreamCompression writes the capture as ONE continuous zstd stream
+// with no seek table — the layout tape wrote before v4.1.0.
+//
+// THIS IS THE OPT-OUT, and it is the only way to get that layout now. What it
+// costs, and the reason it is not the default: KeyframeEntry.ByteOffset goes
+// back to being an offset in the DECOMPRESSED stream, which nothing can seek
+// to, so reaching frame N means decompressing every byte before it and serving
+// a range of the file is impossible. Integrity also gets later rather than
+// absent: a per-block capture's zstd content checksum fires at every block
+// boundary, so a flipped bit or a wrong dictionary is caught within one
+// keyframe interval, where a whole-stream capture reaches its single checksum
+// only at end of file.
+//
+// It exists for exactly two callers: one that must produce bytes an
+// already-deployed pre-v4.1.0 reader consumes byte-identically, and one
+// streaming to a sink where the trailing seek table cannot be written. Anything
+// else should take the default.
+func WithWholeStreamCompression() WriterOption {
+	return func(c *writerConfig) { c.perBlock = false }
 }
 
 // WithDictionary compresses with a trained zstd dictionary. Telemetry is close
@@ -109,9 +149,16 @@ func WithDictionary(dict []byte) WriterOption {
 
 // applyWriterOptions folds opts over the shipped defaults.
 func applyWriterOptions(opts []WriterOption) writerConfig {
+	// Every feature that CAN be on by default IS on by default (Andrew,
+	// 2026-09-05: "all features default.... you use args to opt out"). The one
+	// exception is WithDictionary, and it is an exception of KIND rather than
+	// of policy: a dictionary is trained bytes that do not exist at
+	// construction time and cannot be conjured, and it is a permanent
+	// obligation on every future reader. There is no dictionary to default TO.
 	c := writerConfig{
 		keyframeInterval: DefaultKeyframeInterval,
 		level:            zstd.SpeedFastest,
+		perBlock:         true,
 	}
 	for _, opt := range opts {
 		opt(&c)

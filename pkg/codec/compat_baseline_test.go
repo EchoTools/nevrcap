@@ -31,13 +31,32 @@ import (
 // person hand-compiled an old reader and ran a matrix by hand. A compatibility
 // promise that depends on someone remembering to check it is not a promise.
 //
-// WHAT IT PROVES, and these four are the bar:
+// WHAT IT PROVES, and these are the bar:
 //
 //	1. A reader built from a BASELINE reads a file written by HEAD's defaults.
 //	2. HEAD reads a file written by that baseline.
-//	3. HEAD's default output is BYTE-IDENTICAL to the baseline's, by sha256 —
-//	   not merely "readable" (but see the dependency caveat below).
-//	4. The opt-in per-block layout is readable by the baseline reader.
+//	3a. HEAD can still REPRODUCE the pre-v4.1.0 layout, and its decompressed
+//	    envelope stream and container shape are identical to the baseline's.
+//	3b. That reproduction is byte-identical by sha256 (dependency caveat below).
+//	3c. HEAD's DEFAULT is the per-block layout, and it differs from the
+//	    reproduction in exactly one licensed way.
+//	4. The baseline reader reads HEAD's opt-out (whole-stream) output.
+//
+// WHAT CHANGED AT v4.1.0, AND WHY 3a/3b MOVED. Properties 3a and 3b used to
+// assert that HEAD's DEFAULT output was unchanged from the baseline's. Andrew
+// retired that claim on 2026-09-05 15:54:
+//
+//	"fix it. all features default.... you use args to opt out"
+//	"your acting like this proto is already released.. it's not.. THIS is
+//	 the release."
+//
+// The default is now the per-block layout, so "the default bytes never change"
+// is FALSE and asserting it would fail by design. It was NOT deleted and it was
+// NOT skipped: the identical assertions now run against
+// WithWholeStreamCompression, which is the option that reproduces the old
+// layout. Nothing about the old layout stopped being checked — the thing that
+// produces it acquired a name. 3c is new and covers the gap that move opens:
+// that the DEFAULT is the layout the ruling requires.
 //
 // HOW IT GETS AN OLD READER: it builds one, from this repository's own git
 // history, via `git archive <baseline> pkg/codec go.mod go.sum` into a temp
@@ -424,8 +443,27 @@ func TestBackwardCompatibility(t *testing.T) {
 			dir := t.TempDir()
 
 			// --- Property 1: baseline reader × HEAD's default output ---------
+			//
+			// Since v4.1.0 HEAD's default output is the PER-BLOCK layout, so
+			// this is the load-bearing compatibility claim of the release: a
+			// reader compiled before per-block existed opens what the current
+			// writer produces with no options at all.
 			headDefault := filepath.Join(dir, "head-default.tape")
 			writeCompatCapture(t, headDefault)
+
+			// Guard the guard, and it is the guard property 4 used to carry:
+			// if the default silently reverted to whole-stream, property 1
+			// would pass while proving nothing about the new layout.
+			defaultIndex, err := OpenBlockIndex(headDefault)
+			if err != nil {
+				t.Fatalf("property 1: HEAD's DEFAULT output has no seek table (%v); the "+
+					"default is supposed to be the per-block layout since v4.1.0, so this "+
+					"assertion would be checking the old layout under a new name", err)
+			}
+			if defaultIndex.Blocks() < 3 {
+				t.Fatalf("property 1: HEAD's default output has %d blocks; it is not actually "+
+					"blocked", defaultIndex.Blocks())
+			}
 
 			want := fmt.Sprintf("OK frames=%d first=0 last=%d footer_frames=%d footer_keyframes=%d",
 				compatFrameCount, compatFrameCount-1, compatFrameCount, compatFrameCount/compatKeyframes)
@@ -439,6 +477,11 @@ func TestBackwardCompatibility(t *testing.T) {
 				t.Fatalf("baseline writer failed: %s", strings.TrimSpace(string(out)))
 			}
 			headFrames := readCompatCapture(t, baselineFile)
+			// This is the property that says existing whole-stream tapes —
+			// everything nevr-stream has already written — stay readable by
+			// this release. It is unaffected by the default flip, and if it
+			// ever fails that is a real regression rather than an intended
+			// change.
 			if len(headFrames) != compatFrameCount {
 				t.Fatalf("property 2 (HEAD reads baseline's output): read %d frames, want %d",
 					len(headFrames), compatFrameCount)
@@ -449,70 +492,84 @@ func TestBackwardCompatibility(t *testing.T) {
 				}
 			}
 
-			// --- Property 3a: the default LAYOUT is unchanged ----------------
+			// --- Property 3a: the OLD layout is still reproducible -----------
 			//
-			// The assertion that survives a dependency bump, and where the real
-			// protection lives. Compressed bytes belong to klauspost/compress;
-			// the DECOMPRESSED envelope stream and the container's frame
-			// structure belong to tape. Comparing those catches a layout change
-			// on EVERY baseline, including ones whose pins have drifted far
-			// enough that comparing compressed bytes would measure the wrong
-			// library.
+			// RETIRED IN ITS ORIGINAL FORM AT v4.1.0, DELIBERATELY. This block
+			// used to compare HEAD's DEFAULT output against the baseline's and
+			// was titled "the default layout is unchanged". Andrew ruled the
+			// default changes for this release ("all features default.... you
+			// use args to opt out"; "THIS is the release"), so that claim is
+			// now false and would fail by construction.
 			//
-			// Without this, readability alone lets a total container change
-			// pass: an old reader that still parses a rewritten layout reports
-			// OK, and OK was the entire signal.
+			// It is retargeted rather than removed. The assertions below are
+			// the same three, verbatim in substance — identical decompressed
+			// envelope stream, exactly one zstd frame, no seek table — applied
+			// to WithWholeStreamCompression, the option that reproduces the
+			// pre-v4.1.0 layout. The old layout is therefore still checked on
+			// every baseline, on every run; only the thing that produces it
+			// changed name. A t.Skip here would have been a silent retreat.
 			//
 			// Decoding is version-independent -- zstd's format is stable even
 			// where its ENCODER output is not -- which is what makes this
 			// comparison legitimate across a compression-library bump.
-			headPlain := decompressAll(t, headDefault)
+			headWhole := filepath.Join(dir, "head-wholestream.tape")
+			writeCompatCapture(t, headWhole, WithWholeStreamCompression())
+
+			headPlain := decompressAll(t, headWhole)
 			basePlain := decompressAll(t, baselineFile)
 			if !bytes.Equal(headPlain, basePlain) {
-				t.Errorf("property 3a (default layout unchanged): THE DECOMPRESSED ENVELOPE "+
-					"STREAM DIFFERS, so the container layout, framing or message encoding "+
-					"changed.\n  HEAD     %d bytes sha256:%s\n  %-8s %d bytes sha256:%s",
+				t.Errorf("property 3a (the pre-v4.1.0 layout is still reproducible): THE "+
+					"DECOMPRESSED ENVELOPE STREAM DIFFERS under WithWholeStreamCompression, so "+
+					"the container layout, framing or message encoding changed.\n  HEAD     %d "+
+					"bytes sha256:%s\n  %-8s %d bytes sha256:%s",
 					len(headPlain), sha256Bytes(headPlain), base.Ref, len(basePlain), sha256Bytes(basePlain))
 			}
 
 			// The container's shape, which the decompressed stream cannot show:
-			// a default capture is exactly ONE zstd frame and carries no seek
+			// an opt-out capture is exactly ONE zstd frame and carries no seek
 			// table. Splitting the same envelopes across independent frames can
 			// leave the decompressed bytes identical, so this is the assertion
 			// that catches that.
-			if n := countZstdFrames(t, headDefault); n != 1 {
-				t.Errorf("property 3a (default layout unchanged): HEAD's default output is %d "+
-					"zstd frames, want exactly 1; the default container layout changed", n)
+			if n := countZstdFrames(t, headWhole); n != 1 {
+				t.Errorf("property 3a: HEAD's WithWholeStreamCompression output is %d zstd "+
+					"frames, want exactly 1; the opt-out no longer reproduces the old layout", n)
 			}
 			if n := countZstdFrames(t, baselineFile); n != 1 {
 				t.Errorf("property 3a: %s's default output is %d zstd frames, want 1", base.Ref, n)
 			}
-			if _, err := OpenBlockIndex(headDefault); !errors.Is(err, ErrNoSeekTable) {
-				t.Errorf("property 3a (default layout unchanged): HEAD's default output carries "+
-					"a seek table (%v); the default container layout changed", err)
+			if _, err := OpenBlockIndex(headWhole); !errors.Is(err, ErrNoSeekTable) {
+				t.Errorf("property 3a: HEAD's WithWholeStreamCompression output carries a seek "+
+					"table (%v); the opt-out no longer reproduces the old layout", err)
 			}
 			// A receipt on success. A property that silently does not run looks
 			// exactly like a property that ran and passed, and this suite has
 			// been bitten by that difference more than once; the passing run
 			// should say what it checked without anyone having to instrument it.
-			t.Logf("property 3a: default layout unchanged — %d-byte decompressed envelope stream "+
-				"identical (sha256:%s), 1 zstd frame, no seek table",
+			t.Logf("property 3a: the pre-v4.1.0 layout is still reproducible via "+
+				"WithWholeStreamCompression — %d-byte decompressed envelope stream identical "+
+				"(sha256:%s), 1 zstd frame, no seek table",
 				len(headPlain), sha256Bytes(headPlain))
 
 			// --- Property 3b: byte-identical compressed output ---------------
 			//
 			// The strongest available assertion, and it only means anything when
 			// the baseline pins the same output-affecting dependencies as HEAD.
+			//
+			// Retargeted with 3a, and for the same reason: it now compares the
+			// OPT-OUT bytes rather than the default bytes. The property it
+			// defends is unchanged — "the pre-v4.1.0 on-disk bytes did not move"
+			// — and it still fails if they do.
 			matched, why := pinsMatchHEAD(t, base.Ref)
 			if matched {
-				headSum := sha256File(t, headDefault)
+				headSum := sha256File(t, headWhole)
 				baseSum := sha256File(t, baselineFile)
 				if headSum != baseSum {
-					t.Errorf("property 3b (compressed output byte-identical): THE DEFAULT ON-DISK "+
-						"BYTES CHANGED.\n  HEAD     sha256:%s (%d bytes)\n  %-8s sha256:%s (%d bytes)",
-						headSum, fileSize(t, headDefault), base.Ref, baseSum, fileSize(t, baselineFile))
+					t.Errorf("property 3b (compressed output byte-identical): THE PRE-v4.1.0 "+
+						"ON-DISK BYTES CHANGED under WithWholeStreamCompression.\n  HEAD     "+
+						"sha256:%s (%d bytes)\n  %-8s sha256:%s (%d bytes)",
+						headSum, fileSize(t, headWhole), base.Ref, baseSum, fileSize(t, baselineFile))
 				} else {
-					t.Logf("property 3b: compressed output byte-identical, sha256:%s", headSum)
+					t.Logf("property 3b: opt-out compressed output byte-identical, sha256:%s", headSum)
 				}
 			} else {
 				// Not a skip of the property -- a statement that it cannot
@@ -523,25 +580,66 @@ func TestBackwardCompatibility(t *testing.T) {
 					"layout instead, and it applies to every baseline.", base.Ref, why)
 			}
 
-			// --- Property 4: baseline reader × opt-in per-block layout -------
-			perBlock := filepath.Join(dir, "head-perblock.tape")
-			writeCompatCapture(t, perBlock, WithPerBlockCompression())
+			// --- Property 3c: the DEFAULT is the per-block layout -------------
+			//
+			// NEW AT v4.1.0, and it exists because 3a moved. With 3a pointed at
+			// the opt-out, nothing else in this test would say what the DEFAULT
+			// is, and "the old layout is still reachable" is a weaker claim than
+			// the ruling made. This is the ruling in assertion form.
+			//
+			// It also pins HOW the two layouts differ. Per-block changes the
+			// CONTAINER, not the content, so the decompressed envelope streams
+			// must agree envelope for envelope except in the footer, where
+			// KeyframeEntry.ByteOffset is deliberately redefined from a
+			// decompressed-stream position to a compressed-file offset. Any
+			// OTHER difference — a frame count, a duration, an event index —
+			// fails here.
+			wholeEnvs := envelopeStream(t, headPlain)
+			defaultEnvs := envelopeStream(t, decompressAll(t, headDefault))
+			if len(wholeEnvs) != len(defaultEnvs) {
+				t.Fatalf("property 3c: the two layouts carry different envelope counts: "+
+					"opt-out %d, default %d", len(wholeEnvs), len(defaultEnvs))
+			}
+			last := len(defaultEnvs) - 1
+			for i := range last {
+				if !bytes.Equal(wholeEnvs[i], defaultEnvs[i]) {
+					t.Errorf("property 3c: envelope %d of %d differs between the opt-out and "+
+						"default layouts; only the footer's keyframe byte offsets are licensed "+
+						"to differ", i, len(defaultEnvs))
+					break
+				}
+			}
+			wholeFooter := footerFrom(t, wholeEnvs[last])
+			defaultFooter := footerFrom(t, defaultEnvs[last])
+			if proto.Equal(wholeFooter, defaultFooter) {
+				t.Error("property 3c: the default footer is identical to the opt-out footer, so " +
+					"KeyframeEntry.ByteOffset was NOT redefined to a compressed-file offset — " +
+					"the default's recorded offsets are still unseekable")
+			}
+			if !proto.Equal(withoutKeyframeOffsets(wholeFooter), withoutKeyframeOffsets(defaultFooter)) {
+				t.Errorf("property 3c: the footers differ in something other than "+
+					"KeyframeEntry.ByteOffset, which is the only licensed difference between "+
+					"the layouts.\n  opt-out: %v\n  default: %v",
+					withoutKeyframeOffsets(wholeFooter), withoutKeyframeOffsets(defaultFooter))
+			}
+			t.Logf("property 3c: the DEFAULT is per-block — %d blocks, %d envelopes identical "+
+				"to the opt-out layout, footer differs only in KeyframeEntry.ByteOffset",
+				defaultIndex.Blocks(), last)
 
-			// Guard the guard: if per-block silently produced the default
-			// layout, property 4 would pass by collapsing into property 1.
-			index, err := OpenBlockIndex(perBlock)
-			if err != nil {
-				t.Fatalf("property 4: the per-block capture has no seek table (%v), so this "+
-					"assertion would be testing the default layout twice", err)
-			}
-			if index.Blocks() < 3 {
-				t.Fatalf("property 4: per-block capture has %d blocks; it is not actually blocked",
-					index.Blocks())
-			}
+			// --- Property 4: baseline reader × HEAD's opt-out layout ----------
+			//
+			// RETARGETED AT v4.1.0. This was "baseline reader × the opt-in
+			// per-block layout", and its own guard said that if per-block
+			// silently produced the default layout it "would pass by collapsing
+			// into property 1". After the ruling the two DID collapse — the
+			// default IS per-block — so property 1 inherited that guard and this
+			// property took the other arm: the baseline reader must also read
+			// what WithWholeStreamCompression writes. Both layouts this release
+			// can emit are therefore checked against a genuinely old reader.
 			wantPB := fmt.Sprintf("OK frames=%d first=0 last=%d footer_frames=%d footer_keyframes=%d",
 				compatFrameCount, compatFrameCount-1, compatFrameCount, compatFrameCount/compatKeyframes)
-			if got := harnessRead(t, binary, perBlock); got != wantPB {
-				t.Errorf("property 4 (baseline reads the opt-in per-block layout):\n got %s\nwant %s",
+			if got := harnessRead(t, binary, headWhole); got != wantPB {
+				t.Errorf("property 4 (baseline reads HEAD's opt-out whole-stream layout):\n got %s\nwant %s",
 					got, wantPB)
 			}
 		})

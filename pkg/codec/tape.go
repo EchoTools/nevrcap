@@ -30,16 +30,17 @@ const (
 //	  [varint len][Envelope{CaptureFooter}]   — exactly one
 //	[Zstd trailer]
 //
-// The footer records frame count, duration, byte offsets in the uncompressed
-// stream, keyframe and event indexes. Because this stream is one continuous
-// Zstd frame, byte-offset seeking requires decompressing from the start: the
-// keyframe index gives positions nothing can seek to.
+// The footer records frame count, duration, byte offsets, keyframe and event
+// indexes. The sketch above shows one continuous Zstd frame, which is what
+// WithWholeStreamCompression still produces; in that layout byte-offset
+// seeking requires decompressing from the start, so the keyframe index gives
+// positions nothing can seek to.
 //
-// WithPerBlockCompression writes a second layout in which it can — the file
-// becomes independent per-block Zstd frames plus a seek table, a keyframe
-// offset becomes a servable byte range, and reaching frame N costs one block
-// rather than the whole file. It is opt-in because it changes the bytes on
-// disk. See tape_blocks.go for the layout and seekable.go for the index.
+// THE DEFAULT SINCE v4.1.0 IS THE PER-BLOCK LAYOUT, in which it can: the file
+// is independent per-block Zstd frames plus a seek table, a keyframe offset is
+// a servable byte range, and reaching frame N costs one block rather than the
+// whole file. See tape_blocks.go for the layout and seekable.go for the
+// index.
 //
 // Stream contract: exactly one WriteHeader, then any number of WriteFrame
 // calls, then one Close. Any call outside this order (a frame before the
@@ -67,9 +68,10 @@ type Writer struct {
 	frameCount       uint32
 	lastTimestampMs  uint32
 	keyframeInterval uint32
-	// blocks is non-nil only under WithPerBlockCompression, in which case it
-	// owns compression and encoder is nil. See tape_blocks.go for the layout
-	// and why it is opt-in.
+	// blocks is non-nil in the default per-block layout, in which case it owns
+	// compression and encoder is nil; WithWholeStreamCompression is what leaves
+	// it nil. See tape_blocks.go for the layout and the ruling behind the
+	// default.
 	blocks *blockWriter
 }
 
@@ -84,7 +86,9 @@ const (
 	writerStateClosed
 )
 
-// NewWriter creates a writer for tape files.
+// NewWriter creates a writer for tape files with every default feature on:
+// the per-block seekable layout at DefaultKeyframeInterval, zstd
+// SpeedFastest. See WithWholeStreamCompression to opt out of the layout.
 func NewWriter(filename string) (*Writer, error) {
 	return NewWriterWithKeyframeInterval(filename, DefaultKeyframeInterval)
 }
@@ -100,8 +104,9 @@ func NewWriterWithKeyframeInterval(filename string, keyframeInterval uint32) (*W
 
 // NewWriterWithOptions creates a writer configured by WriterOptions. With no
 // options it is identical to NewWriter, and every layout-affecting option
-// names itself as such (see tape_blocks.go): the default output is the layout
-// tape has always written, byte for byte.
+// names itself as such (see tape_blocks.go). Since v4.1.0 the default output is
+// the PER-BLOCK layout — every feature that can be on by default is on, and an
+// argument is what turns one off.
 func NewWriterWithOptions(filename string, opts ...WriterOption) (*Writer, error) {
 	cfg := applyWriterOptions(opts)
 
@@ -192,11 +197,11 @@ func (w *Writer) WriteFrame(frame *capturepb.Frame) error {
 	// Track keyframe offset before writing.
 	//
 	// The recorded offset means different things in the two layouts, and the
-	// difference is the whole point of per-block compression. In the shipped
-	// whole-stream layout it is a position in the DECOMPRESSED stream, which
-	// nothing can seek to. Under WithPerBlockCompression the keyframe opens a
-	// new block, so the offset is the block's position in the COMPRESSED file
-	// — a servable byte range, resolvable against the seek table.
+	// difference is the whole point of per-block compression. In the DEFAULT
+	// per-block layout the keyframe opens a new block, so the offset is the
+	// block's position in the COMPRESSED file — a servable byte range,
+	// resolvable against the seek table. Under WithWholeStreamCompression it is
+	// a position in the DECOMPRESSED stream, which nothing can seek to.
 	if frameIndex%w.keyframeInterval == 0 {
 		offset := w.bytesWritten
 		if w.blocks != nil {

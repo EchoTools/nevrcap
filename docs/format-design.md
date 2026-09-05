@@ -76,14 +76,15 @@ indices are not sequential (frame_count is the count, not the last index).
 §2 is about what goes in a frame. This is about how frames are packed into a
 file, which is a separate layer and was for a long time a separate problem.
 
-**The default layout is one continuous Zstd frame** over the whole capture
-(`pkg/codec/tape.go`, `NewWriter`). Under it, `CaptureFooter.keyframe_index`
-records byte offsets into the *decompressed* stream. Nothing can seek to those
-offsets — reaching one means decompressing everything before it. The index
-shipped; the property it exists for did not.
+**The pre-v4.1.0 layout was one continuous Zstd frame** over the whole capture.
+Under it, `CaptureFooter.keyframe_index` records byte offsets into the
+*decompressed* stream. Nothing can seek to those offsets — reaching one means
+decompressing everything before it. The index shipped; the property it exists
+for did not. That layout is still reachable, by
+`codec.WithWholeStreamCompression`.
 
-**`codec.WithPerBlockCompression` writes a layout where it can.** Compression
-moves inside the container:
+**The per-block layout is where it can, and since v4.1.0 it is THE DEFAULT**
+(`pkg/codec/tape.go`, `NewWriter`). Compression moves inside the container:
 
 ```
 [zstd frame]  header block                 — the CaptureHeader alone
@@ -112,17 +113,28 @@ on. An absent seek table is a legal state meaning *not seekable or not finished*
 (`ErrNoSeekTable`); a table that is present and inconsistent is
 `ErrSeekTableCorrupt`.
 
-**It is opt-in, because it changes the bytes on disk.** `NewWriter` and
-`NewWriterWithKeyframeInterval` produce byte-for-byte the layout they always
-produced.
+**It is the default as of v4.1.0, and opting OUT is what takes an argument.**
+It shipped opt-in, on the reasoning that a format change must be asked for by
+name. Andrew retired that reasoning on 2026-09-05: *"fix it. all features
+default.... you use args to opt out"*, and *"your acting like this proto is
+already released.. it's not.. THIS is the release."* The old reasoning was
+protecting a release that had not happened, and the cost was real — the
+seekability this layout exists for was off for every caller who did not know the
+option's name, which was every caller, including `tapedeck trim` and
+`conversion.ConvertFile`.
+
+So `NewWriter`, `NewWriterWithKeyframeInterval` and `NewWriterWithOptions` with
+no options all produce the per-block layout. `codec.WithWholeStreamCompression`
+reproduces the pre-v4.1.0 bytes exactly, and `TestBackwardCompatibility`
+properties 3a/3b hold it to that byte for byte against every baseline.
 
 **Measured** on `testdata/sample.echoreplay` (1023 frames), by
 `pkg/conversion/shipped_layout_bench_test.go`:
 
 | layout | B/frame | vs whole-stream | byte-rangeable | reach frame 920 |
 |---|---|---|---|---|
-| whole-stream (default) | 1583 | — | no | 5013 µs |
-| per-block 1s | 1626 | +2.7% | yes | 198 µs |
+| whole-stream (`WithWholeStreamCompression`) | 1583 | — | no | 5013 µs |
+| per-block 1s (**default**) | 1626 | +2.7% | yes | 198 µs |
 | per-block + dict 1s | 1503 | **−5.0%** | yes | 256 µs |
 | per-block + dict 5s | 1495 | **−5.6%** | yes | 570 µs |
 

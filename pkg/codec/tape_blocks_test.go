@@ -137,7 +137,7 @@ func readCapture(t *testing.T, path string) (*capturepb.CaptureHeader, []*captur
 func TestPerBlockIsReadableByTheShippedReader(t *testing.T) {
 	frames := blockTestFrames(500)
 
-	wholePath := writeCapture(t, "whole.tape", frames, WithKeyframeInterval(30))
+	wholePath := writeCapture(t, "whole.tape", frames, WithKeyframeInterval(30), WithWholeStreamCompression())
 	blockPath := writeCapture(t, "block.tape", frames, WithKeyframeInterval(30), WithPerBlockCompression())
 
 	// The feature must actually be on. A per-block capture carries a seek table
@@ -147,7 +147,7 @@ func TestPerBlockIsReadableByTheShippedReader(t *testing.T) {
 	index, err := OpenBlockIndex(blockPath)
 	if err != nil {
 		t.Fatalf("WithPerBlockCompression produced no seek table (%v): the per-block layout is "+
-			"not in effect, so this test would compare the default layout against itself", err)
+			"not in effect, so this test would compare the whole-stream layout against itself", err)
 	}
 	// 500 frames at an interval of 30 is 17 keyframe blocks, plus header and
 	// footer blocks.
@@ -299,29 +299,44 @@ func decodeEnvelopes(t *testing.T, block []byte) []*capturepb.Frame {
 	}
 }
 
-// TestDefaultLayoutIsUnchanged guards the constraint that made this change
-// landable: nothing writes the new layout unless a caller asks for it. A
-// whole-stream capture must still be ONE zstd frame with no seek table, and a
-// per-block capture must be many.
-func TestDefaultLayoutIsUnchanged(t *testing.T) {
+// TestBothLayoutsAreReachableAndDistinct replaces TestDefaultLayoutIsUnchanged,
+// which is RETIRED at v4.1.0 and is not coming back in that form.
+//
+// What it used to assert was "nothing writes the new layout unless a caller
+// asks for it by name" — the constraint that made per-block landable when the
+// format was thought to be released. Andrew removed that constraint on
+// 2026-09-05 15:54: "fix it. all features default.... you use args to opt out",
+// and "your acting like this proto is already released.. it's not.. THIS is the
+// release." The default now IS the new layout, so the old assertion is false by
+// construction; deleting it silently, or t.Skip()ing it, would have left the
+// suite quieter about the layout than it was before the change.
+//
+// What survives is everything that is still true: both layouts are reachable,
+// they are structurally DIFFERENT (so neither test arm anywhere is secretly
+// comparing a file with itself), and routing NewWriter through
+// NewWriterWithOptions changes nothing. The assertion about which layout is the
+// default moved to TestZeroOptionWriterIsPerBlockByDefault in
+// default_layout_test.go, where it is stated positively.
+func TestBothLayoutsAreReachableAndDistinct(t *testing.T) {
 	frames := blockTestFrames(200)
 
-	wholePath := writeCapture(t, "default.tape", frames, WithKeyframeInterval(50))
+	wholePath := writeCapture(t, "opt-out.tape", frames, WithKeyframeInterval(50), WithWholeStreamCompression())
 	if n := countZstdFrames(t, wholePath); n != 1 {
-		t.Errorf("default layout is %d zstd frames, want exactly 1 (the shipped layout)", n)
+		t.Errorf("WithWholeStreamCompression is %d zstd frames, want exactly 1 (the pre-v4.1.0 layout)", n)
 	}
 	if _, err := OpenBlockIndex(wholePath); !errors.Is(err, ErrNoSeekTable) {
-		t.Errorf("default layout: OpenBlockIndex returned %v, want ErrNoSeekTable", err)
+		t.Errorf("WithWholeStreamCompression: OpenBlockIndex returned %v, want ErrNoSeekTable", err)
 	}
 
-	blockPath := writeCapture(t, "opt-in.tape", frames, WithKeyframeInterval(50), WithPerBlockCompression())
+	blockPath := writeCapture(t, "default.tape", frames, WithKeyframeInterval(50), WithPerBlockCompression())
 	if n := countZstdFrames(t, blockPath); n != 6 {
 		t.Errorf("per-block layout is %d zstd frames, want 6 (header + 4 keyframe blocks + footer)", n)
 	}
 
-	// NewWriter, the constructor everything in the repo already calls, must be
-	// unaffected: same layout, and the same bytes it has always produced for a
-	// deterministic corpus.
+	// NewWriter, the constructor everything in the repo already calls, must
+	// agree with NewWriterWithOptions: same layout, and the same bytes for a
+	// deterministic corpus. This is what proves the default is applied in ONE
+	// place rather than once per constructor.
 	legacy := t.TempDir() + "/legacy.tape"
 	w, err := NewWriter(legacy)
 	if err != nil {

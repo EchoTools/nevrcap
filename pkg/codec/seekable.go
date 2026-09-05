@@ -154,9 +154,9 @@ func appendSeekTable(dst []byte, entries []seekTableEntry) ([]byte, error) {
 // readSeekTable locates and parses the seek table at the end of a file of the
 // given size, reading backwards from EOF so nothing is decompressed to find it.
 //
-// It returns ErrNoSeekTable when the file simply does not carry one — the
-// shipped whole-stream layout, a truncated live capture, or any other zstd
-// file — so a caller can fall back to sequential reading rather than treating
+// It returns ErrNoSeekTable when the file simply does not carry one — a
+// WithWholeStreamCompression capture, a truncated live capture, or any other
+// zstd file — so a caller can fall back to sequential reading rather than treating
 // the absence as damage. This mirrors the design chain's C′: an absent index
 // means unfinished, not corrupt.
 func readSeekTable(r io.ReaderAt, size int64) ([]seekTableEntry, error) {
@@ -261,8 +261,8 @@ type BlockIndex struct {
 
 // OpenBlockIndex reads the seek table of the capture at filename.
 //
-// It returns ErrNoSeekTable for a capture written in the shipped whole-stream
-// layout, or for one still being written. That is a legal answer, not a
+// It returns ErrNoSeekTable for a capture written with
+// WithWholeStreamCompression, or for one still being written. That is a legal answer, not a
 // failure: such a capture is read sequentially instead. A table that is
 // present but internally inconsistent returns ErrSeekTableCorrupt, because
 // answering "no index" there would hide damage behind a legal-sounding state.

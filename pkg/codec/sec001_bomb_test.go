@@ -82,9 +82,23 @@ func TestReader_SEC001_FrameCountBudget(t *testing.T) {
 	// bomb built through the Writer is slightly less compressible than the
 	// all-identical-frames version; 50k frames still fit under the tiny-file
 	// ceiling while vastly exceeding every budget tested here.
+	//
+	// THE CEILING MOVED AT v4.1.0, and the number is measured rather than
+	// chosen to fit. writeBombTape goes through NewWriter, which now produces
+	// the per-block layout, and 50k frames at DefaultKeyframeInterval is 500
+	// independent zstd frames: 500 frame headers, 500 content checksums, a
+	// 500-entry seek table, and 500 compression contexts that each start cold.
+	// Measured on this corpus: per-block 84,759 bytes, whole-stream 50,212 —
+	// about 69 bytes of container overhead per block. Both are still tiny
+	// files that decode to 438 KB of frames, which is the property under test;
+	// the old 64 KiB ceiling was sized for the layout, not for the property.
+	//
+	// The bomb is deliberately written in the DEFAULT layout rather than
+	// opting out to keep the old number: the default is the layout an attacker
+	// will actually hand this reader.
 	size := writeBombTape(t, path, 50_000)
-	if size > 64<<10 {
-		t.Fatalf("bomb tape is %d bytes on disk; expected a tiny (<64 KiB) file", size)
+	if size > 128<<10 {
+		t.Fatalf("bomb tape is %d bytes on disk; expected a tiny (<128 KiB) file", size)
 	}
 
 	r, err := NewReader(path, WithMaxFrameCount(1000))
