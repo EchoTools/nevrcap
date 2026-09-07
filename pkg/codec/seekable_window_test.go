@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -268,4 +269,119 @@ func TestReadBlockBoundsAWindowAgainstOurCeilingNotTheTableS(t *testing.T) {
 	}
 	t.Logf("ceiling bomb: err=%v, %d bytes allocated, file is %d bytes on disk",
 		readErr, allocated, len(damaged))
+}
+
+// spliceWindowBomb builds a per-block capture whose block 1 is a single
+// streaming-encoded frame with the given window, and whose seek table declares
+// declaredSize for it. Streaming means no Frame_Content_Size, so the frame-header
+// cross-check cannot answer it and the window check is what fires.
+func spliceWindowBomb(t *testing.T, window int, payload int, declaredSize uint32) string {
+	t.Helper()
+	path, _ := corruptionCorpus(t, "corpus.tape")
+	clean, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read corpus: %v", err)
+	}
+	index, err := OpenBlockIndex(path)
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	blocks := index.Blocks()
+	blockOff, blockLen, err := index.BlockRange(1)
+	if err != nil {
+		t.Fatalf("BlockRange: %v", err)
+	}
+
+	var buf bytes.Buffer
+	enc, err := zstd.NewWriter(&buf,
+		zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithWindowSize(window),
+	)
+	if err != nil {
+		t.Fatalf("zstd.NewWriter: %v", err)
+	}
+	if _, err := enc.Write(make([]byte, payload)); err != nil {
+		t.Fatalf("encoder write: %v", err)
+	}
+	if err := enc.Close(); err != nil {
+		t.Fatalf("encoder close: %v", err)
+	}
+	bomb := buf.Bytes()
+
+	var probe zstd.Header
+	if err := probe.Decode(bomb); err != nil {
+		t.Fatalf("decode header: %v", err)
+	}
+	if probe.HasFCS {
+		t.Fatalf("bomb carries an FCS; the frame-header check would answer it")
+	}
+	if probe.WindowSize != uint64(window) {
+		t.Fatalf("bomb declares window %d, want %d", probe.WindowSize, window)
+	}
+
+	damaged := make([]byte, 0, len(clean)+len(bomb))
+	damaged = append(damaged, clean[:blockOff]...)
+	damaged = append(damaged, bomb...)
+	damaged = append(damaged, clean[blockOff+blockLen:]...)
+	cOff, dOff := seekTableEntryOffsets(t, damaged, 1, blocks)
+	binary.LittleEndian.PutUint32(damaged[cOff:], uint32(len(bomb))) //nolint:gosec // bounded by the corpus
+	binary.LittleEndian.PutUint32(damaged[dOff:], declaredSize)
+
+	target := filepath.Join(t.TempDir(), "shaped.tape")
+	if err := os.WriteFile(target, damaged, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return target
+}
+
+// TestOversizeWindowRefusalSaysWhichShapeItIs is the self-diagnosing half of the
+// window bound.
+//
+// maxWriterWindow comes from a producer survey, and a survey has an expiry as
+// well as a perimeter — so the error this reader cannot avoid emitting is
+// sometimes aimed at a LEGITIMATE capture from a producer nobody surveyed. The
+// refusal stands either way; what it must not do is look identical in both cases,
+// because then the operator's only recourse is a support ticket.
+//
+// Both messages are asserted, and asserted to DIFFER. A discriminator whose two
+// branches read the same is not a discriminator.
+func TestOversizeWindowRefusalSaysWhichShapeItIs(t *testing.T) {
+	// Bomb shape: a 256 MiB window over a block the table says yields 182 bytes.
+	// The window references data that is not there.
+	bombPath := spliceWindowBomb(t, bombWindow, 8<<20, 182)
+	bombIdx, err := OpenBlockIndex(bombPath, WithMaxDecodedBytes(256<<20))
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	_, bombErr := bombIdx.ReadBlock(1, nil)
+	if !errors.Is(bombErr, ErrWindowTooLarge) {
+		t.Fatalf("bomb: want ErrWindowTooLarge, got %v", bombErr)
+	}
+
+	// Legitimate shape: a 32 MiB window over a block the table says yields
+	// 64 MiB. Above our ceiling, but proportionate to its own content — exactly
+	// what a producer using a larger window would produce.
+	legitPath := spliceWindowBomb(t, 32<<20, 32<<20, 64<<20)
+	legitIdx, err := OpenBlockIndex(legitPath, WithMaxDecodedBytes(256<<20))
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	_, legitErr := legitIdx.ReadBlock(1, nil)
+	if !errors.Is(legitErr, ErrWindowTooLarge) {
+		t.Fatalf("legit-shaped: want ErrWindowTooLarge (it is still refused), got %v", legitErr)
+	}
+
+	bombMsg, legitMsg := bombErr.Error(), legitErr.Error()
+
+	if !strings.Contains(bombMsg, "shape of a decompression bomb") {
+		t.Errorf("bomb refusal does not name the bomb shape:\n%s", bombMsg)
+	}
+	if !strings.Contains(legitMsg, "shape of a legitimate capture") {
+		t.Errorf("proportionate-window refusal does not point at the producer survey:\n%s", legitMsg)
+	}
+	if bombMsg == legitMsg {
+		t.Errorf("both refusals produced the same text; the discriminator does not discriminate:\n%s", bombMsg)
+	}
+	t.Logf("BOMB  : %s", bombMsg)
+	t.Logf("LEGIT : %s", legitMsg)
 }

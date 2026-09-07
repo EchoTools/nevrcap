@@ -84,6 +84,52 @@ import (
 // corruption.
 const maxWriterWindow = 8 << 20
 
+// describeOversizeWindow says which of two shapes an over-ceiling window has, so
+// that a refusal diagnoses itself instead of arriving as a support ticket.
+//
+// WHY IT EXISTS. maxWriterWindow is derived from a producer survey, and a survey
+// has both a perimeter and an expiry (see above). The failure mode it cannot see
+// is the benign-looking one: a LEGITIMATE capture, from a producer nobody
+// surveyed, refused as though it were an attack. The reader cannot avoid that —
+// it must refuse what it cannot bound — but it can say which of the two it thinks
+// it is looking at, and that turns "why won't this file open" into a pointer at
+// this constant.
+//
+// THE DISCRIMINATOR IS DERIVED, NOT PICKED. A zstd window is a back-reference
+// distance, so it can never usefully exceed the data it references, and klauspost
+// shrinks the window descriptor to fit short content. A legitimate block
+// therefore satisfies window <= max(declared, MinWindowSize); the floor is zstd's
+// own 1 KiB minimum window (zstd.MinWindowSize, compress@v1.19.2
+// zstd/framedec.go:38-39), which even a tiny block still carries. Measured both
+// ways: a real nevr-stream capture rewritten per-block carries a 1 KiB window
+// against ~113 KiB blocks, while the hostile file in
+// TestReadBlockRefusesAWindowThisLibraryCannotHaveWritten carries a 256 MiB
+// window against 182 declared bytes — a frame asking to buy memory it has no data
+// to reference.
+//
+// NEITHER BRANCH SAYS A FILE IS LEGITIMATE, and the wording keeps that honest.
+// Both operands are numbers the file chose, so this can be lied to; it is a
+// DIAGNOSTIC on a refusal that has already happened, never an input to it. The
+// benign branch means "this does not have the attack's shape — go look at
+// maxWriterWindow's producer survey", not "this file is fine".
+//
+// If nevr-stream begins serving byte ranges, the version to reach for is the
+// stronger one this deliberately is not: a distinct sentinel or counter, so the
+// ceiling biting real data is observable in aggregate rather than one error
+// message at a time. That earns its own gate; this does not, because it changes
+// no behaviour.
+func describeOversizeWindow(window, declared uint64) string {
+	if window > max(declared, zstd.MinWindowSize) {
+		return fmt.Sprintf("the block decodes to %d bytes, so a %d-byte window "+
+			"references data that is not there: this has the shape of a decompression bomb",
+			declared, window)
+	}
+	return fmt.Sprintf("the block decodes to %d bytes, which this window is "+
+		"proportionate to: this has the shape of a legitimate capture from a writer "+
+		"using a larger window than %d — see maxWriterWindow and re-run its producer survey",
+		declared, uint64(maxWriterWindow))
+}
+
 // The zstd seekable format — the index that makes a per-block .tape servable.
 //
 // A .tape written as one continuous zstd stream records keyframe byte offsets
@@ -534,8 +580,9 @@ func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 	// zstd this reader declines. Checking it here also means the refusal costs
 	// the header parse and nothing more.
 	if hdr.WindowSize > maxWriterWindow {
-		return nil, fmt.Errorf("tape: block %d's frame declares a %d-byte window, larger than this writer's %d: %w",
-			n, hdr.WindowSize, uint64(maxWriterWindow), ErrWindowTooLarge)
+		return nil, fmt.Errorf("tape: block %d's frame declares a %d-byte window, larger than this writer's %d (%s): %w",
+			n, hdr.WindowSize, uint64(maxWriterWindow), describeOversizeWindow(hdr.WindowSize, declared),
+			ErrWindowTooLarge)
 	}
 
 	// TWO CEILINGS, AND THEY NEED DIFFERENT NUMBERS. WithDecoderMaxMemory is
