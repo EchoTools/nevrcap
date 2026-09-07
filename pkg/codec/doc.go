@@ -40,7 +40,21 @@
 //     clean captures with wrong telemetry (F1);
 //   - that nothing follows the footer at all — ErrTrailingData.
 //
-// Because the stream is Zstd-compressed, the footer's byte offsets support
-// scanning rather than true random access; seeking would require Zstd seekable
-// frames.
+// # Seeking
+//
+// The Zstd seekable frames this once said would be needed are here, and they are
+// the default. NewWriterWithOptions with no options writes the PER-BLOCK layout:
+// each block is an independent Zstd frame opening at a keyframe, and a seek table
+// in a trailing skippable frame records every block's compressed and decompressed
+// size (see seekable.go, which implements facebook/zstd's seekable format
+// verbatim). OpenBlockIndex reads that table from EOF without decompressing
+// anything, BlockRange turns a block number into a byte range, and ReadBlock and
+// Footer decode one block on its own. That is random access.
+//
+// KeyframeEntry.ByteOffset is what the layout changes. Under the per-block
+// default it is an offset into the COMPRESSED file and is therefore servable;
+// under WithWholeStreamCompression the capture is one Zstd frame, the offset is a
+// position in the DECOMPRESSED stream, and reaching it means decompressing from
+// the start. Only the opt-out layout is the scanning case this paragraph used to
+// describe for both.
 package codec
