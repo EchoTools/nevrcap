@@ -625,6 +625,36 @@ func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 
 	out, err := dec.DecodeAll(raw, nil)
 	if err != nil {
+		// NAME THE DICTIONARY THE FRAME ASKED FOR. hdr.DictionaryID was decoded
+		// above from the frame header (RFC 8878 §3.1.1.1.3) and costs nothing to
+		// report; zstd's own errors say "dictionary" without saying WHICH, and an
+		// operator holding several cannot act on that.
+		//
+		// WHAT THIS DOES AND DOES NOT DIAGNOSE, because the distinction is the
+		// whole reason it is worded this way:
+		//
+		//   MISSING dictionary  — helped. The id says what to go and find.
+		//   WRONG dictionary,
+		//     DIFFERENT id      — helped. The ids visibly disagree.
+		//   WRONG dictionary,
+		//     SAME id (F3)      — NOT helped, and cannot be. Two dictionaries
+		//                         trained at the same id are indistinguishable
+		//                         here by construction; the number printed is
+		//                         identical on both sides. It surfaces as a
+		//                         checksum failure, and this line will name an id
+		//                         that is not the problem.
+		//
+		// So this deliberately does NOT say anything like "content hash
+		// disagrees". There is no stored dictionary hash to compare against —
+		// storing one was rejected as duplicating bytes zstd already carries — and
+		// describing a check that does not exist is the defect this codebase keeps
+		// finding in its own comments. If F3's same-id collision is ever to be
+		// detectable, it needs a content-derived id or a recorded hash; naming the
+		// id here is not that and must not be mistaken for it.
+		if hdr.DictionaryID != 0 {
+			return nil, fmt.Errorf("tape: decompressing block %d (frame declares dictionary id %d): %w",
+				n, hdr.DictionaryID, err)
+		}
 		return nil, fmt.Errorf("tape: decompressing block %d: %w", n, err)
 	}
 	if uint64(len(out)) != declared {

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
+	"google.golang.org/protobuf/proto"
 )
 
 // bombWindow is the window a hostile file declares. It is 256 MiB: larger than
@@ -384,4 +386,101 @@ func TestOversizeWindowRefusalSaysWhichShapeItIs(t *testing.T) {
 	}
 	t.Logf("BOMB  : %s", bombMsg)
 	t.Logf("LEGIT : %s", legitMsg)
+}
+
+// TestReadBlockErrorNamesTheDictionaryTheFrameWants covers the diagnostic added
+// alongside the window bound: a decompression failure on a dictionary-bearing
+// block says WHICH dictionary the frame asked for.
+//
+// It is a diagnostic, not a check. It helps a MISSING dictionary (the id says
+// what to find) and a wrong dictionary with a DIFFERENT id (the ids visibly
+// disagree). It cannot help F3 — a wrong dictionary carrying the SAME id — and
+// the assertion here is deliberately about the id being NAMED, not about the
+// error distinguishing anything it cannot.
+func TestReadBlockErrorNamesTheDictionaryTheFrameWants(t *testing.T) {
+	const dictID = MinPrivateDictionaryID
+
+	path, _ := corruptionCorpus(t, "corpus.tape")
+	clean, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read corpus: %v", err)
+	}
+	index, err := OpenBlockIndex(path)
+	if err != nil {
+		t.Fatalf("OpenBlockIndex: %v", err)
+	}
+	blocks := index.Blocks()
+	blockOff, blockLen, err := index.BlockRange(1)
+	if err != nil {
+		t.Fatalf("BlockRange: %v", err)
+	}
+
+	// A block compressed WITH a dictionary, which we then decline to supply.
+	frames := blockTestFrames(600)
+	samples := make([][]byte, len(frames))
+	for i, f := range frames {
+		b, marshalErr := proto.Marshal(f)
+		if marshalErr != nil {
+			t.Fatalf("Marshal sample %d: %v", i, marshalErr)
+		}
+		samples[i] = b
+	}
+	// t.Fatalf, not t.Skipf: a test that skips is not evidence (AGENTS.md §6),
+	// and this one is the only check that the dictionary id reaches the error.
+	dict, err := TrainDictionary(dictID, samples)
+	if err != nil {
+		t.Fatalf("TrainDictionary on %d samples: %v", len(samples), err)
+	}
+	enc, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.SpeedFastest),
+		zstd.WithEncoderDict(dict),
+	)
+	if err != nil {
+		t.Fatalf("zstd.NewWriter: %v", err)
+	}
+	payload := []byte("a block that needs a dictionary to read")
+	block := enc.EncodeAll(payload, nil)
+	if err := enc.Close(); err != nil {
+		t.Fatalf("encoder close: %v", err)
+	}
+
+	// INSTRUMENT CHECK: the frame must actually carry the id, or this test is
+	// asserting the absence of a thing rather than its presence.
+	var probe zstd.Header
+	if err := probe.Decode(block); err != nil {
+		t.Fatalf("decode block header: %v", err)
+	}
+	if probe.DictionaryID != dictID {
+		t.Fatalf("frame declares dictionary id %d, want %d; the encoder did not "+
+			"record the id and this test cannot check what it is named for",
+			probe.DictionaryID, dictID)
+	}
+
+	damaged := make([]byte, 0, len(clean)+len(block))
+	damaged = append(damaged, clean[:blockOff]...)
+	damaged = append(damaged, block...)
+	damaged = append(damaged, clean[blockOff+blockLen:]...)
+	cOff, dOff := seekTableEntryOffsets(t, damaged, 1, blocks)
+	binary.LittleEndian.PutUint32(damaged[cOff:], uint32(len(block)))   //nolint:gosec // test-sized
+	binary.LittleEndian.PutUint32(damaged[dOff:], uint32(len(payload))) //nolint:gosec // test-sized
+
+	target := filepath.Join(t.TempDir(), "needs-dict.tape")
+	if err := os.WriteFile(target, damaged, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	bad, err := OpenBlockIndex(target)
+	if err != nil {
+		t.Fatalf("OpenBlockIndex on the crafted file: %v", err)
+	}
+	// Read it with NO dictionary — the missing-dictionary case.
+	_, readErr := bad.ReadBlock(1, nil)
+	if readErr == nil {
+		t.Fatal("ReadBlock succeeded without the dictionary the block was written with")
+	}
+	if !strings.Contains(readErr.Error(), fmt.Sprintf("dictionary id %d", dictID)) {
+		t.Errorf("the error does not name the dictionary the frame asked for, so an "+
+			"operator holding several cannot act on it.\ngot: %v", readErr)
+	}
+	t.Logf("missing dictionary: %v", readErr)
 }
