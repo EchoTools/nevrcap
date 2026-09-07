@@ -132,6 +132,29 @@ var (
 	// already makes about concatenation.
 	ErrTrailingData = errors.New("bytes remain after the capture footer; the file is concatenated or appended to")
 
+	// ErrWindowTooLarge is returned by BlockIndex.ReadBlock when a block's zstd
+	// frame declares a back-reference window larger than this library's own
+	// writer can emit (maxWriterWindow, 8 MiB).
+	//
+	// It is a REFUSAL BY POLICY, not a corruption report, and the distinction is
+	// deliberate: such a frame is valid zstd and `zstd -d` will decode it. Nothing
+	// in docs/format-design.md specifies a window for the container, so a
+	// conformant third-party writer could in principle produce one. This reader
+	// declines it anyway, because the alternative is letting the file choose how
+	// much memory reading it costs.
+	//
+	// WHY IT EXISTS (the residual half of F4, measured 2026-09-07). The bound that
+	// preceded it computed the decoder's memory cap as max(declared,
+	// hdr.WindowSize, 1) — and hdr.WindowSize is decoded from the hostile file's
+	// own frame header, so the attacker set their own ceiling. klauspost sizes the
+	// history buffer from that window (zstd/framedec.go:255-266), and the cost
+	// tracked the file's number linearly: crafted files of 2,719 / 7,711 / 27,679
+	// / 54,303 bytes drove 39.5 / 191.6 / 788.7 / 1433.4 MiB of allocation, every
+	// one of them with the caller's MaxDecodedBytes budget set to 1 MiB and
+	// ignored. The frames carried no Frame_Content_Size, so the frame-header
+	// cross-check above them never fired.
+	ErrWindowTooLarge = errors.New("block declares a compression window larger than this format's writer produces; refusing to size a read from the file's own header")
+
 	// ErrUnsupportedVersion is returned by ReadHeader when the capture's
 	// format_version is not 2 (or 0 for pre-2.1 captures). A future reader
 	// might understand additional versions, but this one does not.

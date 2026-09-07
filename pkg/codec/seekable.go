@@ -13,6 +13,31 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// maxWriterWindow is the largest zstd window any capture this library wrote can
+// carry, and it is FOUND rather than chosen. klauspost sets the encoder window
+// from the level and nothing else: SpeedFastest gives 4 MiB, and SpeedDefault,
+// SpeedBetterCompression and SpeedBestCompression each give 8 MiB
+// (compress@v1.19.2 zstd/encoder_options.go:246-259; the package default is
+// also 8 MiB at :42). Every encoder in this package is constructed with
+// WithEncoderLevel and no window option — tape.go:133,137 and
+// tape_blocks.go:198,203 — so 8 MiB is the ceiling our own writer can reach.
+//
+// It is deliberately NOT read from the file. hdr.WindowSize is the hostile
+// file's own number, and a cap computed from it is the attacker choosing their
+// own ceiling: klauspost sizes the history buffer from the frame's window
+// (zstd/framedec.go:255-266), so a frame declaring 256 MiB costs about that
+// much before any other check can object. Measured on this path: a 54,303-byte
+// crafted file drove 1433.4 MiB of allocation with the caller's budget set to
+// 1 MiB, and the cost tracked the file's number linearly (39.5 / 191.6 / 788.7
+// / 1433.4 MiB for declared payloads of 8 / 32 / 128 / 256 MiB).
+//
+// Nothing in docs/format-design.md specifies a window for the container, so
+// this is a policy of THIS reader, not a conformance rule of the format: a
+// third-party writer using a larger window would produce a file zstd considers
+// valid and this reader refuses. The error says so rather than calling it
+// corruption.
+const maxWriterWindow = 8 << 20
+
 // The zstd seekable format — the index that makes a per-block .tape servable.
 //
 // A .tape written as one continuous zstd stream records keyframe byte offsets
@@ -429,13 +454,46 @@ func (i *BlockIndex) ReadBlock(n int, dict []byte) ([]byte, error) {
 		return nil, fmt.Errorf("tape: block %d's frame declares %d bytes, seek table declares %d: %w",
 			n, hdr.FrameContentSize, declared, ErrSeekTableCorrupt)
 	}
-	// klauspost's own default cap is 64 GiB, which is not a bound for a file
-	// that chose its own numbers. The window term is required: the budget is
-	// checked against the frame's window, not only its content, and a
-	// legitimate small block still carries the encoder's window. A declared
-	// zero would be rejected by the option itself (WithDecoderMaxMemory
-	// requires >= 1), so the floor of 1 keeps the error ours.
-	dopts := []zstd.DOption{zstd.WithDecoderMaxMemory(max(declared, hdr.WindowSize, 1))}
+	// 3c. The window is refused HERE, by our number, before a decoder exists.
+	// Passing WithDecoderMaxWindow below would also refuse it, but klauspost's
+	// error would arrive wrapped as "decompressing block N: window size
+	// exceeded" — which reads as damage. This frame is not damaged; it is valid
+	// zstd this reader declines. Checking it here also means the refusal costs
+	// the header parse and nothing more.
+	if hdr.WindowSize > maxWriterWindow {
+		return nil, fmt.Errorf("tape: block %d's frame declares a %d-byte window, larger than this writer's %d: %w",
+			n, hdr.WindowSize, uint64(maxWriterWindow), ErrWindowTooLarge)
+	}
+
+	// TWO CEILINGS, AND THEY NEED DIFFERENT NUMBERS. WithDecoderMaxMemory is
+	// one knob doing two jobs — its doc reads "a maximum decoded size for
+	// in-memory non-streaming operations OR maximum window size for streaming
+	// operations" (zstd/decoder_options.go:85-88) — and newFrameDec then clamps
+	// the window ceiling down to it (zstd/framedec.go:51-53). That is why the
+	// earlier attempt here, WithDecoderMaxMemory(182), rejected a legitimate
+	// 182-byte block with "window size exceeded": the one call had also capped
+	// the window at 182 bytes. The previous fix for that was to widen the cap
+	// with hdr.WindowSize, which fixed the false positive by handing the
+	// attacker the ceiling.
+	//
+	// So set the two separately. WithDecoderMaxWindow
+	// (zstd/decoder_options.go:143-160) is the window knob on its own, and it
+	// gets maxWriterWindow — a number from our writer, which the file cannot
+	// influence. It is not redundant with check 3c above: 3c parses ONE frame
+	// header, and DecodeAll decodes every frame concatenated in the block, so
+	// this is what bounds a window hidden behind an innocent first frame.
+	//
+	// WithDecoderMaxMemory then gets the DECODED ceiling. It must not sit below
+	// maxWriterWindow or the framedec clamp reintroduces the false positive, and
+	// it must admit declared, which check 2 has already bounded against the
+	// caller's own MaxDecodedBytes. max(declared, maxWriterWindow) is both, and
+	// both terms are ours: the seek table's declared size, already budget-checked,
+	// and our writer's window. A declared zero cannot reach the option's
+	// "must be at least 1" rejection because maxWriterWindow is the floor.
+	dopts := []zstd.DOption{
+		zstd.WithDecoderMaxWindow(maxWriterWindow),
+		zstd.WithDecoderMaxMemory(max(declared, maxWriterWindow)),
+	}
 	if len(dict) > 0 {
 		dopts = append(dopts, zstd.WithDecoderDicts(dict))
 	}
