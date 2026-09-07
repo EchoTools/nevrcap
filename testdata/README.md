@@ -27,7 +27,7 @@ real byte-level fidelity gate, not just a smoke test.
 
 **Current golden** (measured 2026-09-07):
 
-    sha256:3728a209183fdd8c7cc833580e92df52cf5162e4af690457fa52c4cabaff9356
+    sha256:8d8a0b4d1548c4b892b105a0bfdcdf184d24b519b776c46c0758ec54c8d8a301
     1642841 bytes, 1023 frames, 208 events
 
 **THIS BLOCK WAS STALE AGAIN AND THAT IS RECORDED RATHER THAN QUIETLY FIXED.**
@@ -48,6 +48,17 @@ telling whether the golden is the artifact it should be.
 
 Changing the golden means changing the converter's output. Say what changed it:
 
+- **2026-09-07** — `format_minor` 1 → 2. The batch that removed
+  `EchoArenaHeader.match_type` / `.private_match` / `.tournament_match` is not an
+  additive minor, so it does not get to keep 2.1.0 — captures carrying
+  `format_minor: 1` already exist on disk and reusing the number would leave two
+  byte-incompatible schemas indistinguishable. **Size is unchanged at 1642841
+  bytes**: the value is a single-byte varint either way, so only the sha moves
+  (`3728a209…` → `8d8a0b4d…`). Frames and events unchanged at 1023 / 208.
+  Predicted before running, and the prediction is the interesting part: the
+  compat baselines were expected NOT to move, because `writeCompatCapture` and
+  the compat harness build their headers directly and never set `format_minor`
+  (`grep -rn FormatMinor pkg cmd` has exactly one non-test writer). They did not.
 - **2026-09-07** — `EchoArenaHeader.match_type` / `.private_match` /
   `.tournament_match` are removed from the proto and replaced by a single
   `CaptureHeader.game_type` string holding the engine's symbol verbatim
