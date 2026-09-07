@@ -22,7 +22,7 @@ import (
 //	TAPE_EMIT_DIR=/tmp/tapes go test ./pkg/conversion/ -run TestEmitLayouts
 //	/tmp/oldreader/oldread /tmp/tapes/perblock.tape
 //
-// Run against 2ca18fa — the commit before per-block compression — that reader
+// Run against 30af0c5 — the commit before per-block compression — that reader
 // reads default.tape and perblock.tape in full, and fails loudly on
 // perblock-dict.tape with "unknown dictionary". Those three results are the
 // backward-compatibility evidence for the per-block layout.

@@ -300,7 +300,7 @@ func decodeEnvelopes(t *testing.T, block []byte) []*capturepb.Frame {
 }
 
 // TestBothLayoutsAreReachableAndDistinct replaces TestDefaultLayoutIsUnchanged,
-// which is RETIRED as the default (0d964f0) and is not coming back in that form.
+// which is RETIRED as the default (e27a62a) and is not coming back in that form.
 //
 // What it used to assert was "nothing writes the new layout unless a caller
 // asks for it by name" — the constraint that made per-block landable when the

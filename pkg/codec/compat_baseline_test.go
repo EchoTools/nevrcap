@@ -143,11 +143,11 @@ var compatBaselines = []compatBaseline{
 			"(module path /v4, klauspost v1.19.2) are HEAD's",
 	},
 	{
-		Ref: "2ca18fa",
+		Ref: "30af0c5",
 		Why: "last commit before per-block compression",
 	},
 	{
-		Ref: "1f70c19",
+		Ref: "2b3fe97",
 		Why: "the nevr-api bump to 638a4669f605 (game_type replaces match_type). " +
 			"Not a tag: it is the commit that performed the bump, which is what " +
 			"TestCompatBaselinesCanStillCatchAByteChange asks for when there is no " +

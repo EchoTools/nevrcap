@@ -31,8 +31,8 @@ real byte-level fidelity gate, not just a smoke test.
     1642841 bytes, 1023 frames, 208 events
 
 **THIS BLOCK WAS STALE AGAIN AND THAT IS RECORDED RATHER THAN QUIETLY FIXED.**
-Until 2026-09-07 it read `sha256:9e51e60d…, 1618955 bytes` — the pre-`0d964f0`
-values. `0d964f0` (per-block compression becomes the default) changed the golden
+Until 2026-09-07 it read `sha256:9e51e60d…, 1618955 bytes` — the pre-`e27a62a`
+values. `e27a62a` (per-block compression becomes the default) changed the golden
 to `sha256:32263cc7…, 1642825 bytes` and did not update these three numbers,
 which is the same drift the paragraph below warns about and the second time it
 has happened to this file. Measured before regenerating: the committed artifact
@@ -70,7 +70,7 @@ Changing the golden means changing the converter's output. Say what changed it:
   `game_type: Echo_Arena_Private (mode=echo_arena private=true tournament=false)`,
   so the real capture's symbol carries its own privacy and the derived axes agree
   with what the removed booleans said.
-- **2026-09-07 (recorded late)** — `0d964f0` made per-block compression the
+- **2026-09-07 (recorded late)** — `e27a62a` made per-block compression the
   default, changing the golden to `sha256:32263cc7…` at 1642825 bytes. That
   commit did not add an entry here; this line is the back-fill, written when the
   drift was found rather than left implied by the next entry.

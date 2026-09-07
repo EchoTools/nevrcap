@@ -608,7 +608,7 @@ func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
 		env, err := r.readEnvelope()
 		if err != nil {
 			// The stream ended. Whether that is the end of the CAPTURE depends on
-			// whether a footer was ever seen — and before 0d964f0 nothing asked
+			// whether a footer was ever seen — and before e27a62a nothing asked
 			// (F2). Independent per-block frames make every block boundary a clean
 			// EOF, so a cut file returned a short capture and no error.
 			if errors.Is(err, io.EOF) && r.pendingFooter == nil && r.requireFooter {
