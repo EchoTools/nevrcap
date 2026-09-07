@@ -51,6 +51,23 @@ const (
 	fixedKeyframes  = 50
 )
 
+// fixedHeader is compiled against EVERY baseline's schema, so it may only use
+// fields that exist in ALL of them — the intersection, not HEAD's superset.
+//
+// It set EchoArenaHeader.MatchType until 2026-09-07. That field was removed from
+// the proto and replaced by CaptureHeader.game_type, and this harness is dropped
+// into each baseline's tree and built there: with MatchType it stopped compiling
+// against the post-removal baseline, and with GameType it would stop compiling
+// against every baseline before it. Neither field is in the intersection, so the
+// harness carries neither.
+//
+// THE COST IS NAMED RATHER THAN HIDDEN: this capture no longer exercises the
+// game-type field in either spelling, on any baseline. That is not a gap in
+// coverage of the FIELD — pkg/conversion's gametype_test.go and the golden cover
+// it — but it does mean the compat properties compare captures that are silent
+// about it. A field spanning a schema change cannot be in a fixture shared across
+// that change; the choice is which side to lose, and losing both is the only
+// answer that keeps every baseline building.
 func fixedHeader() *capturepb.CaptureHeader {
 	return &capturepb.CaptureHeader{
 		CaptureId:     fixedCaptureID,
@@ -60,7 +77,6 @@ func fixedHeader() *capturepb.CaptureHeader {
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: fixedSessionID,
 				MapName:   fixedMapName,
-				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}

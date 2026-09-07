@@ -39,7 +39,9 @@ import (
 //	3a. HEAD can still REPRODUCE the pre-v4.1.0 CONTAINER: same envelope count,
 //	    one zstd frame, no seek table. Payload BYTES are not compared — see the
 //	    layering note at the property itself.
-//	3b. That reproduction is byte-identical by sha256 (dependency caveat below).
+//	3b. HEAD's output is byte-identical to the baseline's IN THE LAYOUT THAT
+//	    BASELINE DEFAULTS TO — opt-out for a pre-v4.1.0 row, default for a
+//	    post-v4.1.0 one (dependency caveat below).
 //	3c. HEAD's DEFAULT is the per-block layout, and it differs from the
 //	    reproduction in exactly one licensed way.
 //	4. The baseline reader reads HEAD's opt-out (whole-stream) output.
@@ -114,9 +116,11 @@ import (
 // is where the real protection lives; readability alone never was protection,
 // because an old reader that still parses a rewritten layout reports OK. It
 // stopped comparing decompressed BYTES on 2026-09-07 -- that was a schema claim
-// wearing a container gate's name, and it belongs to buf breaking in nevr-proto. Second, TestCompatBaselinesCanStillCatchAByteChange fails
-// when NO row can do 3b, so the day a bump disarms the last one is the day CI
-// says so rather than the day it quietly stops mattering.
+// wearing a container gate's name, and it belongs to buf breaking in nevr-proto.
+//
+// Second, TestCompatBaselinesCanStillCatchAByteChange fails when NO row can do
+// 3b, so the day a bump disarms the last one is the day CI says so rather than
+// the day it quietly stops mattering.
 type compatBaseline struct {
 	// Ref is a tag or commit resolvable by git in this repository. A tag is
 	// preferred: it names a release rather than a moment.
@@ -141,6 +145,14 @@ var compatBaselines = []compatBaseline{
 	{
 		Ref: "2ca18fa",
 		Why: "last commit before per-block compression",
+	},
+	{
+		Ref: "1f70c19",
+		Why: "the nevr-api bump to 638a4669f605 (game_type replaces match_type). " +
+			"Not a tag: it is the commit that performed the bump, which is what " +
+			"TestCompatBaselinesCanStillCatchAByteChange asks for when there is no " +
+			"release to point at. It is the only row whose byte-affecting pins are " +
+			"HEAD's, so it is the only row property 3b can run on",
 	},
 }
 
@@ -223,7 +235,6 @@ func compatHeader() *capturepb.CaptureHeader {
 		CaptureId:     compatCaptureID,
 		CreatedAt:     timestamppb.New(time.Unix(compatEpochUnix, 0).UTC()),
 		FormatVersion: 2,
-		GameType:      "echo_arena",
 		GameHeader: &capturepb.CaptureHeader_EchoArena{
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: compatSessionID,
@@ -590,7 +601,24 @@ func TestBackwardCompatibility(t *testing.T) {
 				t.Errorf("property 3a: HEAD's WithWholeStreamCompression output is %d zstd "+
 					"frames, want exactly 1; the opt-out no longer reproduces the old layout", n)
 			}
-			if n := countZstdFrames(t, baselineFile); n != 1 {
+			// WHICH LAYOUT DOES THIS BASELINE DEFAULT TO? Derived from its own
+			// output, never declared. A baseline from before v4.1.0 defaults to
+			// whole-stream; one from after defaults to per-block. A hand-kept
+			// flag on the row would rot the first time somebody added a baseline
+			// without revisiting it, which is the same reasoning pinsMatchHEAD
+			// already uses for 3b's applicability.
+			//
+			// This branch appeared when the first POST-v4.1.0 baseline was added
+			// (the nevr-api bump commit). Until then every row predated the
+			// per-block default and the assertion below could assume one frame.
+			_, seekErr := OpenBlockIndex(baselineFile)
+			baselinePerBlock := seekErr == nil
+			if baselinePerBlock {
+				if n := countZstdFrames(t, baselineFile); n < 2 {
+					t.Errorf("property 3a: %s carries a seek table but its default output is "+
+						"%d zstd frame(s); a per-block capture is many", base.Ref, n)
+				}
+			} else if n := countZstdFrames(t, baselineFile); n != 1 {
 				t.Errorf("property 3a: %s's default output is %d zstd frames, want 1", base.Ref, n)
 			}
 			if _, err := OpenBlockIndex(headWhole); !errors.Is(err, ErrNoSeekTable) {
@@ -616,17 +644,29 @@ func TestBackwardCompatibility(t *testing.T) {
 			// OPT-OUT bytes rather than the default bytes. The property it
 			// defends is unchanged — "the pre-v4.1.0 on-disk bytes did not move"
 			// — and it still fails if they do.
+			// LIKE FOR LIKE. 3b compares the bytes HEAD produces in the layout
+			// the BASELINE defaults to — opt-out for a pre-v4.1.0 row, default
+			// for a post-v4.1.0 one. Comparing HEAD's whole-stream output against
+			// a per-block baseline would fail on the layout rather than on any
+			// byte change, which is a gate that cannot pass rather than one that
+			// can fail.
 			matched, why := pinsMatchHEAD(t, base.Ref)
 			if matched {
-				headSum := sha256File(t, headWhole)
+				headSide, layout := headWhole, "opt-out"
+				if baselinePerBlock {
+					headSide = filepath.Join(dir, "head-default.tape")
+					writeCompatCapture(t, headSide)
+					layout = "default (per-block)"
+				}
+				headSum := sha256File(t, headSide)
 				baseSum := sha256File(t, baselineFile)
 				if headSum != baseSum {
-					t.Errorf("property 3b (compressed output byte-identical): THE PRE-v4.1.0 "+
-						"ON-DISK BYTES CHANGED under WithWholeStreamCompression.\n  HEAD     "+
-						"sha256:%s (%d bytes)\n  %-8s sha256:%s (%d bytes)",
-						headSum, fileSize(t, headWhole), base.Ref, baseSum, fileSize(t, baselineFile))
+					t.Errorf("property 3b (compressed output byte-identical): THE ON-DISK BYTES "+
+						"CHANGED in the %s layout.\n  HEAD     sha256:%s (%d bytes)\n  %-8s "+
+						"sha256:%s (%d bytes)",
+						layout, headSum, fileSize(t, headSide), base.Ref, baseSum, fileSize(t, baselineFile))
 				} else {
-					t.Logf("property 3b: opt-out compressed output byte-identical, sha256:%s", headSum)
+					t.Logf("property 3b: %s compressed output byte-identical, sha256:%s", layout, headSum)
 				}
 			} else {
 				// Not a skip of the property -- a statement that it cannot
