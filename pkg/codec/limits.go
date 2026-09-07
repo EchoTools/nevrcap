@@ -70,6 +70,19 @@ var (
 	// ErrUnexpectedEnvelope is returned when the frame stream contains a
 	// non-frame, non-footer envelope (e.g. a stray header or an empty envelope)
 	// before the footer — a malformed or truncated-and-concatenated capture.
+	//
+	// IT NO LONGER COVERS EVERY NON-FRAME ENVELOPE (F9). An envelope carrying a
+	// oneof variant this reader does not know is SKIPPED and counted rather than
+	// refused, so that adding an envelope kind does not break deployed readers;
+	// see Reader.SkippedEnvelopes. This error is now specifically the other two
+	// cases, and they are the ones that mean the file is wrong rather than new:
+	//
+	//	a KNOWN variant in the wrong place  — a second header mid-stream, i.e. an
+	//	                                      ORDERING defect in a file this reader
+	//	                                      fully understands
+	//	an envelope carrying nothing at all — no known case set and no unknown
+	//	                                      fields either; malformation, not a
+	//	                                      message from the future
 	ErrUnexpectedEnvelope = errors.New("unexpected non-frame envelope before footer")
 
 	// ErrFooterMismatch is returned by ReadFrame when the capture's footer

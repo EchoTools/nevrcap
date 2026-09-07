@@ -452,6 +452,46 @@ type Reader struct {
 	// stream, so it must happen exactly once however the caller arrives at the
 	// footer — ReadFrame reaching it, or ReadFooter reading it directly.
 	tailVerified bool
+
+	// skippedEnvelopes counts envelopes carrying a oneof variant this reader
+	// does not know (F9). Surfaced by SkippedEnvelopes; see isUnknownEnvelope.
+	skippedEnvelopes int64
+}
+
+// SkippedEnvelopes returns how many envelopes this reader skipped because they
+// carried a variant it does not know (F9).
+//
+// IT IS NOT DIAGNOSTIC DECORATION. Skipping unknown variants is what lets a new
+// envelope kind ship without breaking every deployed reader, and the price is
+// that a reader can now not see part of a capture. AGENTS.md §4: "Never silently
+// drop input. A skipped line, a rejected frame, an unmapped enum must be counted
+// and the counter must have a consumer." This is that counter and `tapedeck
+// show` is that consumer — a non-zero value means the file was written by
+// something newer than this binary, which is the fact a confused operator needs
+// and cannot otherwise obtain.
+//
+// WHAT BOUNDS IT: a skipped envelope does not increment framesRead, so
+// MaxFrameCount does not bound skips. MaxDecodedBytes does — every byte arrives
+// through the budget reader installed in NewReader (tape.go:512) — so a stream
+// of nothing but unknown variants ends on the decoded-bytes budget rather than
+// spinning.
+func (r *Reader) SkippedEnvelopes() int64 { return r.skippedEnvelopes }
+
+// isUnknownEnvelope reports whether env carries a oneof variant this reader does
+// not know, as opposed to a known variant in the wrong place or an empty
+// envelope. The three cases are mechanically distinct and this is the split F9
+// turns on — measured 2026-09-07 against the pinned protobuf runtime:
+//
+//	unknown variant (field 99)  Message==nil  unknown bytes=6, round-trip identical
+//	stray KNOWN header          Message!=nil  unknown bytes=0
+//	empty envelope              Message==nil  unknown bytes=0
+//
+// So Message==nil alone is NOT the test: an empty envelope satisfies it and
+// carries nothing, which is malformation rather than a variant from the future.
+// Requiring the unknown fields to be non-empty is what distinguishes "this
+// envelope said something I could not read" from "this envelope said nothing".
+func isUnknownEnvelope(env *capturepb.Envelope) bool {
+	return env.Message == nil && len(env.ProtoReflect().GetUnknown()) > 0
 }
 
 // NewReader opens a tape file for streaming reads. Reads are bounded by
@@ -561,48 +601,69 @@ func (r *Reader) ReadHeader() (*capturepb.CaptureHeader, error) {
 // A caller that stops early and calls ReadFooter directly is not subject to
 // the frame_count check, since a partial read is not a defect.
 func (r *Reader) ReadFrame() (*capturepb.Frame, error) {
-	env, err := r.readEnvelope()
-	if err != nil {
-		// The stream ended. Whether that is the end of the CAPTURE depends on
-		// whether a footer was ever seen — and before v4.1.0 nothing asked
-		// (F2). Independent per-block frames make every block boundary a clean
-		// EOF, so a cut file returned a short capture and no error.
-		if errors.Is(err, io.EOF) && r.pendingFooter == nil && r.requireFooter {
-			return nil, fmt.Errorf("tape: stream ended after %d frames with no footer: %w",
-				r.framesRead, ErrTruncatedCapture)
-		}
-		return nil, err
-	}
-
-	frame := env.GetFrame()
-	if frame != nil {
-		// SEC-001: bound the number of frames a capture may yield.
-		r.framesRead++
-		if err := r.limits.checkFrameBudget(r.framesRead); err != nil {
-			return nil, fmt.Errorf("tape: %w", err)
-		}
-		return frame, nil
-	}
-
-	// A footer marks the clean end of frames. Validate it against what the
-	// stream actually carried before reporting a clean EOF: a footer that
-	// disagrees with the frames read means the capture lost data, and
-	// answering io.EOF there would report success on a damaged file.
-	if footer := env.GetFooter(); footer != nil {
-		r.pendingFooter = footer
-		if declared := int64(footer.GetFrameCount()); declared != r.framesRead {
-			return nil, fmt.Errorf("tape: footer declares %d frames, stream carried %d: %w",
-				declared, r.framesRead, ErrFooterMismatch)
-		}
-		// The footer agreeing is tape's OWN trailer checking out. The
-		// compressor has a trailer too, and reaching it is what F1 never did.
-		if err := r.verifyTail(); err != nil {
+	// The loop exists for F9: an unknown envelope is skipped and the next one
+	// read, so a reader that meets a variant from the future keeps going rather
+	// than failing the capture.
+	for {
+		env, err := r.readEnvelope()
+		if err != nil {
+			// The stream ended. Whether that is the end of the CAPTURE depends on
+			// whether a footer was ever seen — and before v4.1.0 nothing asked
+			// (F2). Independent per-block frames make every block boundary a clean
+			// EOF, so a cut file returned a short capture and no error.
+			if errors.Is(err, io.EOF) && r.pendingFooter == nil && r.requireFooter {
+				return nil, fmt.Errorf("tape: stream ended after %d frames with no footer: %w",
+					r.framesRead, ErrTruncatedCapture)
+			}
 			return nil, err
 		}
-		return nil, io.EOF
+
+		frame := env.GetFrame()
+		if frame != nil {
+			// SEC-001: bound the number of frames a capture may yield.
+			r.framesRead++
+			if err := r.limits.checkFrameBudget(r.framesRead); err != nil {
+				return nil, fmt.Errorf("tape: %w", err)
+			}
+			return frame, nil
+		}
+
+		// A footer marks the clean end of frames. Validate it against what the
+		// stream actually carried before reporting a clean EOF: a footer that
+		// disagrees with the frames read means the capture lost data, and
+		// answering io.EOF there would report success on a damaged file.
+		if footer := env.GetFooter(); footer != nil {
+			r.pendingFooter = footer
+			if declared := int64(footer.GetFrameCount()); declared != r.framesRead {
+				return nil, fmt.Errorf("tape: footer declares %d frames, stream carried %d: %w",
+					declared, r.framesRead, ErrFooterMismatch)
+			}
+			// The footer agreeing is tape's OWN trailer checking out. The
+			// compressor has a trailer too, and reaching it is what F1 never did.
+			if err := r.verifyTail(); err != nil {
+				return nil, err
+			}
+			return nil, io.EOF
+		}
+
+		// F9. A variant this reader does not know is SKIPPED AND COUNTED, which
+		// is what makes every future envelope kind additive instead of breaking.
+		//
+		// THE SPLIT IS THE WHOLE POINT AND COLLAPSING IT WOULD SHIP A
+		// REGRESSION. Only an UNKNOWN variant is skipped. A KNOWN envelope in the
+		// wrong place — a second CaptureHeader mid-stream — is an ORDERING defect
+		// in a file this reader fully understands, and it stays an error; that is
+		// what stream_integrity_test.go asserts. "I cannot read this" and "I read
+		// this and it is in the wrong place" are different facts and only the
+		// first is safe to continue past.
+		if isUnknownEnvelope(env) {
+			r.skippedEnvelopes++
+			continue
+		}
+
+		// A known variant out of order, or an envelope carrying nothing at all.
+		return nil, fmt.Errorf("tape: %w", ErrUnexpectedEnvelope)
 	}
-	// Anything else here is a malformed stream.
-	return nil, fmt.Errorf("tape: %w", ErrUnexpectedEnvelope)
 }
 
 // ReadFooter returns the capture footer. If ReadFrame already encountered it,
@@ -612,24 +673,33 @@ func (r *Reader) ReadFooter() (*capturepb.CaptureFooter, error) {
 		return r.pendingFooter, nil
 	}
 
-	env, err := r.readEnvelope()
-	if err != nil {
-		if errors.Is(err, io.EOF) && r.requireFooter {
-			return nil, fmt.Errorf("tape: no footer envelope in the stream: %w", ErrTruncatedCapture)
+	// Same loop and the same reason as ReadFrame (F9): an unknown variant sitting
+	// between the last frame and the footer must not cost a caller its footer.
+	for {
+		env, err := r.readEnvelope()
+		if err != nil {
+			if errors.Is(err, io.EOF) && r.requireFooter {
+				return nil, fmt.Errorf("tape: no footer envelope in the stream: %w", ErrTruncatedCapture)
+			}
+			return nil, err
 		}
-		return nil, err
-	}
 
-	footer := env.GetFooter()
-	if footer == nil {
+		if footer := env.GetFooter(); footer != nil {
+			// A caller that reads the footer directly gets the same integrity
+			// check as one that scanned to it through ReadFrame.
+			if err := r.verifyTail(); err != nil {
+				return nil, err
+			}
+			return footer, nil
+		}
+
+		if isUnknownEnvelope(env) {
+			r.skippedEnvelopes++
+			continue
+		}
+
 		return nil, io.ErrUnexpectedEOF
 	}
-	// A caller that reads the footer directly gets the same integrity check as
-	// one that scanned to it through ReadFrame.
-	if err := r.verifyTail(); err != nil {
-		return nil, err
-	}
-	return footer, nil
 }
 
 // verifyTail consumes what remains after the footer envelope, which is what

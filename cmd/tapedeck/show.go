@@ -101,6 +101,23 @@ func showSummary(cmd *cobra.Command, reader *codec.Reader, header *capturepb.Cap
 		printf(out, "duration_ms: %d\n", footer.GetDurationMs())
 	}
 
+	// F9's counter reaching a human. The reader skips envelope variants it does
+	// not know so that a new envelope kind does not break a deployed binary, and
+	// AGENTS.md §4 forbids that skip being silent: "a skipped line, a rejected
+	// frame, an unmapped enum must be counted and the counter must have a
+	// consumer." This is the consumer.
+	//
+	// Printed only when non-zero, deliberately. A "skipped_envelopes: 0" line on
+	// every healthy capture is a line operators learn to skip past, and then the
+	// one time it says 3 they skip past that too. Silence is the normal state and
+	// the message is written to explain itself to someone seeing it for the first
+	// time — the actionable fact is not the count, it is that their tapedeck is
+	// older than the file.
+	if skipped := reader.SkippedEnvelopes(); skipped > 0 {
+		printf(out, "skipped_envelopes: %d (written by a newer tape version; "+
+			"this binary does not know those envelope kinds and did not read them)\n", skipped)
+	}
+
 	return nil
 }
 

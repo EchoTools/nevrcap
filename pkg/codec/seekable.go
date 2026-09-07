@@ -338,7 +338,19 @@ type BlockIndex struct {
 	// large a block can possibly be. A seek table is data from the file; the
 	// file's own size is not.
 	size int64
+	// skippedEnvelopes counts unknown-variant envelopes skipped while locating
+	// the footer (F9). Surfaced by SkippedEnvelopes.
+	skippedEnvelopes int64
 }
+
+// SkippedEnvelopes returns how many envelopes Footer skipped because they
+// carried a variant this reader does not know (F9).
+//
+// It counts only what the seeking path skipped. A BlockIndex reads one block —
+// the footer's — so this is not a census of the whole capture; the sequential
+// Reader's counter of the same name is. Both exist because both paths can meet a
+// variant from the future and neither may drop one silently (AGENTS.md §4).
+func (i *BlockIndex) SkippedEnvelopes() int64 { return i.skippedEnvelopes }
 
 // OpenBlockIndex reads the seek table of the capture at filename.
 //
@@ -577,15 +589,24 @@ func (i *BlockIndex) Footer(dict []byte) (*capturepb.CaptureFooter, error) {
 	}
 
 	r := &Reader{reader: bytes.NewReader(block), limits: Limits{}}
-	env, err := r.readEnvelope()
-	if err != nil {
-		return nil, fmt.Errorf("tape: reading footer envelope: %w", err)
-	}
-	footer := env.GetFooter()
-	if footer == nil {
+	// F9, and the seeking path needs it at least as much as the sequential one:
+	// a future writer that puts a new envelope kind in the footer's block would
+	// otherwise make the whole capture unseekable to this reader. The loop is
+	// bounded by the block, which ReadBlock has already sized and verified.
+	for {
+		env, envErr := r.readEnvelope()
+		if envErr != nil {
+			return nil, fmt.Errorf("tape: reading footer envelope: %w", envErr)
+		}
+		if footer := env.GetFooter(); footer != nil {
+			return footer, nil
+		}
+		if isUnknownEnvelope(env) {
+			i.skippedEnvelopes++
+			continue
+		}
 		return nil, fmt.Errorf("tape: final block does not hold a footer: %w", ErrUnexpectedEnvelope)
 	}
-	return footer, nil
 }
 
 // BlockForFrame returns the index of the block holding frameIndex, resolved
