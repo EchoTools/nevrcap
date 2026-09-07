@@ -10,6 +10,7 @@ import (
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -33,6 +34,63 @@ import (
 // These tests construct a header carrying field numbers the pinned schema does
 // not define (8 and 9, the next two free on CaptureHeader — 1-7 are used and 10
 // opens the game_header oneof) and check all three.
+//
+// AND THE PREMISE IS NOW ASSERTED RATHER THAN ASSUMED, because it is the kind
+// that goes false silently. "Field 8 and field 9 are undefined" was true when
+// this file was written and is a fact about a SCHEMA THIS REPOSITORY DOES NOT
+// OWN. The day nevr-proto defines either one, the wire bytes below stop being
+// unknown fields: they parse into a typed accessor, re-marshal from it, and
+// every assertion here still passes — while testing nothing it was written to
+// test.
+//
+// That is FORMS §Audit's superseded-CHECK case exactly, and it is the sharper
+// half of it: "a stale sentence is inert; a stale green is an active lie." A
+// stale test does not go quiet, it goes on emitting green, and green is read as
+// coverage by everyone who does not open it.
+//
+// requireUndefinedFields is the mechanism that makes that impossible. It fails
+// LOUDLY the moment a stand-in number acquires a definition, so the failure mode
+// becomes a red build with an explanation instead of a test that quietly retires
+// itself. Measured 2026-09-07 at
+// nevr-api v1.36.12-20260826145031-f5ec961c025e.1: fields 8 and 9 are both still
+// undefined, the header carries 20 bytes of unknown fields, and they survive a
+// decode/re-encode byte-identically — so the guard is silent today and this
+// comment describes a live test, not an aspiration.
+//
+// nevr-proto is separately reserving 900-999 on CaptureHeader so a stand-in can
+// be undefined FOREVER rather than undefined today; when that lands and tape's
+// dependency is bumped, these numbers move there in the same change, and this
+// guard is what will prove the move was needed.
+
+// requireUndefinedFields fails unless every listed field number is UNDEFINED in
+// the pinned CaptureHeader schema.
+//
+// It is the guard that keeps this file honest. A stand-in field number is only a
+// stand-in while the schema does not define it, and the schema belongs to
+// nevr-proto — so the premise can be falsified by a repository this one does not
+// control, with no change here and no failing test. Asserting it converts that
+// from an invisible retirement into a build failure that says what happened.
+//
+// It uses the descriptor rather than a hardcoded list, so it answers about the
+// schema actually linked into this build. That matters: the question is not
+// "what did the .proto say when someone last looked", it is "what does the
+// generated type this test just used believe".
+func requireUndefinedFields(t *testing.T, numbers ...protowire.Number) {
+	t.Helper()
+	md := (&capturepb.CaptureHeader{}).ProtoReflect().Descriptor()
+	for _, n := range numbers {
+		fd := md.Fields().ByNumber(protoreflect.FieldNumber(n))
+		if fd == nil {
+			continue
+		}
+		t.Fatalf("field %d is now DEFINED in the pinned schema as %q (%s), so it is no "+
+			"longer an unknown field and this file has stopped testing unknown-field "+
+			"handling. The wire bytes below would parse into a typed accessor and every "+
+			"assertion would still pass. Move the stand-ins to numbers nevr-proto has "+
+			"reserved (CaptureHeader 900-999) and re-check that the unknown-field byte "+
+			"count is non-zero.", n, fd.Name(), fd.Kind())
+	}
+}
 
 // headerWithFutureFields returns the wire bytes of a CaptureHeader whose known
 // fields are set and which additionally carries two fields this build's schema
@@ -40,6 +98,9 @@ import (
 // They stand in for game_type and a producer/user-agent string.
 func headerWithFutureFields(t *testing.T) []byte {
 	t.Helper()
+	// Every test in this file goes through here, so the premise is checked once
+	// and cannot be skipped by adding a test that forgets to.
+	requireUndefinedFields(t, 8, 9)
 
 	known, err := proto.Marshal(&capturepb.CaptureHeader{
 		CaptureId:     "extensibility-001",
@@ -105,6 +166,22 @@ func TestHeaderPreservesUnknownFieldsThroughRewrite(t *testing.T) {
 	if err := proto.Unmarshal(raw, &round); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
+
+	// The property itself, asserted directly rather than inferred from the
+	// round-trip succeeding. requireUndefinedFields checks the SCHEMA; this
+	// checks the parse that actually happened, and the two fail for different
+	// reasons — a field could be undefined and still not reach unknown fields
+	// (a DiscardUnknown unmarshaler, a narrower intermediate type). A zero here
+	// with every other assertion green is the exact signature of a test that has
+	// stopped testing.
+	unknown := round.ProtoReflect().GetUnknown()
+	if len(unknown) == 0 {
+		t.Fatalf("the header carries NO unknown fields after parsing, so nothing below " +
+			"exercises unknown-field preservation. Expected the bytes for the two " +
+			"stand-in fields; got none. Measured 2026-09-07 at this pin: 20 bytes.")
+	}
+	t.Logf("unknown-field bytes carried: %d (% x)", len(unknown), unknown)
+
 	out, err := proto.Marshal(&round)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
