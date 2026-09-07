@@ -350,6 +350,21 @@ type BlockIndex struct {
 // the footer's — so this is not a census of the whole capture; the sequential
 // Reader's counter of the same name is. Both exist because both paths can meet a
 // variant from the future and neither may drop one silently (AGENTS.md §4).
+//
+// ITS ONLY CALLER IS IN ANOTHER REPOSITORY, AND THAT IS BY DESIGN — do not file
+// this as an uncalled method. `grep -rn OpenBlockIndex cmd/ --include='*.go'`
+// finds two hits, both in dict_test.go and none in production code: no tapedeck
+// command uses the seeking path, because the per-block layout exists for
+// nevr-stream's byte-range server rather than for the CLI.
+// AGENTS.md §4's "an uncalled method is a defect, not instrumentation" is aimed
+// at a counter nothing reads; an exported accessor whose consumer is the
+// out-of-repo reader the layout was built for is a different thing. The
+// sequential Reader's counter is the one with an in-repo consumer (`tapedeck
+// show`), and it is there that a regression would surface.
+//
+// The follow-up that would close the gap properly, when it is worth it: a
+// seek-table section in `tapedeck show` — block count, servability, and this
+// counter. Deliberately not in this change.
 func (i *BlockIndex) SkippedEnvelopes() int64 { return i.skippedEnvelopes }
 
 // OpenBlockIndex reads the seek table of the capture at filename.
