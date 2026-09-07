@@ -51,6 +51,23 @@ import (
 // three trees and nothing else; a producer written elsewhere, or in another
 // language, is not covered by it.
 //
+// AND IT HAS AN EXPIRY, NOT ONLY A PERIMETER. The sentence above scopes WHERE I
+// looked. It does not scope WHEN, and that is the half that rots: a survey
+// enumerates the producers that existed on its date, so a producer created after
+// it is outside the evidence no matter how thoroughly the trees were searched.
+// This is not hypothetical as of 2026-09-07 — nevr-agent, one of the two
+// surveyed producers, is being RETIRED in favour of a direct engine-memory
+// reader that did not exist when the survey ran and has never been read. Nothing
+// above is wrong; it is simply evidence about a producer set that is changing.
+//
+// So: the grep is repo-local and can never see a producer in another repository,
+// and the survey is a snapshot and can never see a producer added after it. The
+// failure mode both miss is the same one and it is the benign-looking direction —
+// a LEGITIMATE capture refused with ErrWindowTooLarge, not a bomb let through.
+// Whoever adds a producer re-runs the predicate against it; whoever hits an
+// unexpected ErrWindowTooLarge on a file they trust should suspect this constant
+// before suspecting the file.
+//
 // It is deliberately NOT read from the file. hdr.WindowSize is the hostile
 // file's own number, and a cap computed from it is the attacker choosing their
 // own ceiling: klauspost sizes the history buffer from the frame's window
