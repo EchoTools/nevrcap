@@ -76,14 +76,14 @@ indices are not sequential (frame_count is the count, not the last index).
 §2 is about what goes in a frame. This is about how frames are packed into a
 file, which is a separate layer and was for a long time a separate problem.
 
-**The pre-v4.1.0 layout was one continuous Zstd frame** over the whole capture.
+**The whole-stream layout is one continuous Zstd frame** over the whole capture.
 Under it, `CaptureFooter.keyframe_index` records byte offsets into the
 *decompressed* stream. Nothing can seek to those offsets — reaching one means
 decompressing everything before it. The index shipped; the property it exists
 for did not. That layout is still reachable, by
 `codec.WithWholeStreamCompression`.
 
-**The per-block layout is where it can, and since v4.1.0 it is THE DEFAULT**
+**The per-block layout is where it can, and it is THE DEFAULT**
 (`pkg/codec/tape.go`, `NewWriter`). Compression moves inside the container:
 
 ```
@@ -125,7 +125,7 @@ option's name, which was every caller, including `tapedeck trim` and
 
 So `NewWriter`, `NewWriterWithKeyframeInterval` and `NewWriterWithOptions` with
 no options all produce the per-block layout. `codec.WithWholeStreamCompression`
-reproduces the pre-v4.1.0 bytes exactly, and `TestBackwardCompatibility`
+reproduces the whole-stream bytes exactly, and `TestBackwardCompatibility`
 properties 3a/3b hold it to that byte for byte against every baseline.
 
 **Measured** on `testdata/sample.echoreplay` (1023 frames), by

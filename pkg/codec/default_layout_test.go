@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// The default layout at v4.1.0, and the option that opts out of it.
+// The default layout, and the option that opts out of it.
 //
 // WHY THIS FILE EXISTS. Per-block compression shipped as opt-in, which meant
 // the property it was built for — a keyframe offset that is a servable byte
@@ -77,7 +77,7 @@ func readCaptureFrameIndexes(t *testing.T, path string) []uint32 {
 
 // MUTATION WITNESS, recorded because a review could not find the red and the
 // red is the only thing that makes this test worth having. Setting
-// applyWriterOptions' perBlock back to false — exactly the pre-v4.1.0 default —
+// applyWriterOptions' perBlock back to false — exactly the whole-stream default —
 // produces:
 //
 //	=== RUN   TestZeroOptionWriterIsPerBlockByDefault

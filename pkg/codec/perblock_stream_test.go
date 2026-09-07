@@ -13,8 +13,8 @@ import (
 // layout's.
 //
 // WHY THIS EXISTS. TestBackwardCompatibility compares HEAD's reproduction of
-// the pre-v4.1.0 layout against a baseline's output, which leaves the per-block
-// layout — the newer half of the format, and since v4.1.0 the DEFAULT half —
+// the whole-stream layout against a baseline's output, which leaves the per-block
+// layout — the newer half of the format, and the DEFAULT half —
 // checked there only for readability and for the one licensed footer
 // difference. An audit padded the varint prefix in the per-block branch of
 // writeEnvelope alone, genuinely changing what a per-block tape looks like on

@@ -36,12 +36,12 @@ import (
 //
 //	1. A reader built from a BASELINE reads a file written by HEAD's defaults.
 //	2. HEAD reads a file written by that baseline.
-//	3a. HEAD can still REPRODUCE the pre-v4.1.0 CONTAINER: same envelope count,
+//	3a. HEAD can still REPRODUCE the whole-stream CONTAINER: same envelope count,
 //	    one zstd frame, no seek table. Payload BYTES are not compared — see the
 //	    layering note at the property itself.
 //	3b. HEAD's output is byte-identical to the baseline's IN THE LAYOUT THAT
-//	    BASELINE DEFAULTS TO — opt-out for a pre-v4.1.0 row, default for a
-//	    post-v4.1.0 one (dependency caveat below).
+//	    BASELINE DEFAULTS TO — opt-out for a whole-stream row, default for a
+//	    per-block one (dependency caveat below).
 //	3c. HEAD's DEFAULT is the per-block layout, and it differs from the
 //	    reproduction in exactly one licensed way.
 //	4. The baseline reader reads HEAD's opt-out (whole-stream) output.
@@ -490,7 +490,7 @@ func TestBackwardCompatibility(t *testing.T) {
 			defaultIndex, err := OpenBlockIndex(headDefault)
 			if err != nil {
 				t.Fatalf("property 1: HEAD's DEFAULT output has no seek table (%v); the "+
-					"default is supposed to be the per-block layout since v4.1.0, so this "+
+					"default is supposed to be the per-block layout, so this "+
 					"assertion would be checking the old layout under a new name", err)
 			}
 			if defaultIndex.Blocks() < 3 {
@@ -538,7 +538,7 @@ func TestBackwardCompatibility(t *testing.T) {
 			// same three, verbatim in substance — identical decompressed
 			// envelope stream, exactly one zstd frame, no seek table — applied
 			// to WithWholeStreamCompression, the option that reproduces the
-			// pre-v4.1.0 layout. A t.Skip would have been a silent retreat.
+			// whole-stream layout. A t.Skip would have been a silent retreat.
 			//
 			// RETARGETED A SECOND TIME ON 2026-09-07, AND THE SECOND TIME SAYS
 			// SOMETHING THE FIRST DID NOT. nevr-proto removed
@@ -586,7 +586,7 @@ func TestBackwardCompatibility(t *testing.T) {
 			headEnvelopes := countEnvelopes(t, headPlain)
 			baseEnvelopes := countEnvelopes(t, basePlain)
 			if headEnvelopes != baseEnvelopes {
-				t.Errorf("property 3a (the pre-v4.1.0 CONTAINER is still reproducible): "+
+				t.Errorf("property 3a (the whole-stream CONTAINER is still reproducible): "+
 					"ENVELOPE COUNT DIFFERS under WithWholeStreamCompression — HEAD %d, %s %d. "+
 					"The payload schema may change; the container's framing may not.",
 					headEnvelopes, base.Ref, baseEnvelopes)
@@ -602,7 +602,7 @@ func TestBackwardCompatibility(t *testing.T) {
 					"frames, want exactly 1; the opt-out no longer reproduces the old layout", n)
 			}
 			// WHICH LAYOUT DOES THIS BASELINE DEFAULT TO? Derived from its own
-			// output, never declared. A baseline from before v4.1.0 defaults to
+			// output, never declared. A whole-stream-era baseline defaults to
 			// whole-stream; one from after defaults to per-block. A hand-kept
 			// flag on the row would rot the first time somebody added a baseline
 			// without revisiting it, which is the same reasoning pinsMatchHEAD
@@ -629,7 +629,7 @@ func TestBackwardCompatibility(t *testing.T) {
 			// exactly like a property that ran and passed, and this suite has
 			// been bitten by that difference more than once; the passing run
 			// should say what it checked without anyone having to instrument it.
-			t.Logf("property 3a: the pre-v4.1.0 CONTAINER is still reproducible via "+
+			t.Logf("property 3a: the whole-stream CONTAINER is still reproducible via "+
 				"WithWholeStreamCompression — %d envelopes both sides, 1 zstd frame, no seek "+
 				"table. Payload bytes differ by design (HEAD %d, %s %d) since game_type "+
 				"replaced match_type; schema compat is buf breaking's, not this gate's.",
@@ -642,11 +642,11 @@ func TestBackwardCompatibility(t *testing.T) {
 			//
 			// Retargeted with 3a, and for the same reason: it now compares the
 			// OPT-OUT bytes rather than the default bytes. The property it
-			// defends is unchanged — "the pre-v4.1.0 on-disk bytes did not move"
+			// defends is unchanged — "the whole-stream on-disk bytes did not move"
 			// — and it still fails if they do.
 			// LIKE FOR LIKE. 3b compares the bytes HEAD produces in the layout
-			// the BASELINE defaults to — opt-out for a pre-v4.1.0 row, default
-			// for a post-v4.1.0 one. Comparing HEAD's whole-stream output against
+			// the BASELINE defaults to — opt-out for a whole-stream row, default
+			// for a per-block one. Comparing HEAD's whole-stream output against
 			// a per-block baseline would fail on the layout rather than on any
 			// byte change, which is a gate that cannot pass rather than one that
 			// can fail.

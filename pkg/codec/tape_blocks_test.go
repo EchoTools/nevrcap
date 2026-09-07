@@ -300,7 +300,7 @@ func decodeEnvelopes(t *testing.T, block []byte) []*capturepb.Frame {
 }
 
 // TestBothLayoutsAreReachableAndDistinct replaces TestDefaultLayoutIsUnchanged,
-// which is RETIRED at v4.1.0 and is not coming back in that form.
+// which is RETIRED as the default (0d964f0) and is not coming back in that form.
 //
 // What it used to assert was "nothing writes the new layout unless a caller
 // asks for it by name" — the constraint that made per-block landable when the
@@ -322,7 +322,7 @@ func TestBothLayoutsAreReachableAndDistinct(t *testing.T) {
 
 	wholePath := writeCapture(t, "opt-out.tape", frames, WithKeyframeInterval(50), WithWholeStreamCompression())
 	if n := countZstdFrames(t, wholePath); n != 1 {
-		t.Errorf("WithWholeStreamCompression is %d zstd frames, want exactly 1 (the pre-v4.1.0 layout)", n)
+		t.Errorf("WithWholeStreamCompression is %d zstd frames, want exactly 1 (the whole-stream layout)", n)
 	}
 	if _, err := OpenBlockIndex(wholePath); !errors.Is(err, ErrNoSeekTable) {
 		t.Errorf("WithWholeStreamCompression: OpenBlockIndex returned %v, want ErrNoSeekTable", err)

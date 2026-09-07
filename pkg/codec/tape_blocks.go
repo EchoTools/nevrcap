@@ -10,7 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
-// Per-block container layout — THE DEFAULT since v4.1.0.
+// Per-block container layout — THE DEFAULT.
 //
 // WHY THIS EXISTS. Writer's own doc comment concedes the defect: "Because the
 // stream is Zstd-compressed, byte-offset seeking requires decompressing from
@@ -112,7 +112,7 @@ func WithPerBlockCompression() WriterOption {
 }
 
 // WithWholeStreamCompression writes the capture as ONE continuous zstd stream
-// with no seek table — the layout tape wrote before v4.1.0.
+// with no seek table — the whole-stream layout.
 //
 // THIS IS THE OPT-OUT, and it is the only way to get that layout now. What it
 // costs, and the reason it is not the default: KeyframeEntry.ByteOffset goes
@@ -125,7 +125,7 @@ func WithPerBlockCompression() WriterOption {
 // only at end of file.
 //
 // It exists for exactly two callers: one that must produce bytes an
-// already-deployed pre-v4.1.0 reader consumes byte-identically, and one
+// already-deployed whole-stream reader consumes byte-identically, and one
 // streaming to a sink where the trailing seek table cannot be written. Anything
 // else should take the default.
 func WithWholeStreamCompression() WriterOption {
