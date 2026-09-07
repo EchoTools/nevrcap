@@ -89,13 +89,20 @@ func (v *vocabulary) gameStatus(s string) capturepb.GameStatus {
 	return capturepb.GameStatus_GAME_STATUS_UNSPECIFIED
 }
 
-func (v *vocabulary) matchType(s string) capturepb.MatchType {
-	if e, ok := matchTypeMap[s]; ok {
-		return e
-	}
-	v.record("match_type", s)
-	return capturepb.MatchType_MATCH_TYPE_UNSPECIFIED
-}
+// matchType is GONE, and its absence is the point rather than an oversight.
+//
+// The other helpers here exist because a v1 string has to be narrowed onto a
+// closed v2 enum, and narrowing can fail — so the miss is counted and reported
+// through ConvertResult.UnmappedValues. game_type is not narrowed onto anything:
+// CaptureHeader.game_type stores the engine's symbol verbatim, so there is no
+// lookup, no miss, and nothing to count.
+//
+// Measured before the change, on the shipped converter: "Echo_Combat_Private"
+// recorded `{Field:match_type Value:Echo_Combat_Private Count:1}` and became
+// MATCH_TYPE_UNSPECIFIED, reversing to "". The counter was doing its job — the
+// loss was reported at conversion time. It just could not prevent the loss. A
+// verbatim string removes the failure the counter existed to report, which is
+// why removing the counter is not the same as going quiet.
 
 func (v *vocabulary) pauseState(s string) capturepb.PauseState {
 	if e, ok := pauseStateMap[s]; ok {

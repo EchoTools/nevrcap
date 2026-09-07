@@ -113,8 +113,10 @@ func TestNilVocabularyRecordsNothing(t *testing.T) {
 	if got := v.gameStatus("quantum_overtime"); got != capturepb.GameStatus_GAME_STATUS_UNSPECIFIED {
 		t.Errorf("gameStatus = %v, want UNSPECIFIED", got)
 	}
-	if got := v.matchType("Echo_Arena_Private"); got != capturepb.MatchType_MATCH_TYPE_PRIVATE {
-		t.Errorf("matchType = %v, want PRIVATE", got)
+	// matchType is gone: game_type is stored verbatim, so there is no narrowing
+	// and no miss to record. pauseState stands in as the second helper here.
+	if got := v.pauseState("quantum_paused"); got != capturepb.PauseState_PAUSE_STATE_UNSPECIFIED {
+		t.Errorf("pauseState = %v, want UNSPECIFIED", got)
 	}
 	if got := v.sorted(); got != nil {
 		t.Errorf("sorted() = %+v, want nil", got)

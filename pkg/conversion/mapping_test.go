@@ -71,8 +71,8 @@ func TestMapHeader_WithSessionID(t *testing.T) {
 	if ea.MapName != "mpl_arena_a" {
 		t.Errorf("MapName = %q, want %q", ea.MapName, "mpl_arena_a")
 	}
-	if ea.MatchType != capturepb.MatchType_MATCH_TYPE_ARENA {
-		t.Errorf("MatchType = %v, want MATCH_TYPE_ARENA", ea.MatchType)
+	if gt := got.GetGameType(); gt != "Echo_Arena" {
+		t.Errorf("GameType = %q, want %q (verbatim, not narrowed)", gt, "Echo_Arena")
 	}
 	if ea.ClientName != "TestClient" {
 		t.Errorf("ClientName = %q, want %q", ea.ClientName, "TestClient")
@@ -1028,11 +1028,34 @@ func TestMapHeaderFromSession(t *testing.T) {
 	if ea.SessionId != "sess-xyz" {
 		t.Errorf("SessionId = %q, want %q", ea.SessionId, "sess-xyz")
 	}
-	if ea.MatchType != capturepb.MatchType_MATCH_TYPE_ARENA {
-		t.Errorf("MatchType = %v, want MATCH_TYPE_ARENA", ea.MatchType)
+	// game_type is the engine's symbol, verbatim, on the container header.
+	if gt := got.GetGameType(); gt != "Echo_Arena" {
+		t.Errorf("GameType = %q, want %q (verbatim, not narrowed)", gt, "Echo_Arena")
 	}
-	if !ea.PrivateMatch {
-		t.Error("expected PrivateMatch = true")
+	// AND HERE IS A REAL LOSS, ASSERTED RATHER THAN HIDDEN. This session carries
+	// match_type "Echo_Arena" AND private_match=true as SEPARATE v1 fields, and
+	// they disagree: the symbol does not say private, the boolean does. v2 stores
+	// only the symbol, so the boolean's fact is not recoverable — DeriveGameType
+	// reads Private=false, which is what the symbol says and not what the engine
+	// said.
+	//
+	// This is asserted as the CURRENT behaviour, not endorsed. The open question
+	// is whether real engine data can ever present that disagreement; if it can,
+	// single-source-of-truth on the symbol drops a bit the old two-field layout
+	// kept. Raised as a Decision-line rather than resolved here, and this
+	// assertion is what will go red if the answer changes the code.
+	//
+	// EVIDENCE SO FAR IS ONE CAPTURE, and it says the disagreement does not
+	// arise: testdata/sample.echoreplay converts to a header reading
+	// `game_type: Echo_Arena_Private (mode=echo_arena private=true
+	// tournament=false)` — the engine spelled the privacy into the symbol, so the
+	// derived axis agrees with what the removed boolean said. ONE capture is not
+	// the corpus and must not be read as "this cannot happen"; it is the only
+	// sample anyone has measured.
+	if facts := DeriveGameType(got.GetGameType()); facts.Private {
+		t.Errorf("DeriveGameType(%q).Private = true; the symbol carries no "+
+			"'private' segment, so this test's premise about the loss is wrong "+
+			"and the comment above needs revisiting", got.GetGameType())
 	}
 	if ea.TotalRoundCount != 3 {
 		t.Errorf("TotalRoundCount = %d, want 3", ea.TotalRoundCount)

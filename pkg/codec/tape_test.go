@@ -16,11 +16,11 @@ func TestTapeRoundTrip(t *testing.T) {
 		CreatedAt:     timestamppb.Now(),
 		FormatVersion: 2,
 		Metadata:      map[string]string{"game_version": "1.0"},
+		GameType:      "echo_arena",
 		GameHeader: &capturepb.CaptureHeader_EchoArena{
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: "ABC-123",
 				MapName:   "mpl_arena_a",
-				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}

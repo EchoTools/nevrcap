@@ -25,10 +25,19 @@ the same tape bytes. The golden is committed and tracked (its
 `/testdata/*.golden` gitignore entry was removed), so `TestGoldenConvert` is a
 real byte-level fidelity gate, not just a smoke test.
 
-**Current golden** (measured 2026-07-27):
+**Current golden** (measured 2026-09-07):
 
-    sha256:9e51e60dbb5d04e556cf7d280427df5ad393f79e374ec3b25b631b8ae96cb994
-    1618955 bytes, 1023 frames, 208 events
+    sha256:3728a209183fdd8c7cc833580e92df52cf5162e4af690457fa52c4cabaff9356
+    1642841 bytes, 1023 frames, 208 events
+
+**THIS BLOCK WAS STALE AGAIN AND THAT IS RECORDED RATHER THAN QUIETLY FIXED.**
+Until 2026-09-07 it read `sha256:9e51e60d…, 1618955 bytes` — the pre-`0d964f0`
+values. `0d964f0` (per-block compression becomes the default) changed the golden
+to `sha256:32263cc7…, 1642825 bytes` and did not update these three numbers,
+which is the same drift the paragraph below warns about and the second time it
+has happened to this file. Measured before regenerating: the committed artifact
+hashed `32263cc7…` at 1642825 bytes while this block claimed `9e51e60d…` at
+1618955. The record was wrong about the artifact by 23,870 bytes.
 
 Regenerate by deleting `sample.tape.golden` and running `TestGoldenConvert`,
 which recreates it when absent. **Update the three values above in the same
@@ -39,6 +48,21 @@ telling whether the golden is the artifact it should be.
 
 Changing the golden means changing the converter's output. Say what changed it:
 
+- **2026-09-07** — `EchoArenaHeader.match_type` / `.private_match` /
+  `.tournament_match` are removed from the proto and replaced by a single
+  `CaptureHeader.game_type` string holding the engine's symbol verbatim
+  (`pkg/conversion/gametype.go` derives the axes back out of it). The header
+  gains a `game_type` field and the game band loses one enum and two booleans:
+  1642825 → 1642841 bytes, +16. Frames and events unchanged at 1023 / 208,
+  because nothing per-frame moved. Verified on this artifact:
+  `tapedeck show` reports
+  `game_type: Echo_Arena_Private (mode=echo_arena private=true tournament=false)`,
+  so the real capture's symbol carries its own privacy and the derived axes agree
+  with what the removed booleans said.
+- **2026-09-07 (recorded late)** — `0d964f0` made per-block compression the
+  default, changing the golden to `sha256:32263cc7…` at 1642825 bytes. That
+  commit did not add an entry here; this line is the back-fill, written when the
+  drift was found rather than left implied by the next entry.
 - **2026-07-27** — the 2.1.0 superset fields are wired: `rules_changed_by`/`_at`
   and `team_names` in the header, `err_code` / both restart requests /
   `pause_detail` per frame, `possession_time` on `PlayerState`, and a new

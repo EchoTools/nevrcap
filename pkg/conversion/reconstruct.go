@@ -35,9 +35,9 @@ const (
 // (the value forward-mapped from "" or any unrecognized status).
 var gameStatusReverse = buildReverse(gameStatusMap, capturepb.GameStatus_GAME_STATUS_UNSPECIFIED, "")
 
-// matchTypeReverse maps a v2 MatchType enum back to its v1 string. Inverse of
-// matchTypeMap; MATCH_TYPE_UNSPECIFIED maps to the empty string.
-var matchTypeReverse = buildReverse(matchTypeMap, capturepb.MatchType_MATCH_TYPE_UNSPECIFIED, "")
+// matchTypeReverse is GONE with matchTypeMap. There is nothing to reverse:
+// CaptureHeader.game_type holds the engine's own symbol, so reconstruction
+// returns it unchanged rather than looking it up. See gametype.go.
 
 // pauseStateReverse maps a v2 PauseState enum back to a canonical v1
 // paused_state string. The forward pauseStateMap is still many-to-one — "" and
@@ -146,8 +146,13 @@ func vec3ToSlice(v *spatialv1.Vec3) []float64 {
 // fabricated: they are left at their zero value. The round-trip BAC measures
 // and reports them.
 type SessionReconstructor struct {
-	header   *capturepb.CaptureHeader
-	ea       *capturepb.EchoArenaHeader
+	header *capturepb.CaptureHeader
+	ea     *capturepb.EchoArenaHeader
+	// gameType is derived ONCE, at construction, not per frame. game_type is a
+	// session constant, and reconstructSession runs for every frame in the
+	// capture — deriving there would put string splitting on the per-frame path
+	// to recompute a value that cannot change.
+	gameType GameTypeFacts
 	session  *Session
 	baseTime time.Time
 	frames   []*capturepb.Frame
@@ -206,6 +211,7 @@ func NewSessionReconstructor(r *codec.Reader) (*SessionReconstructor, error) {
 	return &SessionReconstructor{
 		header:   hdr,
 		ea:       hdr.GetEchoArena(),
+		gameType: DeriveGameType(hdr.GetGameType()),
 		session:  NewSession(hdr.GetEchoArena(), frames),
 		frames:   frames,
 		baseTime: hdr.GetCreatedAt().AsTime(),
@@ -242,13 +248,17 @@ func (rc *SessionReconstructor) ReconstructFrame(i int) *telemetryv1.LobbySessio
 func (rc *SessionReconstructor) reconstructSession(i int, ea *capturepb.EchoArenaFrame) *enginev1.SessionResponse {
 	s := &enginev1.SessionResponse{
 		// Session constants (header).
-		SessionId:       rc.ea.GetSessionId(),
-		SessionIp:       rc.ea.GetSessionIp(),
-		ClientName:      rc.ea.GetClientName(),
-		MapName:         rc.ea.GetMapName(),
-		MatchType:       matchTypeReverse[rc.ea.GetMatchType()],
-		PrivateMatch:    rc.ea.GetPrivateMatch(),
-		TournamentMatch: rc.ea.GetTournamentMatch(),
+		SessionId:  rc.ea.GetSessionId(),
+		SessionIp:  rc.ea.GetSessionIp(),
+		ClientName: rc.ea.GetClientName(),
+		MapName:    rc.ea.GetMapName(),
+		// The symbol comes back exactly as the engine spelled it — no lookup, so
+		// no symbol can fail to have an entry. The two booleans are DERIVED from
+		// it rather than stored, which is what makes them unable to disagree
+		// with it.
+		MatchType:       rc.header.GetGameType(),
+		PrivateMatch:    rc.gameType.Private,
+		TournamentMatch: rc.gameType.Tournament,
 		TotalRoundCount: rc.ea.GetTotalRoundCount(),
 		RulesChangedBy:  rc.ea.GetRulesChangedBy(),
 		RulesChangedAt:  rc.ea.GetRulesChangedAt(),

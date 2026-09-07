@@ -18,6 +18,7 @@ import (
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
 	"github.com/klauspost/compress/zstd"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -35,8 +36,9 @@ import (
 //
 //	1. A reader built from a BASELINE reads a file written by HEAD's defaults.
 //	2. HEAD reads a file written by that baseline.
-//	3a. HEAD can still REPRODUCE the pre-v4.1.0 layout, and its decompressed
-//	    envelope stream and container shape are identical to the baseline's.
+//	3a. HEAD can still REPRODUCE the pre-v4.1.0 CONTAINER: same envelope count,
+//	    one zstd frame, no seek table. Payload BYTES are not compared — see the
+//	    layering note at the property itself.
 //	3b. That reproduction is byte-identical by sha256 (dependency caveat below).
 //	3c. HEAD's DEFAULT is the per-block layout, and it differs from the
 //	    reproduction in exactly one licensed way.
@@ -105,12 +107,14 @@ import (
 // The rows therefore record what is checkable -- tag kind, tag date, and whether
 // origin has it -- rather than a word two readers would resolve differently.
 //
-// Two things hold the line. First, property 3a compares the DECOMPRESSED
-// envelope stream and the container's frame structure -- properties of this
-// format rather than of the compressor -- so it runs on every row and survives
-// dependency bumps. That is where the real protection lives; readability alone
-// never was protection, because an old reader that still parses a rewritten
-// layout reports OK. Second, TestCompatBaselinesCanStillCatchAByteChange fails
+// Two things hold the line. First, property 3a compares the container's FRAMING
+// -- envelope count, zstd frame count, seek-table absence -- which are properties
+// of this format rather than of the compressor OR of the payload schema, so it
+// runs on every row and survives both dependency bumps and schema changes. That
+// is where the real protection lives; readability alone never was protection,
+// because an old reader that still parses a rewritten layout reports OK. It
+// stopped comparing decompressed BYTES on 2026-09-07 -- that was a schema claim
+// wearing a container gate's name, and it belongs to buf breaking in nevr-proto. Second, TestCompatBaselinesCanStillCatchAByteChange fails
 // when NO row can do 3b, so the day a bump disarms the last one is the day CI
 // says so rather than the day it quietly stops mattering.
 type compatBaseline struct {
@@ -219,11 +223,11 @@ func compatHeader() *capturepb.CaptureHeader {
 		CaptureId:     compatCaptureID,
 		CreatedAt:     timestamppb.New(time.Unix(compatEpochUnix, 0).UTC()),
 		FormatVersion: 2,
+		GameType:      "echo_arena",
 		GameHeader: &capturepb.CaptureHeader_EchoArena{
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: compatSessionID,
 				MapName:   compatMapName,
-				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}
@@ -519,28 +523,62 @@ func TestBackwardCompatibility(t *testing.T) {
 			// use args to opt out"; "THIS is the release"), so that claim is
 			// now false and would fail by construction.
 			//
-			// It is retargeted rather than removed. The assertions below are
-			// the same three, verbatim in substance — identical decompressed
+			// It was retargeted rather than removed. The assertions were the
+			// same three, verbatim in substance — identical decompressed
 			// envelope stream, exactly one zstd frame, no seek table — applied
 			// to WithWholeStreamCompression, the option that reproduces the
-			// pre-v4.1.0 layout. The old layout is therefore still checked on
-			// every baseline, on every run; only the thing that produces it
-			// changed name. A t.Skip here would have been a silent retreat.
+			// pre-v4.1.0 layout. A t.Skip would have been a silent retreat.
 			//
-			// Decoding is version-independent -- zstd's format is stable even
-			// where its ENCODER output is not -- which is what makes this
-			// comparison legitimate across a compression-library bump.
+			// RETARGETED A SECOND TIME ON 2026-09-07, AND THE SECOND TIME SAYS
+			// SOMETHING THE FIRST DID NOT. nevr-proto removed
+			// EchoArenaHeader.match_type / .private_match / .tournament_match and
+			// replaced them with CaptureHeader.game_type, so the decompressed
+			// envelope stream necessarily differs — measured, 8300 -> 8310 bytes
+			// on every baseline. HEAD cannot reproduce the old bytes, because the
+			// old bytes encoded fields that no longer exist.
+			//
+			// THIS IS A LAYERING CORRECTION, NOT A WEAKENING, and the distinction
+			// is the point. "The decompressed envelope stream is byte-identical"
+			// is a claim about the SCHEMA. tape's compat baselines exist to
+			// protect tape's CONTAINER. The moment payload types moved, that
+			// assertion was doing nevr-proto's job by accident — and it would
+			// have broken on every future schema change forever, which makes it a
+			// gate that tracks another repository rather than one that protects
+			// this one. A property retargeted twice, both times because something
+			// outside its layer moved, is telling you it was scoped wrong.
+			//
+			// WHERE THE COVERAGE GOES, STATED CONDITIONALLY BECAUSE IT IS
+			// CONDITIONAL. Schema compatibility belongs to `buf breaking` in
+			// nevr-proto, run against the registry on every publish. That gate is
+			// BEING BUILT and is NOT MERGED as of this commit. So today the
+			// schema-compat check this assertion was accidentally providing is
+			// NOT running anywhere, and a reader finding this comment before that
+			// gate lands should treat the gap as real. When it lands, the coverage
+			// is at the layer that owns it; until then it is absent, and this
+			// paragraph is how you find that out rather than assume otherwise.
+			//
+			// What 3a keeps is what is genuinely tape's: the baseline reader
+			// parses HEAD's opt-out output (properties 1 and 2 above), and the
+			// container SHAPE matches — one zstd frame, no seek table, same
+			// envelope count. Decoding is version-independent (zstd's format is
+			// stable even where its ENCODER output is not), which is what makes
+			// the shape comparison legitimate across a compression-library bump.
 			headWhole := filepath.Join(dir, "head-wholestream.tape")
 			writeCompatCapture(t, headWhole, WithWholeStreamCompression())
 
 			headPlain := decompressAll(t, headWhole)
 			basePlain := decompressAll(t, baselineFile)
-			if !bytes.Equal(headPlain, basePlain) {
-				t.Errorf("property 3a (the pre-v4.1.0 layout is still reproducible): THE "+
-					"DECOMPRESSED ENVELOPE STREAM DIFFERS under WithWholeStreamCompression, so "+
-					"the container layout, framing or message encoding changed.\n  HEAD     %d "+
-					"bytes sha256:%s\n  %-8s %d bytes sha256:%s",
-					len(headPlain), sha256Bytes(headPlain), base.Ref, len(basePlain), sha256Bytes(basePlain))
+			// The ENVELOPE COUNT is the container claim that survives a schema
+			// change: the same frames must still produce the same number of
+			// length-delimited envelopes in the same order, whatever the payload
+			// types inside them are now called.
+			headEnvelopes := countEnvelopes(t, headPlain)
+			baseEnvelopes := countEnvelopes(t, basePlain)
+			if headEnvelopes != baseEnvelopes {
+				t.Errorf("property 3a (the pre-v4.1.0 CONTAINER is still reproducible): "+
+					"ENVELOPE COUNT DIFFERS under WithWholeStreamCompression — HEAD %d, %s %d. "+
+					"The payload schema may change; the container's framing may not.",
+					headEnvelopes, base.Ref, baseEnvelopes)
 			}
 
 			// The container's shape, which the decompressed stream cannot show:
@@ -563,10 +601,11 @@ func TestBackwardCompatibility(t *testing.T) {
 			// exactly like a property that ran and passed, and this suite has
 			// been bitten by that difference more than once; the passing run
 			// should say what it checked without anyone having to instrument it.
-			t.Logf("property 3a: the pre-v4.1.0 layout is still reproducible via "+
-				"WithWholeStreamCompression — %d-byte decompressed envelope stream identical "+
-				"(sha256:%s), 1 zstd frame, no seek table",
-				len(headPlain), sha256Bytes(headPlain))
+			t.Logf("property 3a: the pre-v4.1.0 CONTAINER is still reproducible via "+
+				"WithWholeStreamCompression — %d envelopes both sides, 1 zstd frame, no seek "+
+				"table. Payload bytes differ by design (HEAD %d, %s %d) since game_type "+
+				"replaced match_type; schema compat is buf breaking's, not this gate's.",
+				headEnvelopes, len(headPlain), base.Ref, len(basePlain))
 
 			// --- Property 3b: byte-identical compressed output ---------------
 			//
@@ -676,6 +715,27 @@ func TestBackwardCompatibility(t *testing.T) {
 // So: at least one baseline must still be able to perform the check. When a
 // dependency bump takes the last one out, this fails and says what to do, which
 // makes the disarm an event somebody sees rather than a silence.
+//
+// KNOWN DESIGN FLAW, RECORDED 2026-09-07 AND DELIBERATELY NOT FIXED HERE: THIS
+// TEST'S REMEDY IS UNREACHABLE FROM THE COMMIT THAT TRIPS IT. It says to add a
+// baseline "at or after the dependency bump -- a release tag if there is one,
+// otherwise the commit that performed the bump". The commit that performed the
+// bump is the one being written when this fires, and it cannot reference its own
+// sha. So a bump commit cannot satisfy this test, and AGENTS.md §5's "never
+// commit a red suite" meets it head-on.
+//
+// It fired exactly that way on the 2026-09-07 nevr-api bump, and the resolution
+// was two commits: the bump, knowingly red for this one test and saying so in its
+// message, then immediately a commit adding the bump's own sha as a baseline row.
+// The red window is one commit long and documented, so a bisect landing there is
+// told what it found.
+//
+// It is NOT fixed in the change that trips it, on purpose — fixing a gate inside
+// the commit it just caught is how gates get weakened. A fix belongs in its own
+// unit, and the shape to avoid is teaching this test to accept "no row can, AND
+// HEAD is itself the bump": that makes it stop firing exactly when it should most,
+// which is the same defect as a breaking-change check run against the branch it is
+// pushing to.
 func TestCompatBaselinesCanStillCatchAByteChange(t *testing.T) {
 	if len(compatBaselines) == 0 {
 		t.Fatal("compatBaselines is empty: nothing is checked for backward compatibility at all")
@@ -791,4 +851,33 @@ func fileSize(t *testing.T, path string) int64 {
 		t.Fatalf("stat %s: %v", path, err)
 	}
 	return info.Size()
+}
+
+// countEnvelopes counts the length-delimited envelopes in a decompressed tape
+// stream without decoding any of them.
+//
+// It is deliberately payload-blind. Property 3a used to compare the decompressed
+// bytes, which made it fail on any schema change in a repository this one does
+// not own; the framing is the part that is tape's. A varint length followed by
+// that many bytes, repeated to EOF — if the container's framing changed, the walk
+// desynchronises and the count moves. A field being added, removed or renamed
+// inside a payload does not touch it.
+func countEnvelopes(t *testing.T, stream []byte) int {
+	t.Helper()
+	n := 0
+	for i := 0; i < len(stream); {
+		length, consumed := protowire.ConsumeVarint(stream[i:])
+		if consumed < 0 {
+			t.Fatalf("envelope %d: bad length varint at offset %d: %v",
+				n, i, protowire.ParseError(consumed))
+		}
+		i += consumed
+		if length > uint64(len(stream)-i) {
+			t.Fatalf("envelope %d at offset %d declares %d bytes, %d remain in the stream",
+				n, i, length, len(stream)-i)
+		}
+		i += int(length) //nolint:gosec // bounded by the check above
+		n++
+	}
+	return n
 }

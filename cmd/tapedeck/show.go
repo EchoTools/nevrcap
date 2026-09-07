@@ -7,7 +7,9 @@ import (
 	"io"
 
 	capturepb "buf.build/gen/go/echotools/nevr-api/protocolbuffers/go/telemetry/v2"
+
 	"github.com/echotools/tape/v4/pkg/codec"
+	"github.com/echotools/tape/v4/pkg/conversion"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -73,7 +75,18 @@ func showSummary(cmd *cobra.Command, reader *codec.Reader, header *capturepb.Cap
 	if ea := header.GetEchoArena(); ea != nil {
 		printf(out, "session_id: %s\n", ea.GetSessionId())
 		printf(out, "map: %s\n", ea.GetMapName())
-		printf(out, "match_type: %s\n", ea.GetMatchType())
+	}
+	// game_type replaces EchoArenaHeader.match_type and lives on the container
+	// header, not in the game band, because it is what SCOPES the game band. It
+	// prints verbatim: the engine's spelling is the value, and narrowing it for
+	// display would hide the thing an operator is most likely checking.
+	if gt := header.GetGameType(); gt != "" {
+		facts := conversion.DeriveGameType(gt)
+		printf(out, "game_type: %s (mode=%s private=%v tournament=%v)\n",
+			facts.Symbol, facts.Mode, facts.Private, facts.Tournament)
+	}
+	if p := header.GetProducer(); p != "" {
+		printf(out, "producer: %s\n", p)
 	}
 
 	// Count frames by reading through.

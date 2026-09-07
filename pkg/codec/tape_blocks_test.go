@@ -30,11 +30,11 @@ func blockTestHeader() *capturepb.CaptureHeader {
 		CreatedAt:     timestamppb.New(time.Unix(1756600000, 0).UTC()),
 		FormatVersion: 2,
 		Metadata:      map[string]string{"layout": "per-block"},
+		GameType:      "echo_arena",
 		GameHeader: &capturepb.CaptureHeader_EchoArena{
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: "SEEK-123",
 				MapName:   "mpl_arena_a",
-				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}

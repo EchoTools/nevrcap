@@ -40,11 +40,11 @@ func shippedHeader() *capturepb.CaptureHeader {
 		CaptureId:     "bench-corpus",
 		CreatedAt:     timestamppb.New(time.Unix(1756600000, 0).UTC()),
 		FormatVersion: 2,
+		GameType:      "echo_arena",
 		GameHeader: &capturepb.CaptureHeader_EchoArena{
 			EchoArena: &capturepb.EchoArenaHeader{
 				SessionId: "BENCH-001",
 				MapName:   "mpl_arena_a",
-				MatchType: capturepb.MatchType_MATCH_TYPE_ARENA,
 			},
 		},
 	}

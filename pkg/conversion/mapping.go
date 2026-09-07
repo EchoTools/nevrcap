@@ -36,16 +36,18 @@ var gameStatusMap = map[string]capturepb.GameStatus{
 	"post_sudden_death": capturepb.GameStatus_GAME_STATUS_POST_SUDDEN_DEATH,
 }
 
-// matchTypeMap maps v1 string match_type to v2 MatchType enum.
-var matchTypeMap = map[string]capturepb.MatchType{
-	"Echo_Arena":            capturepb.MatchType_MATCH_TYPE_ARENA,
-	"Echo_Arena_Private":    capturepb.MatchType_MATCH_TYPE_PRIVATE,
-	"Echo_Arena_Tournament": capturepb.MatchType_MATCH_TYPE_TOURNAMENT,
-	"Echo_Combat":           capturepb.MatchType_MATCH_TYPE_COMBAT,
-	"Social_2.0":            capturepb.MatchType_MATCH_TYPE_SOCIAL_PUBLIC,
-	"Social_2.0_Private":    capturepb.MatchType_MATCH_TYPE_SOCIAL_PRIVATE,
-	"Echo_Arena_FFA":        capturepb.MatchType_MATCH_TYPE_FFA,
-}
+// matchTypeMap is GONE, and this note is here so the next reader does not
+// reinvent it. It mapped seven v1 match_type strings onto a MatchType enum;
+// CaptureHeader.game_type now carries the engine's symbol verbatim and
+// DeriveGameType reads the axes back out of it (gametype.go).
+//
+// The table was lossy in two different ways and only one of them was obvious.
+// A symbol it HELD round-tripped intact, because matchTypeReverse was its
+// literal inverse — what was lost there was expressiveness for a v2 consumer,
+// which could not tell arena from combat behind MATCH_TYPE_PRIVATE. A symbol it
+// did NOT hold lost its value outright: measured 2026-09-07,
+// "Echo_Combat_Private" forward-mapped to MATCH_TYPE_UNSPECIFIED and reversed to
+// "". Storing the symbol cannot do either.
 
 // pauseStateMap maps v1 PauseState.paused_state strings to v2 PauseState enum.
 var pauseStateMap = map[string]capturepb.PauseState{
@@ -139,7 +141,10 @@ func mapHeader(v1 *telemetryv1.TelemetryHeader, vocab *vocabulary) *capturepb.Ca
 				eaHeader.MapName = mapName
 			}
 			if matchType, ok := meta["match_type"]; ok {
-				eaHeader.MatchType = vocab.matchType(matchType)
+				// Verbatim onto the header, not narrowed into an enum. The
+				// engine's spelling is the value; DeriveGameType reads the axes
+				// back out of it when a consumer wants them.
+				header.GameType = matchType
 			}
 			if clientName, ok := meta["client_name"]; ok {
 				eaHeader.ClientName = clientName
@@ -186,14 +191,18 @@ func mapHeaderFromSession(v1hdr *telemetryv1.TelemetryHeader, session *enginev1.
 	if eaHeader.MapName == "" {
 		eaHeader.MapName = session.GetMapName()
 	}
-	if eaHeader.MatchType == capturepb.MatchType_MATCH_TYPE_UNSPECIFIED {
-		eaHeader.MatchType = vocab.matchType(session.GetMatchType())
+	if header.GetGameType() == "" {
+		header.GameType = session.GetMatchType()
 	}
 	if eaHeader.ClientName == "" {
 		eaHeader.ClientName = session.GetClientName()
 	}
-	eaHeader.PrivateMatch = session.GetPrivateMatch()
-	eaHeader.TournamentMatch = session.GetTournamentMatch()
+	// private_match and tournament_match are NOT stored. They were never
+	// MatchType's to lose — the engine sends them as its own booleans and the old
+	// code copied them straight through, independent of the enum — but they are
+	// redundant with the symbol now that it is kept verbatim, and two fields that
+	// can disagree with a third are a bug waiting to be written. DeriveGameType
+	// answers both from game_type; see reconstructSession.
 	eaHeader.TotalRoundCount = session.GetTotalRoundCount()
 	if eaHeader.SessionIp == "" {
 		eaHeader.SessionIp = session.GetSessionIp()
