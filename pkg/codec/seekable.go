@@ -19,8 +19,22 @@ import (
 // SpeedBetterCompression and SpeedBestCompression each give 8 MiB
 // (compress@v1.19.2 zstd/encoder_options.go:246-259; the package default is
 // also 8 MiB at :42). Every encoder in this package is constructed with
-// WithEncoderLevel and no window option — tape.go:133,137 and
-// tape_blocks.go:198,203 — so 8 MiB is the ceiling our own writer can reach.
+// WithEncoderLevel and no window option — tape.go:133,137 @ 5bcb5a3 and
+// tape_blocks.go:198,203 @ 5bcb5a3 — so 8 MiB is the ceiling our own writer can
+// reach.
+//
+// THE TWO CITATIONS ABOVE ARE THE WHOLE DERIVATION, and they are pinned because
+// the bound is only found for as long as they hold. The predicate that falsifies
+// it is one command:
+//
+//	git grep -n 'WithWindowSize' <sha> -- pkg cmd
+//
+// Empty means no encoder in this repository overrides the level's window and
+// 8 MiB stands. A non-test hit means some writer chose its own window, and this
+// constant must be re-derived from that call rather than left as a number
+// somebody once measured. The same grep run against a PRODUCER's repository
+// (nevr-agent, nevr-stream, anything writing .tape through this package) answers
+// whether that producer can emit a file this reader would refuse.
 //
 // It is deliberately NOT read from the file. hdr.WindowSize is the hostile
 // file's own number, and a cap computed from it is the attacker choosing their
