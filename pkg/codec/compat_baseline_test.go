@@ -86,13 +86,24 @@ import (
 // a release is tagged; remove one only as a deliberate, announced decision to
 // stop supporting that version.
 //
-// THE COST OF THAT POLICY, WHICH WHOEVER ADDS ROW SEVEN MUST KNOW: the
+// THE COST OF THAT POLICY, WHICH WHOEVER ADDS THE NEXT ROW MUST KNOW: the
 // compressed-bytes assertion (property 3b) can only run when a baseline pins the
 // same output-affecting dependencies as HEAD, and every klauspost/compress bump
 // retires it for every row written before the bump. So the row COUNT trends up
 // while the number of rows able to catch a compressed-bytes change trends to
-// zero, and a growing table reads as growing coverage when it is not. Row seven
-// probably cannot catch a layout change by that route.
+// zero, and a growing table reads as growing coverage when it is not. Any row
+// added before the next bump probably cannot catch a layout change by that route.
+//
+// (This paragraph said "ROW SEVEN" until 2026-09-07, in a table that has never
+// had more than three rows. It is written as "the next row" now because a
+// hardcoded ordinal in a comment about a growing table is a count with no command
+// behind it -- the same defect the table itself exists to avoid.)
+//
+// WHY NO ROW SAYS "RELEASED". v4.0.0 and v4.0.1 are annotated tags pushed to
+// origin, which makes them fetchable module versions; neither has a GitHub
+// release (`gh release list` shows only v3.2.0 and v3.3.0, both from 2025-12).
+// The rows therefore record what is checkable -- tag kind, tag date, and whether
+// origin has it -- rather than a word two readers would resolve differently.
 //
 // Two things hold the line. First, property 3a compares the DECOMPRESSED
 // envelope stream and the container's frame structure -- properties of this
@@ -114,7 +125,14 @@ type compatBaseline struct {
 var compatBaselines = []compatBaseline{
 	{
 		Ref: "v4.0.0",
-		Why: "the released format version, tagged 2026-08-26",
+		Why: "first v4 tag: annotated, tagged 2026-08-26 over a 2026-07-02 commit, " +
+			"pushed to origin. Module path github.com/echotools/tape, klauspost v1.18.6",
+	},
+	{
+		Ref: "v4.0.1",
+		Why: "the most recent tag: annotated, tagged 2026-09-04, pushed to origin. " +
+			"It is the row property 3b actually runs on -- its byte-affecting pins " +
+			"(module path /v4, klauspost v1.19.2) are HEAD's",
 	},
 	{
 		Ref: "2ca18fa",
