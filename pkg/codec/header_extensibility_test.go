@@ -92,6 +92,33 @@ func requireUndefinedFields(t *testing.T, numbers ...protowire.Number) {
 	}
 }
 
+// unknownFieldNumbers reports which field numbers appear in a message's
+// preserved unknown-field bytes.
+//
+// It parses the unknown blob rather than the re-marshalled message on purpose:
+// once a message is marshalled, a field that came from a TYPED accessor and one
+// that came from unknown fields are byte-identical, so the output cannot answer
+// "was this preserved as unknown". Only the blob can.
+func unknownFieldNumbers(t *testing.T, b []byte) map[protowire.Number]bool {
+	t.Helper()
+	present := map[protowire.Number]bool{}
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			t.Fatalf("unknown-field blob is not valid wire format at %d bytes remaining: %v",
+				len(b), protowire.ParseError(n))
+		}
+		b = b[n:]
+		present[num] = true
+		n = protowire.ConsumeFieldValue(num, typ, b)
+		if n < 0 {
+			t.Fatalf("unknown-field blob: bad value for field %d: %v", num, protowire.ParseError(n))
+		}
+		b = b[n:]
+	}
+	return present
+}
+
 // headerWithFutureFields returns the wire bytes of a CaptureHeader whose known
 // fields are set and which additionally carries two fields this build's schema
 // does not define: field 8 as a varint, field 9 as a length-delimited string.
@@ -171,16 +198,41 @@ func TestHeaderPreservesUnknownFieldsThroughRewrite(t *testing.T) {
 	// round-trip succeeding. requireUndefinedFields checks the SCHEMA; this
 	// checks the parse that actually happened, and the two fail for different
 	// reasons — a field could be undefined and still not reach unknown fields
-	// (a DiscardUnknown unmarshaler, a narrower intermediate type). A zero here
-	// with every other assertion green is the exact signature of a test that has
-	// stopped testing.
+	// (a DiscardUnknown unmarshaler, a narrower intermediate type).
+	//
+	// IT IS PER-FIELD, NOT A NON-EMPTY CHECK, AND THE DIFFERENCE IS LOAD-BEARING.
+	// An aggregate "did anything reach unknown fields" is defeated by a partial
+	// bump, which is exactly the bump coming: nevr-proto is defining game_type=8
+	// (string) and producer=9 (string). Field 9's stand-in is a string, so the
+	// types MATCH and it parses into the typed accessor and leaves unknown
+	// fields. Field 8's stand-in is a VARINT against a string, so the types
+	// MISMATCH and its bytes stay unknown. Measured against this pin using
+	// capture_id (field 1, already a defined string):
+	//
+	//	varint at a defined string field -> unknown = 2 bytes (08 07), round-trip
+	//	                                    identical, typed accessor returns ""
+	//	string at a defined string field -> unknown = 0 bytes, parses typed
+	//
+	// So after that bump the aggregate count is 2, not 0 — non-empty, green, and
+	// silent about field 9 having quietly stopped being tested. Asking for each
+	// stand-in BY NUMBER is what survives a partial bump, and it is the assertion
+	// the fieldVarint/fieldString checks below cannot make: those read the
+	// re-marshalled OUTPUT, where a typed field 9 and an unknown field 9 are
+	// byte-identical and indistinguishable.
 	unknown := round.ProtoReflect().GetUnknown()
-	if len(unknown) == 0 {
-		t.Fatalf("the header carries NO unknown fields after parsing, so nothing below " +
-			"exercises unknown-field preservation. Expected the bytes for the two " +
-			"stand-in fields; got none. Measured 2026-09-07 at this pin: 20 bytes.")
+	present := unknownFieldNumbers(t, unknown)
+	for _, want := range []protowire.Number{8, 9} {
+		if !present[want] {
+			t.Fatalf("field %d did NOT reach unknown fields (present: %v, %d bytes: % x). "+
+				"Either the schema now defines it — in which case this file has stopped "+
+				"testing unknown-field preservation for it — or something stripped it "+
+				"before it got here. The assertions below cannot tell you which, because "+
+				"they read the re-marshalled output where a typed field and a preserved "+
+				"unknown field look the same.", want, present, len(unknown), unknown)
+		}
 	}
-	t.Logf("unknown-field bytes carried: %d (% x)", len(unknown), unknown)
+	t.Logf("unknown-field bytes carried: %d (% x), fields present: %v",
+		len(unknown), unknown, present)
 
 	out, err := proto.Marshal(&round)
 	if err != nil {
