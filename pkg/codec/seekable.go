@@ -29,12 +29,27 @@ import (
 //
 //	git grep -n 'WithWindowSize' <sha> -- pkg cmd
 //
-// Empty means no encoder in this repository overrides the level's window and
-// 8 MiB stands. A non-test hit means some writer chose its own window, and this
-// constant must be re-derived from that call rather than left as a number
-// somebody once measured. The same grep run against a PRODUCER's repository
-// (nevr-agent, nevr-stream, anything writing .tape through this package) answers
-// whether that producer can emit a file this reader would refuse.
+// EXPECTED OUTPUT IS NOT EMPTY, and saying so is the point: at 5bcb5a3 it was,
+// but this comment and seekable_window_test.go now match it, so a reader running
+// it today gets three hits and must read them rather than count them.
+//
+//	seekable.go:30                     this line
+//	seekable_window_test.go:56,197     the hostile windows the tests craft
+//
+// Those three are the pass. A hit OUTSIDE a _test.go file is the failure: some
+// writer chose its own window, and this constant must be re-derived from that
+// call rather than left as a number somebody once measured.
+//
+// The same predicate answers the question this package cannot answer about
+// itself — whether a PRODUCER can emit a file this reader would refuse. Surveyed
+// 2026-09-07 across tape, nevr-stream and nevr-agent: no production code in any
+// of the three sets a window; nevr-stream (internal/api/storage_manager.go:116)
+// and nevr-agent (internal/agent/writer_tape.go:96) both write through the
+// zero-option codec.NewWriter and inherit this ceiling, and the one direct
+// encoder outside tape (nevr-agent internal/agent/legacy_writer.go:26) uses
+// SpeedFastest, which is 4 MiB — half of it. That survey covers *.go in those
+// three trees and nothing else; a producer written elsewhere, or in another
+// language, is not covered by it.
 //
 // It is deliberately NOT read from the file. hdr.WindowSize is the hostile
 // file's own number, and a cap computed from it is the attacker choosing their
