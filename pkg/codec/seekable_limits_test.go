@@ -97,6 +97,22 @@ func allocatedDuring(fn func()) uint64 {
 //
 // That is the DoS firing: a gibibyte allocated to refuse a 1.2 KB file, and a
 // quarter-gibibyte decoded with no error at all.
+//
+// THE RUN ABOVE IS LEFT VERBATIM, INCLUDING A TEST NAME THAT NO LONGER EXISTS.
+// TestReadBlockBoundsDecoderMemory was renamed on 2026-09-07 to
+// TestReadBlockRefusesAFrameWhoseSizeContradictsTheSeekTable, because its bomb
+// carries a Frame_Content_Size and is therefore answered by the frame-header
+// cross-check rather than by the decoder cap. Editing the quoted output to match
+// would destroy the record of what actually ran, so it stands as written and this
+// note carries the correction forward. See that test's own comment.
+//
+// The same qualification applies to this block as a whole: it removed the four
+// checks TOGETHER. Removed ONE AT A TIME, three of the four leave the suite green
+// — measured 2026-09-07: the file-size bound and the budget check each go red,
+// while the FCS cross-check, the decoder cap and the decoded-size equality each
+// pass alone. "Removing the checks fails on behaviour" is true of the set and not
+// of the members, and reading it as the latter is what left the residual F4 hole
+// open until 9c019a7.
 
 // TestReadBlockRefusesASizeTheFileCannotHold is SEC-002 on the seeking path: a
 // seek table claiming a block larger than the file must be refused BEFORE the
@@ -155,10 +171,27 @@ func TestReadBlockRefusesASizeTheFileCannotHold(t *testing.T) {
 		claimed, len(clean), readErr, allocated)
 }
 
-// TestReadBlockBoundsDecoderMemory is SEC-001 on the seeking path: a block that
-// decodes to far more than the seek table declares must be refused, and the
-// refusal must not cost what the block asked for.
-func TestReadBlockBoundsDecoderMemory(t *testing.T) {
+// TestReadBlockRefusesAFrameWhoseSizeContradictsTheSeekTable is SEC-001 on the
+// seeking path: a block that decodes to far more than the seek table declares
+// must be refused, and the refusal must not cost what the block asked for.
+//
+// IT WAS CALLED TestReadBlockBoundsDecoderMemory UNTIL 2026-09-07, AND ITS GREEN
+// IS NOT EVIDENCE ABOUT THE DECODER CAP. The bomb below is built with
+// enc.EncodeAll, which knows the payload length and therefore writes a
+// Frame_Content_Size. So the frame-header cross-check answers it and returns
+// before a decoder is ever constructed — measured, this run:
+//
+//	bomb block: err=tape: block 1's frame declares 268435456 bytes, seek table
+//	declares 182: tape: seek table is malformed, 33304 bytes allocated
+//
+// That is the FCS cross-check firing, not a memory bound. This test still runs
+// and still passes and the property it proves is real; it is just not the
+// property its old name claimed. A hostile frame written by a STREAMING encoder
+// carries no FCS, skips that check entirely, and reaches the decoder cap — which
+// is what TestReadBlockRefusesAWindowThisLibraryCannotHaveWritten and
+// TestReadBlockBoundsAWindowAgainstOurCeilingNotTheTableS cover
+// (seekable_window_test.go). Do not read this one's green as coverage of them.
+func TestReadBlockRefusesAFrameWhoseSizeContradictsTheSeekTable(t *testing.T) {
 	path, _ := corruptionCorpus(t, "corpus.tape")
 	clean, err := os.ReadFile(path)
 	if err != nil {

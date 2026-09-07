@@ -20,12 +20,14 @@ const bombWindow = 256 << 20
 // TestReadBlockRefusesAWindowThisLibraryCannotHaveWritten is the residual half
 // of F4, and it exists because the recorded witness cannot witness it.
 //
-// TestReadBlockBoundsDecoderMemory builds its bomb with enc.EncodeAll, which
-// knows the payload length and therefore writes a Frame_Content_Size. The
-// frame-header cross-check fires on that FCS and returns first, so the decoder
-// cap is never the thing under test and the decoded-size equality never runs.
-// A STREAMING encoder writes no FCS — the size is unknown when the header is
-// emitted — so this test reaches the code the other one shadows.
+// TestReadBlockRefusesAFrameWhoseSizeContradictsTheSeekTable (renamed on
+// 2026-09-07 from TestReadBlockBoundsDecoderMemory, for this reason) builds its
+// bomb with enc.EncodeAll, which knows the payload length and therefore writes a
+// Frame_Content_Size. The frame-header cross-check fires on that FCS and returns
+// first, so the decoder cap is never the thing under test and the decoded-size
+// equality never runs. A STREAMING encoder writes no FCS — the size is unknown
+// when the header is emitted — so this test reaches the code the other one
+// shadows.
 //
 // What it asserts: the memory cap must not be computed from a number the
 // hostile file chose. hdr.WindowSize is read out of the attacker's own frame
@@ -64,10 +66,10 @@ func TestReadBlockRefusesAWindowThisLibraryCannotHaveWritten(t *testing.T) {
 	}
 	bomb := buf.Bytes()
 
-	// INSTRUMENT CHECK, and it is the whole reason this test is a separate
-	// file. If the bomb carries an FCS then check 3a answers it and this test
-	// silently becomes a duplicate of TestReadBlockBoundsDecoderMemory —
-	// passing for a reason that has nothing to do with what it is named for.
+	// INSTRUMENT CHECK, and it is the whole reason this test is a separate file.
+	// If the bomb carries an FCS then check 3a answers it and this test silently
+	// becomes a duplicate of the size-contradiction test above — passing for a
+	// reason that has nothing to do with what it is named for.
 	var probe zstd.Header
 	if err := probe.Decode(bomb); err != nil {
 		t.Fatalf("decode bomb header: %v", err)
